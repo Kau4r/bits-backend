@@ -1,0 +1,197 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  User_ID                           Int              @id @default(autoincrement())
+  User_Type                         UserType
+  First_Name                        String
+  Middle_Name                       String
+  Last_Name                         String
+  Email                             String
+  Password                          String
+  Created_At                        DateTime         @default(now())
+  Updated_At                        DateTime?
+  Is_Active                         Boolean          @default(true)
+  Audit_Log                         Audit_Log[]
+  Booked_Room                       Booked_Room[]
+  Booking_Booking_Approver_IDToUser Booking[]        @relation("Booking_Approver_IDToUser")
+  Booking_Booking_User_IDToUser     Booking[]        @relation("Booking_User_IDToUser")
+  Borrow_Item                       Borrow_Item[]
+  Borrowing_Comp                    Borrowing_Comp[]
+  Form_Form_Approver_IDToUser       Form[]           @relation("Form_Approver_IDToUser")
+  Form_Form_Creator_IDToUser        Form[]           @relation("Form_Creator_IDToUser")
+  Item                              Item[]
+  Ticket                            Ticket[]
+}
+
+model Item {
+  Item_ID              Int                    @id @default(autoincrement())
+  User_ID              Int
+  Replaced_By_Item_ID  Int?                   @unique
+  Item_Code            String                 @unique
+  Name                 String
+  Type                 String
+  Brand                String
+  Model                String
+  Serial_Number        String
+  Item_QR_Code         String
+  Status               ItemStatus
+  Created_At           DateTime               @default(now())
+  Updated_At           DateTime
+  Booking              Booking[]
+  Borrow_Item          Borrow_Item[]
+  Computer_Peripherals Computer_Peripherals[]
+
+  ReplacedBy       Item?                  @relation("ItemToItem", fields: [Replaced_By_Item_ID], references: [Item_ID])
+  Replaces         Item?                  @relation("ItemToItem")
+  User             User                   @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Computer {
+  Computer_ID    Int              @id @default(autoincrement())
+  Name           String
+  Type           String
+  Created_At     DateTime         @default(now())
+  Updated_At     DateTime
+  Borrowing_Comp Borrowing_Comp[]
+}
+
+model Form {
+  Form_ID                     Int      @id @default(autoincrement())
+  Creator_ID                  Int
+  Approver_ID                 Int?
+  Title                       String
+  Content                     String
+  Status                      String
+  Created_At                  DateTime @default(now())
+  Updated_At                  DateTime
+  User_Form_Approver_IDToUser User?    @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
+  User_Form_Creator_IDToUser  User     @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
+}
+
+model Ticket {
+  Ticket_ID   Int      @id @default(autoincrement())
+  User_ID     Int
+  Title       String
+  Description String
+  Status      String
+  Created_At  DateTime @default(now())
+  Updated_At  DateTime
+  User        User     @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Booking {
+  Booking_ID                     Int      @id @default(autoincrement())
+  User_ID                        Int
+  Approver_ID                    Int?
+  Item_ID                        Int
+  Booking_Date                   DateTime @default(now())
+  Start_Date                     DateTime
+  End_Date                       DateTime
+  Status                         String
+  Created_At                     DateTime @default(now())
+  Updated_At                     DateTime
+  User_Booking_Approver_IDToUser User?    @relation("Booking_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
+  Item                           Item     @relation(fields: [Item_ID], references: [Item_ID])
+  User_Booking_User_IDToUser     User     @relation("Booking_User_IDToUser", fields: [User_ID], references: [User_ID])
+}
+
+model Room {
+  Room_ID     Int           @id @default(autoincrement())
+  Name        String
+  Capacity    Int
+  Created_At  DateTime      @default(now())
+  Updated_At  DateTime
+  Booked_Room Booked_Room[]
+  Schedule    Schedule[]
+}
+
+model Schedule {
+  Schedule_ID Int      @id @default(autoincrement())
+  Room_ID     Int
+  Day         String
+  Start_Time  DateTime
+  End_Time    DateTime
+  Created_At  DateTime @default(now())
+  Updated_At  DateTime
+  Room        Room     @relation(fields: [Room_ID], references: [Room_ID])
+}
+
+model Audit_Log {
+  Log_ID    Int      @id @default(autoincrement())
+  User_ID   Int
+  Action    String
+  Timestamp DateTime @default(now())
+  User      User     @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Booked_Room {
+  Booked_Room_ID Int      @id @default(autoincrement())
+  Room_ID        Int
+  User_ID        Int
+  Start_Time     DateTime
+  End_Time       DateTime
+  Status         String
+  Created_At     DateTime @default(now())
+  Updated_At     DateTime
+  Room           Room     @relation(fields: [Room_ID], references: [Room_ID])
+  User           User     @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Borrow_Item {
+  Borrow_Item_ID Int      @id @default(autoincrement())
+  User_ID        Int
+  Item_ID        Int
+  Borrow_Date    DateTime @default(now())
+  Return_Date    DateTime
+  Status         String
+  Created_At     DateTime @default(now())
+  Updated_At     DateTime
+  Item           Item     @relation(fields: [Item_ID], references: [Item_ID])
+  User           User     @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Borrowing_Comp {
+  Borrowing_Comp_ID Int      @id @default(autoincrement())
+  User_ID           Int
+  Computer_ID       Int
+  Borrow_Date       DateTime @default(now())
+  Return_Date       DateTime
+  Status            String
+  Created_At        DateTime @default(now())
+  Updated_At        DateTime
+  Computer          Computer @relation(fields: [Computer_ID], references: [Computer_ID])
+  User              User     @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Computer_Peripherals {
+  Peripheral_ID Int      @id @default(autoincrement())
+  Item_ID       Int
+  Type          String
+  Description   String
+  Created_At    DateTime @default(now())
+  Updated_At    DateTime
+  Item          Item     @relation(fields: [Item_ID], references: [Item_ID])
+}
+
+enum UserType {
+  LAB_HEAD
+  LAB_TECH
+  FACULTY
+  STUDENT
+  ADMIN
+}
+
+enum ItemStatus {
+  AVAILABLE
+  BORROWED
+  DEFECTIVE
+  LOST
+  REPLACED
+}
