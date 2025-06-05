@@ -25,12 +25,17 @@ This backend uses Express.js, Prisma ORM, and PostgreSQL. It provides a RESTful 
    ```bash
    npm install
 
-3. Set up environment variables:
-   Create a .env file in the root:
+3. Set up PostgreSQL and environment variables:
+   - Install PostgreSQL from https://www.postgresql.org/download/windows/
+   - During installation:
+     - Set a password for the postgres user
+     - Keep the default port (5432)
+     - Add PostgreSQL to PATH
+     - Install pgAdmin4 (the GUI tool)
+   - Create a database named 'bitsdb' using pgAdmin4
+   - Create a .env file in the root:
    ```env
-   DATABASE_URL=postgresql://user:password@localhost:5432/bitsdb
-   JWT_SECRET=your_jwt_secret
-   PORT=5000
+   DATABASE_URL=postgresql://postgres:your_password@localhost:5432/bitsdb
    
 4. Run migrations:
    ```bash
