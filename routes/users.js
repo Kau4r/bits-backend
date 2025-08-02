@@ -93,7 +93,7 @@ router.post('/', async (req, res) => {
         Password,
         Is_Active,
         Created_At: currentTime,
-        Updated_At: null  // Set to null for new users
+        Updated_At: currentTime  // Set to current time for new users
       }
     });
 
@@ -112,7 +112,7 @@ router.post('/', async (req, res) => {
 
 // Update user (creates new version)
 router.put('/:id', async (req, res) => {
-  const transaction = [];
+  let transaction = [];
   
   try {
     const userId = parseInt(req.params.id);
@@ -128,6 +128,22 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // Check if email is being updated and if it already exists
+    if (updates.Email && updates.Email !== currentUser.Email) {
+      const existingUser = await prisma.User.findFirst({
+        where: { 
+          Email: updates.Email,
+          Is_Active: true
+        }
+      });
+
+      if (existingUser) {
+        return res.status(400).json({
+          error: 'Email already in use by another active user'
+        });
+      }
+    }
+
     // 2. Mark current user as inactive
     transaction.push(
       prisma.User.update({
@@ -140,14 +156,14 @@ router.put('/:id', async (req, res) => {
     );
 
     // 3. Create new user version with updated data
-    const { User_ID, ...userData } = currentUser;
+    const { User_ID, Password: _, ...userData } = currentUser; // Exclude password and ID
     const newUserData = {
       ...userData,
       ...updates,
       Is_Active: true,
-      Created_At: currentTime, // Set to current time for new version
-      Updated_At: null, // Set to null for new version
-      Email: updates.Email || currentUser.Email // Ensure email is not removed
+      Created_At: currentTime,
+      Updated_At: null,
+      Email: updates.Email || currentUser.Email
     };
 
     transaction.push(
@@ -168,14 +184,24 @@ router.put('/:id', async (req, res) => {
     );
 
     // Execute all operations in a transaction
-    const [_, newUser] = await prisma.$transaction(transaction);
+    const results = await prisma.$transaction(transaction);
+    const newUser = results[1]; // The second operation is the user creation
 
     // Remove password from response
-    const { Password, ...userWithoutPassword } = newUser;
+    const { Password: __, ...userWithoutPassword } = newUser;
     
     res.json(userWithoutPassword);
   } catch (error) {
     console.error(`Error updating user ${req.params.id}:`, error);
+    
+    // More specific error handling
+    if (error.code === 'P2002') { // Prisma unique constraint error
+      return res.status(400).json({
+        error: 'Database error',
+        details: 'A user with this email already exists'
+      });
+    }
+    
     res.status(500).json({
       error: 'Failed to update user',
       details: error.message
@@ -185,16 +211,23 @@ router.put('/:id', async (req, res) => {
 
 // Soft delete user (mark as inactive)
 router.delete('/:id', async (req, res) => {
+  const prisma = new PrismaClient();
+  
   try {
     const userId = parseInt(req.params.id);
     
-    // Check if user exists
-    const user = await prisma.User.findUnique({
-      where: { User_ID: userId }
+    // Check if user exists and is active
+    const user = await prisma.User.findFirst({
+      where: { 
+        User_ID: userId,
+        Is_Active: true
+      }
     });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ 
+        error: 'User not found or already inactive' 
+      });
     }
 
     // Mark as inactive instead of deleting
@@ -203,6 +236,15 @@ router.delete('/:id', async (req, res) => {
       data: { 
         Is_Active: false,
         Updated_At: new Date() 
+      }
+    });
+
+    // Log the deletion
+    await prisma.Audit_Log.create({
+      data: {
+        User_ID: userId,
+        Action: 'USER_DEACTIVATED',
+        Timestamp: new Date()
       }
     });
 
@@ -219,6 +261,8 @@ router.delete('/:id', async (req, res) => {
       error: 'Failed to delete user',
       details: error.message
     });
+  } finally {
+    await prisma.$disconnect();
   }
 });
 

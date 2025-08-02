@@ -3,6 +3,7 @@ const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 
+<<<<<<< HEAD
 // Helper function to check user role
 const checkUserRole = async (userId, allowedRoles) => {
   try {
@@ -50,19 +51,21 @@ const checkUserRole = async (userId, allowedRoles) => {
   }
 };
 
+=======
+>>>>>>> b937ff4 (Merge remote changes)
 // Get all items
 router.get('/', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const items = await prisma.Item.findMany({
       include: {
         User: true,
+<<<<<<< HEAD
         ReplacedBy: true,  // Replaced items (self-relation)
         Replaces: true,  // Items that this item replaces
+=======
+        ReplacedBy: true,  // Item that replaces this one
+        Replaces: true,    // Item that this one replaces
+>>>>>>> b937ff4 (Merge remote changes)
         Computer_Peripherals: true,  // Peripherals
         Borrow_Item: true,  // Borrow history
         Booking: true  // Booking history
@@ -80,18 +83,18 @@ router.get('/', async (req, res) => {
 
 // Get item by ID
 router.get('/:id', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const item = await prisma.Item.findUnique({
       where: { Item_ID: parseInt(req.params.id) },
       include: {
         User: true,
+<<<<<<< HEAD
         ReplacedBy: true,
         Replaces: true,
+=======
+        ReplacedBy: true,  // Item that replaces this one
+        Replaces: true,    // Item that this one replaces
+>>>>>>> b937ff4 (Merge remote changes)
         Computer_Peripherals: true,
         Borrow_Item: true,
         Booking: true
@@ -109,11 +112,6 @@ router.get('/:id', async (req, res) => {
 
 // Create new item
 router.post('/', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const {
       User_ID,
@@ -193,11 +191,6 @@ router.post('/', async (req, res) => {
 
 // Update item
 router.put('/:id', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const itemId = parseInt(req.params.id);
     const updates = req.body;

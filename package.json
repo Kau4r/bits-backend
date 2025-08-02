@@ -8,11 +8,11 @@
     "dev": "nodemon src/index.js"
   },
   "devDependencies": {
+    "@prisma/client": "^6.11.1",
     "nodemon": "^3.1.10",
-    "prisma": "^6.8.2"
+    "prisma": "^6.11.1"
   },
   "dependencies": {
-    "@prisma/client": "^6.8.2",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",

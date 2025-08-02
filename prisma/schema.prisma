@@ -27,7 +27,8 @@ model User {
   Form_Form_Approver_IDToUser       Form[]           @relation("Form_Approver_IDToUser")
   Form_Form_Creator_IDToUser        Form[]           @relation("Form_Creator_IDToUser")
   Item                              Item[]
-  Ticket                            Ticket[]
+  // Ticket relations
+  CreatedTickets                    Ticket[]         @relation("Ticket_User")
 }
 
 model Item {
@@ -76,14 +77,16 @@ model Form {
 }
 
 model Ticket {
-  Ticket_ID   Int      @id @default(autoincrement())
-  User_ID     Int
-  Title       String
-  Description String
-  Status      String
-  Created_At  DateTime @default(now())
-  Updated_At  DateTime
-  User        User     @relation(fields: [User_ID], references: [User_ID])
+  Ticket_ID    Int       @id @default(autoincrement())
+  User_ID      Int
+  Title        String
+  Description  String
+  Status       String    // PENDING, ACCEPTED, REJECTED, IN_PROGRESS, COMPLETED
+  Created_At   DateTime  @default(now())
+  Updated_At   DateTime  @updatedAt
+  
+  // Relations
+  User     User     @relation("Ticket_User", fields: [User_ID], references: [User_ID])
 }
 
 model Booking {
