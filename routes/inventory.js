@@ -3,7 +3,6 @@ const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
 
-<<<<<<< HEAD
 // Helper function to check user role
 const checkUserRole = async (userId, allowedRoles) => {
   try {
@@ -51,21 +50,14 @@ const checkUserRole = async (userId, allowedRoles) => {
   }
 };
 
-=======
->>>>>>> b937ff4 (Merge remote changes)
 // Get all items
 router.get('/', async (req, res) => {
   try {
     const items = await prisma.Item.findMany({
       include: {
         User: true,
-<<<<<<< HEAD
         ReplacedBy: true,  // Replaced items (self-relation)
         Replaces: true,  // Items that this item replaces
-=======
-        ReplacedBy: true,  // Item that replaces this one
-        Replaces: true,    // Item that this one replaces
->>>>>>> b937ff4 (Merge remote changes)
         Computer_Peripherals: true,  // Peripherals
         Borrow_Item: true,  // Borrow history
         Booking: true  // Booking history
@@ -88,13 +80,8 @@ router.get('/:id', async (req, res) => {
       where: { Item_ID: parseInt(req.params.id) },
       include: {
         User: true,
-<<<<<<< HEAD
         ReplacedBy: true,
         Replaces: true,
-=======
-        ReplacedBy: true,  // Item that replaces this one
-        Replaces: true,    // Item that this one replaces
->>>>>>> b937ff4 (Merge remote changes)
         Computer_Peripherals: true,
         Borrow_Item: true,
         Booking: true
