@@ -14,6 +14,7 @@ app.use(express.json())
 app.use('/api/inventory', require('../routes/inventory'))
 app.use('/api/users', require('../routes/users'))
 app.use('/api/tickets', require('../routes/tickets'))
+app.use('/api/rooms', require('../routes/rooms'))
 
 // Error handling middleware
 app.use((err, req, res, next) => {

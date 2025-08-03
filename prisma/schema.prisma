@@ -16,8 +16,9 @@ model User {
   Email                             String
   Password                          String
   Created_At                        DateTime         @default(now())
-  Updated_At                        DateTime?
+  Updated_At                        DateTime
   Is_Active                         Boolean          @default(true)
+  Version                           Int              @default(1)
   Audit_Log                         Audit_Log[]
   Booked_Room                       Booked_Room[]
   Booking_Booking_Approver_IDToUser Booking[]        @relation("Booking_Approver_IDToUser")
@@ -27,7 +28,6 @@ model User {
   Form_Form_Approver_IDToUser       Form[]           @relation("Form_Approver_IDToUser")
   Form_Form_Creator_IDToUser        Form[]           @relation("Form_Creator_IDToUser")
   Item                              Item[]
-  // Ticket relations
   CreatedTickets                    Ticket[]         @relation("Ticket_User")
 }
 
@@ -48,10 +48,9 @@ model Item {
   Booking              Booking[]
   Borrow_Item          Borrow_Item[]
   Computer_Peripherals Computer_Peripherals[]
-
-  ReplacedBy       Item?                  @relation("ItemToItem", fields: [Replaced_By_Item_ID], references: [Item_ID])
-  Replaces         Item?                  @relation("ItemToItem")
-  User             User                   @relation(fields: [User_ID], references: [User_ID])
+  ReplacedBy           Item?                  @relation("ItemToItem", fields: [Replaced_By_Item_ID], references: [Item_ID])
+  Replaces             Item?                  @relation("ItemToItem")
+  User                 User                   @relation(fields: [User_ID], references: [User_ID])
 }
 
 model Computer {
@@ -77,16 +76,14 @@ model Form {
 }
 
 model Ticket {
-  Ticket_ID    Int       @id @default(autoincrement())
-  User_ID      Int
-  Title        String
-  Description  String
-  Status       String    // PENDING, ACCEPTED, REJECTED, IN_PROGRESS, COMPLETED
-  Created_At   DateTime  @default(now())
-  Updated_At   DateTime  @updatedAt
-  
-  // Relations
-  User     User     @relation("Ticket_User", fields: [User_ID], references: [User_ID])
+  Ticket_ID   Int      @id @default(autoincrement())
+  User_ID     Int
+  Title       String
+  Description String
+  Status      String
+  Created_At  DateTime @default(now())
+  Updated_At  DateTime @updatedAt
+  User        User     @relation("Ticket_User", fields: [User_ID], references: [User_ID])
 }
 
 model Booking {
@@ -116,14 +113,18 @@ model Room {
 }
 
 model Schedule {
-  Schedule_ID Int      @id @default(autoincrement())
+  Schedule_ID Int       @id @default(autoincrement())
   Room_ID     Int
-  Day         String
+  Name        String    // Class/Event name (e.g., "DSA", "Algorithms")
+  Days        String    @default("1,2,3,4,5") // Comma-separated days (0=Sunday, 6=Saturday) e.g. "1,3,5" for Mon,Wed,Fri
   Start_Time  DateTime
   End_Time    DateTime
-  Created_At  DateTime @default(now())
-  Updated_At  DateTime
-  Room        Room     @relation(fields: [Room_ID], references: [Room_ID])
+  IsActive    Boolean   @default(true)
+  Created_At  DateTime  @default(now())
+  Updated_At  DateTime  @updatedAt @default(now())
+  Room        Room      @relation(fields: [Room_ID], references: [Room_ID])
+  Bookings    Booked_Room[]
+  @@map("Schedule")
 }
 
 model Audit_Log {
@@ -137,14 +138,19 @@ model Audit_Log {
 model Booked_Room {
   Booked_Room_ID Int      @id @default(autoincrement())
   Room_ID        Int
-  User_ID        Int
-  Start_Time     DateTime
-  End_Time       DateTime
-  Status         String
-  Created_At     DateTime @default(now())
-  Updated_At     DateTime
-  Room           Room     @relation(fields: [Room_ID], references: [Room_ID])
-  User           User     @relation(fields: [User_ID], references: [User_ID])
+  Schedule_ID  Int?
+  User_ID      Int
+  Start_Time   DateTime
+  End_Time     DateTime
+  Status       String    @default("PENDING")
+  Purpose      String?
+  Created_At   DateTime  @default(now())
+  Updated_At   DateTime  @updatedAt
+  Room         Room      @relation(fields: [Room_ID], references: [Room_ID])
+  User         User      @relation(fields: [User_ID], references: [User_ID])
+  Schedule     Schedule? @relation(fields: [Schedule_ID], references: [Schedule_ID])
+
+  @@map("Booked_Room")
 }
 
 model Borrow_Item {
