@@ -52,11 +52,6 @@ const checkUserRole = async (userId, allowedRoles) => {
 
 // Get all items
 router.get('/', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const items = await prisma.Item.findMany({
       include: {
@@ -80,11 +75,6 @@ router.get('/', async (req, res) => {
 
 // Get item by ID
 router.get('/:id', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const item = await prisma.Item.findUnique({
       where: { Item_ID: parseInt(req.params.id) },
@@ -109,11 +99,6 @@ router.get('/:id', async (req, res) => {
 
 // Create new item
 router.post('/', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const {
       User_ID,
@@ -193,11 +178,6 @@ router.post('/', async (req, res) => {
 
 // Update item
 router.put('/:id', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD', 'LAB_TECH']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
-  }
   try {
     const itemId = parseInt(req.params.id);
     const updates = req.body;
