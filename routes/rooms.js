@@ -568,13 +568,16 @@ router.post('/:roomId/schedules', async (req, res) => {
     const uniqueDays = [...new Set(daysArray)].sort((a, b) => a - b);
     const daysString = uniqueDays.join(',');
     
-    // Create schedule with only fields that exist in the database
+    // Create schedule with required fields
     const scheduleData = {
       Room_ID: parseInt(req.params.roomId),
       Days: daysString,
       Start_Time: startTime,
-      End_Time: endTime
-      // Note: Not including Name and Description as they don't exist in the database
+      End_Time: endTime,
+      Name: Name,  // Include the required Name field
+      IsActive: true,  // Default to active
+      Created_At: new Date(),
+      Updated_At: new Date()
     };
     
     console.log('Creating schedule with data:', scheduleData);

@@ -18,7 +18,6 @@ model User {
   Created_At                        DateTime         @default(now())
   Updated_At                        DateTime
   Is_Active                         Boolean          @default(true)
-  Version                           Int              @default(1)
   Audit_Log                         Audit_Log[]
   Booked_Room                       Booked_Room[]
   Booking_Booking_Approver_IDToUser Booking[]        @relation("Booking_Approver_IDToUser")
@@ -47,19 +46,11 @@ model Item {
   Updated_At           DateTime
   Booking              Booking[]
   Borrow_Item          Borrow_Item[]
+  ComputerItems        ComputerItem[]
   Computer_Peripherals Computer_Peripherals[]
   ReplacedBy           Item?                  @relation("ItemToItem", fields: [Replaced_By_Item_ID], references: [Item_ID])
   Replaces             Item?                  @relation("ItemToItem")
   User                 User                   @relation(fields: [User_ID], references: [User_ID])
-}
-
-model Computer {
-  Computer_ID    Int              @id @default(autoincrement())
-  Name           String
-  Type           String
-  Created_At     DateTime         @default(now())
-  Updated_At     DateTime
-  Borrowing_Comp Borrowing_Comp[]
 }
 
 model Form {
@@ -113,17 +104,18 @@ model Room {
 }
 
 model Schedule {
-  Schedule_ID Int       @id @default(autoincrement())
+  Schedule_ID Int           @id @default(autoincrement())
   Room_ID     Int
-  Name        String    // Class/Event name (e.g., "DSA", "Algorithms")
-  Days        String    @default("1,2,3,4,5") // Comma-separated days (0=Sunday, 6=Saturday) e.g. "1,3,5" for Mon,Wed,Fri
   Start_Time  DateTime
   End_Time    DateTime
-  IsActive    Boolean   @default(true)
-  Created_At  DateTime  @default(now())
-  Updated_At  DateTime  @updatedAt @default(now())
-  Room        Room      @relation(fields: [Room_ID], references: [Room_ID])
+  Created_At  DateTime      @default(now())
+  Updated_At  DateTime      @default(now()) @updatedAt
+  Days        String        @default("1,2,3,4,5")
+  IsActive    Boolean       @default(true)
+  Name        String
   Bookings    Booked_Room[]
+  Room        Room          @relation(fields: [Room_ID], references: [Room_ID])
+
   @@map("Schedule")
 }
 
@@ -136,19 +128,19 @@ model Audit_Log {
 }
 
 model Booked_Room {
-  Booked_Room_ID Int      @id @default(autoincrement())
+  Booked_Room_ID Int       @id @default(autoincrement())
   Room_ID        Int
-  Schedule_ID  Int?
-  User_ID      Int
-  Start_Time   DateTime
-  End_Time     DateTime
-  Status       String    @default("PENDING")
-  Purpose      String?
-  Created_At   DateTime  @default(now())
-  Updated_At   DateTime  @updatedAt
-  Room         Room      @relation(fields: [Room_ID], references: [Room_ID])
-  User         User      @relation(fields: [User_ID], references: [User_ID])
-  Schedule     Schedule? @relation(fields: [Schedule_ID], references: [Schedule_ID])
+  User_ID        Int
+  Start_Time     DateTime
+  End_Time       DateTime
+  Status         String    @default("PENDING")
+  Created_At     DateTime  @default(now())
+  Updated_At     DateTime  @updatedAt
+  Purpose        String?
+  Schedule_ID    Int?
+  Room           Room      @relation(fields: [Room_ID], references: [Room_ID])
+  Schedule       Schedule? @relation(fields: [Schedule_ID], references: [Schedule_ID])
+  User           User      @relation(fields: [User_ID], references: [User_ID])
 
   @@map("Booked_Room")
 }
@@ -189,6 +181,28 @@ model Computer_Peripherals {
   Item          Item     @relation(fields: [Item_ID], references: [Item_ID])
 }
 
+model Computer {
+  Computer_ID    Int              @id @default(autoincrement())
+  Name           String
+  Created_At     DateTime         @default(now())
+  Updated_At     DateTime
+  Description    String?
+  Status         ComputerStatus   @default(AVAILABLE)
+  Borrowing_Comp Borrowing_Comp[]
+  Items          ComputerItem[]
+}
+
+model ComputerItem {
+  Computer_Item_ID Int      @id @default(autoincrement())
+  Computer_ID      Int
+  Item_ID          Int
+  Created_At       DateTime @default(now())
+  Computer         Computer @relation(fields: [Computer_ID], references: [Computer_ID])
+  Item             Item     @relation(fields: [Item_ID], references: [Item_ID])
+
+  @@unique([Computer_ID, Item_ID])
+}
+
 enum UserType {
   LAB_HEAD
   LAB_TECH
@@ -203,4 +217,11 @@ enum ItemStatus {
   DEFECTIVE
   LOST
   REPLACED
+}
+
+enum ComputerStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  DECOMMISSIONED
 }
