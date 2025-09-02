@@ -328,7 +328,6 @@ router.post('/bulk', async (req, res) => {
         Last_Name: user.Last_Name,
         Email: user.Email,
         Password: hashedPassword,
-        Contact_Number: user.Contact_Number || '',
         User_Type: user.User_Type || 'STUDENT', // Default to STUDENT if not specified
         Is_Active: user.Is_Active !== undefined ? user.Is_Active : true,
         Created_At: new Date(),

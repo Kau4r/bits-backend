@@ -278,18 +278,18 @@ router.post('/bulk', async (req, res) => {
       });
     }
 
-    // Prepare item data with generated barcodes
+    // Prepare item data with generated item codes if not provided
     const currentDate = new Date();
     const itemData = items.map(item => ({
-      Item_Name: item.Item_Name,
-      Description: item.Description || '',
-      Category: item.Category || 'GENERAL', // Default category
-      Status: item.Status || 'AVAILABLE',   // Default status
-      Barcode_Number: item.Barcode_Number || `ITEM-${uuidv4().substring(0, 8).toUpperCase()}`,
-      Is_Active: item.Is_Active !== undefined ? item.Is_Active : true,
+      Item_Code: item.Item_Code || `ITEM-${uuidv4().substring(0, 8).toUpperCase()}`,
+      Item_Type: item.Item_Type || 'GENERAL',  // Default type if not specified
+      Brand: item.Brand || null,
+      Serial_Number: item.Serial_Number || null,
+      Status: item.Status || 'AVAILABLE',      // Default status (must be one of: 'AVAILABLE', 'BORROWED', 'DEFECTIVE')
+      Room_ID: item.Room_ID || null,
       Created_At: currentDate,
       Updated_At: currentDate,
-      Added_By: parseInt(User_ID)
+      User_ID: parseInt(User_ID)  // This is the Added_By in the schema
     }));
 
     // Use transaction to create all items
