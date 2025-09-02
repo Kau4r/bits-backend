@@ -12,15 +12,58 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Missing required fields' });
         }
 
-        // Check if room is available
+        // Get room with active schedules
+        const room = await prisma.room.findUnique({
+            where: { Room_ID: parseInt(Room_ID) },
+            include: {
+                Schedules: {
+                    where: {
+                        IsActive: true,
+                        Start_Time: { lte: new Date(End_Time) },
+                        End_Time: { gte: new Date(Start_Time) }
+                    }
+                }
+            }
+        });
+
+        if (!room) {
+            return res.status(404).json({ error: 'Room not found' });
+        }
+
+        // Check if room is available for booking
+        if (room.Status !== 'AVAILABLE') {
+            return res.status(403).json({
+                error: 'Room is not available for booking',
+                details: `Room status is currently ${room.Status}`
+            });
+        }
+
+        // Check if there's a valid schedule for the requested time
+        const validSchedule = room.Schedules.some(schedule => {
+            const scheduleStart = new Date(schedule.Start_Time);
+            const scheduleEnd = new Date(schedule.End_Time);
+            const bookingStart = new Date(Start_Time);
+            const bookingEnd = new Date(End_Time);
+            
+            return bookingStart >= scheduleStart && bookingEnd <= scheduleEnd;
+        });
+
+        if (!validSchedule) {
+            return res.status(403).json({
+                error: 'Booking not allowed',
+                details: 'No valid schedule found for the requested time'
+            });
+        }
+
+        // Check for conflicting bookings
         const conflictingBooking = await prisma.Booked_Room.findFirst({
             where: {
                 Room_ID: parseInt(Room_ID),
                 Status: 'APPROVED',
                 OR: [
                     {
-                        Start_Time: { lte: new Date(End_Time) },
-                        End_Time: { gte: new Date(Start_Time) }
+                        Start_Time: { lt: new Date(End_Time) },
+                        End_Time: { gt: new Date(Start_Time) }
                     }
                 ]
             }

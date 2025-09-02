@@ -2,6 +2,7 @@ const express = require('express')
 const router = express.Router()
 const { PrismaClient } = require('@prisma/client')
 const prisma = new PrismaClient()
+const { v4: uuidv4 } = require('uuid');
 
 // Helper function to check user role
 const checkUserRole = async (userId, allowedRoles) => {
@@ -58,9 +59,9 @@ router.get('/', async (req, res) => {
         User: true,
         ReplacedBy: true,  // Replaced items (self-relation)
         Replaces: true,  // Items that this item replaces
-        Computer_Peripherals: true,  // Peripherals
         Borrow_Item: true,  // Borrow history
-        Booking: true  // Booking history
+        Booking: true,  // Booking history
+        Computers: true  // Computers this item is part of
       }
     });
     res.json(items);
@@ -82,9 +83,9 @@ router.get('/:id', async (req, res) => {
         User: true,
         ReplacedBy: true,
         Replaces: true,
-        Computer_Peripherals: true,
         Borrow_Item: true,
-        Booking: true
+        Booking: true,
+        Computers: true
       }
     })
     if (!item) {
@@ -103,21 +104,17 @@ router.post('/', async (req, res) => {
     const {
       User_ID,
       Item_Code,
-      Name,
-      Type,
+      Item_Type = 'GENERAL',
       Brand,
-      Model,
       Serial_Number,
-      Item_QR_Code,
       Status = 'AVAILABLE',
-      Replaced_By_Item_ID = null,
-      Notes = ''
+      Room_ID
     } = req.body;
 
     // Validate required fields
-    if (!User_ID || !Item_Code || !Name || !Type) {
+    if (!User_ID || !Item_Code) {
       return res.status(400).json({
-        error: 'User_ID, Item_Code, Name, and Type are required'
+        error: 'User_ID and Item_Code are required'
       });
     }
 
@@ -139,27 +136,39 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Item with this code already exists' });
     }
 
+    // Validate Item_Type against available enums
+    const validItemTypes = ['GENERAL', 'KEYBOARD', 'MOUSE', 'MONITOR', 'SYSTEM_UNIT'];
+    if (!validItemTypes.includes(Item_Type)) {
+      return res.status(400).json({
+        error: `Invalid Item_Type. Must be one of: ${validItemTypes.join(', ')}`
+      });
+    }
+
     // Create the item
     const currentTime = new Date();
     const itemData = {
       User: { connect: { User_ID: parseInt(User_ID) } },
       Item_Code,
-      Name,
-      Type,
-      Brand: Brand || '',
-      Model: Model || '',
-      Serial_Number: Serial_Number || '',
-      Item_QR_Code: Item_QR_Code || '',
+      Item_Type,
+      Brand: Brand || null,
+      Serial_Number: Serial_Number || null,
       Status,
       Created_At: currentTime,
       Updated_At: currentTime
     };
-
-    // Handle the Replaced_By_Item_ID relation if provided
-    if (Replaced_By_Item_ID) {
-      itemData.Item = {
-        connect: { Item_ID: parseInt(Replaced_By_Item_ID) }
-      };
+    
+    // Add Room relation if provided
+    if (Room_ID) {
+      // Verify room exists
+      const room = await prisma.Room.findUnique({
+        where: { Room_ID: parseInt(Room_ID) }
+      });
+      
+      if (!room) {
+        return res.status(400).json({ error: 'Room not found' });
+      }
+      
+      itemData.Room = { connect: { Room_ID: parseInt(Room_ID) }};
     }
 
     const item = await prisma.Item.create({
@@ -244,6 +253,157 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({
       error: 'Failed to delete item',
       details: error.message
+    });
+  }
+});
+
+// Bulk create inventory items
+router.post('/bulk', async (req, res) => {
+  try {
+    const { items, User_ID } = req.body;
+    
+    // Check user role (only ADMIN and LAB_HEAD can bulk create)
+    const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD']);
+    if (roleCheck.error) {
+      return res.status(roleCheck.status).json({ 
+        error: roleCheck.error, 
+        message: roleCheck.message 
+      });
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ 
+        error: 'Invalid request',
+        details: 'Expected an array of items in the request body' 
+      });
+    }
+
+    const currentYear = new Date().getFullYear();
+    const prefix = 'ITM'; // Default prefix if no item type
+    
+    // First, get all unique item types and serial numbers in this batch
+    const itemTypes = [...new Set(items.map(item => item.Item_Type || 'GENERAL'))];
+    const serialNumbers = items.map(item => item.Serial_Number).filter(Boolean);
+    
+    // Check for duplicate serial numbers in the current batch
+    const duplicateSerials = serialNumbers.filter((num, index) => serialNumbers.indexOf(num) !== index);
+    if (duplicateSerials.length > 0) {
+      return res.status(400).json({
+        error: 'Duplicate serial numbers found',
+        details: 'The following serial numbers appear more than once in your request',
+        duplicateSerials: [...new Set(duplicateSerials)]
+      });
+    }
+    
+    // Check if any serial numbers already exist in the database
+    if (serialNumbers.length > 0) {
+      const existingItems = await prisma.item.findMany({
+        where: {
+          Serial_Number: {
+            in: serialNumbers
+          }
+        },
+        select: {
+          Serial_Number: true
+        }
+      });
+      
+      if (existingItems.length > 0) {
+        return res.status(400).json({
+          error: 'Duplicate serial numbers found',
+          details: 'The following serial numbers already exist in the system',
+          existingSerials: existingItems.map(i => i.Serial_Number)
+        });
+      }
+    }
+    
+    // Get the highest number for each item type
+    const typeCounts = {};
+    
+    // Find the highest number for each item type in the database
+    for (const itemType of itemTypes) {
+      const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
+      
+      const latestItem = await prisma.item.findFirst({
+        where: {
+          Item_Code: {
+            startsWith: `${typePrefix}-${currentYear}-`
+          }
+        },
+        orderBy: {
+          Item_Code: 'desc'
+        },
+        select: {
+          Item_Code: true
+        }
+      });
+      
+      // Initialize counter for this item type
+      typeCounts[itemType] = 0;
+      if (latestItem) {
+        const lastCode = latestItem.Item_Code;
+        const lastNumber = parseInt(lastCode.split('-').pop());
+        if (!isNaN(lastNumber)) {
+          typeCounts[itemType] = lastNumber;
+        }
+      }
+    }
+    
+    // Track counts for the current batch
+    const currentBatchCounts = {};
+    
+    // Prepare item data with generated codes
+    const itemData = items.map(item => {
+      const itemType = item.Item_Type || 'GENERAL';
+      const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
+      
+      // Initialize counter for this item type if not exists
+      if (currentBatchCounts[itemType] === undefined) {
+        currentBatchCounts[itemType] = typeCounts[itemType] || 0;
+      }
+      
+      // Increment counter for this item type
+      currentBatchCounts[itemType]++;
+      const itemNumber = currentBatchCounts[itemType].toString().padStart(3, '0');
+      const itemCode = `${typePrefix}-${currentYear}-${itemNumber}`;
+      
+      return {
+        Item_Code: itemCode,
+        Item_Type: itemType,
+        Brand: item.Brand || null,
+        Serial_Number: item.Serial_Number || null,
+        Status: item.Status || 'AVAILABLE',
+        Room_ID: item.Room_ID || null,
+        Created_At: new Date(),
+        Updated_At: new Date(),
+        User_ID: parseInt(User_ID)
+      };
+    });
+
+    // Use transaction to create all items
+    const createdItems = await prisma.$transaction(
+      itemData.map(item => 
+        prisma.item.create({ data: item })
+      )
+    );
+
+    res.status(201).json({
+      message: `Successfully created ${createdItems.length} items`,
+      count: createdItems.length,
+      items: createdItems.map(i => ({
+        Item_ID: i.Item_ID,
+        Item_Name: i.Item_Name,
+        Barcode_Number: i.Barcode_Number,
+        Status: i.Status
+      }))
+    });
+
+  } catch (error) {
+    console.error('Error in bulk item creation:', error);
+    res.status(500).json({ 
+      error: 'Failed to create items',
+      details: error.message,
+      ...(error.code && { code: error.code })
     });
   }
 });

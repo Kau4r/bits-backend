@@ -12,7 +12,48 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Missing required fields' });
         }
 
-        // Check if computer is available
+        // Get computer with room and schedule info
+        const computer = await prisma.computer.findUnique({
+            where: { Computer_ID: parseInt(Computer_ID) },
+            include: {
+                Room: {
+                    include: {
+                        Schedules: {
+                            where: {
+                                IsActive: true,
+                                Start_Time: { lte: new Date() },
+                                End_Time: { gte: new Date() }
+                            },
+                            orderBy: { Start_Time: 'desc' },
+                            take: 1
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!computer) {
+            return res.status(404).json({ error: 'Computer not found' });
+        }
+
+        // Check if computer is in a room that's open
+        if (!computer.Room || computer.Room.Status !== 'AVAILABLE') {
+            return res.status(403).json({ 
+                error: 'Computer is not available for borrowing',
+                details: 'The room is either closed or not available for use'
+            });
+        }
+
+        // Check if there's an active schedule that allows borrowing
+        const currentSchedule = computer.Room.Schedules[0];
+        if (!currentSchedule || currentSchedule.Schedule_Type !== 'STUDENT_USE') {
+            return res.status(403).json({
+                error: 'Borrowing not allowed',
+                details: 'Computer can only be borrowed during student use hours'
+            });
+        }
+
+        // Check if computer is already borrowed
         const existingBorrowing = await prisma.Borrowing_Comp.findFirst({
             where: {
                 Computer_ID: parseInt(Computer_ID),

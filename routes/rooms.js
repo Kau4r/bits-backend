@@ -220,7 +220,7 @@ router.post('/', async (req, res) => {
   console.log('Request body:', req.body);
   
   try {
-    const { Name, Capacity } = req.body;
+    const { Name, Capacity, Room_Type } = req.body;
     
     // Validate required fields
     if (!Name || typeof Name !== 'string' || Name.trim() === '') {
@@ -228,6 +228,16 @@ router.post('/', async (req, res) => {
         error: 'Validation Error',
         details: 'Name is required and must be a non-empty string',
         received: req.body
+      });
+    }
+    
+    // Validate Room_Type
+    const validRoomTypes = ['CONSULTATION', 'LECTURE', 'LAB'];
+    if (Room_Type && !validRoomTypes.includes(Room_Type)) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        details: `Room_Type must be one of: ${validRoomTypes.join(', ')}`,
+        received: Room_Type
       });
     }
     
@@ -245,7 +255,9 @@ router.post('/', async (req, res) => {
     
     const roomData = {
       Name: Name.trim(),
+      Room_Type: Room_Type || 'LAB',
       Capacity: Capacity !== undefined ? parseInt(Capacity) : 0,
+      Status: 'AVAILABLE',
       Created_At: new Date(),
       Updated_At: new Date()
     };
@@ -528,20 +540,62 @@ router.post('/:roomId/schedules', async (req, res) => {
   
   try {
     const {
-      Name,
-      Description,
+      Title,
+      Description = null, // Make description optional
       Days = '1,2,3,4,5', // Default to weekdays (Mon-Fri)
       Start_Time,
       End_Time,
+      Schedule_Type = 'STUDENT_USE', // Default to STUDENT_USE since that's the main use case
       IsRecurring = true,
-      EndDate = null
+      EndDate = null,
+      Created_By
     } = req.body;
     
     // Basic validation
-    if (!Name) return res.status(400).json({ error: 'Name is required' });
+    if (!Title) return res.status(400).json({ error: 'Title is required' });
     if (!Days) return res.status(400).json({ error: 'Days is required' });
     if (!Start_Time) return res.status(400).json({ error: 'Start_Time is required' });
     if (!End_Time) return res.status(400).json({ error: 'End_Time is required' });
+    if (!Created_By) return res.status(400).json({ error: 'Created_By (User_ID) is required' });
+    
+    // Convert to Date objects for comparison
+    const startTime = new Date(Start_Time);
+    const endTime = new Date(End_Time);
+    const endDateObj = EndDate ? new Date(EndDate) : null;
+    
+    // Validate date format
+    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime()) || (endDateObj && isNaN(endDateObj.getTime()))) {
+      return res.status(400).json({ 
+        error: 'Invalid date format',
+        details: 'Please provide valid ISO date strings for Start_Time, End_Time, and EndDate'
+      });
+    }
+    
+    // Validate time range (minimum 30 minutes)
+    const minDuration = 30 * 60 * 1000; // 30 minutes in milliseconds
+    if (endTime <= startTime) {
+      return res.status(400).json({ 
+        error: 'Invalid time range',
+        details: 'End time must be after start time' 
+      });
+    }
+    
+    if (endTime - startTime < minDuration) {
+      return res.status(400).json({ 
+        error: 'Invalid time range',
+        details: 'Minimum booking duration is 30 minutes' 
+      });
+    }
+    
+    // Validate Schedule_Type
+    const validScheduleTypes = ['CLASS', 'FACULTY_USE', 'STUDENT_USE', 'MAINTENANCE', 'SPECIAL_EVENT'];
+    if (!validScheduleTypes.includes(Schedule_Type)) {
+      return res.status(400).json({
+        error: 'Invalid Schedule_Type',
+        details: `Schedule_Type must be one of: ${validScheduleTypes.join(', ')}`,
+        received: Schedule_Type
+      });
+    }
     
     // Validate Days format (comma-separated numbers 0-6)
     const daysArray = Days.split(',').map(day => parseInt(day.trim()));
@@ -552,15 +606,36 @@ router.post('/:roomId/schedules', async (req, res) => {
       });
     }
     
-    // Parse dates to ensure they're valid
-    const startTime = new Date(Start_Time);
-    const endTime = new Date(End_Time);
-    const endDateObj = EndDate ? new Date(EndDate) : null;
+    // Check for conflicting schedules
+    const conflict = await prisma.schedule.findFirst({
+      where: {
+        Room_ID: parseInt(req.params.roomId),
+        IsActive: true,
+        OR: [
+          {
+            // New schedule starts during an existing schedule
+            Start_Time: { lte: startTime },
+            End_Time: { gt: startTime }
+          },
+          {
+            // New schedule ends during an existing schedule
+            Start_Time: { lt: endTime },
+            End_Time: { gte: endTime }
+          },
+          {
+            // New schedule completely contains an existing schedule
+            Start_Time: { gte: startTime },
+            End_Time: { lte: endTime }
+          }
+        ]
+      }
+    });
     
-    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime()) || (endDateObj && isNaN(endDateObj.getTime()))) {
-      return res.status(400).json({ 
-        error: 'Invalid date format',
-        details: 'Please provide valid ISO date strings for Start_Time, End_Time, and EndDate'
+    if (conflict) {
+      return res.status(409).json({
+        error: 'Schedule conflict',
+        details: 'The selected time slot conflicts with an existing schedule',
+        conflictingSchedule: conflict
       });
     }
     
@@ -571,13 +646,17 @@ router.post('/:roomId/schedules', async (req, res) => {
     // Create schedule with required fields
     const scheduleData = {
       Room_ID: parseInt(req.params.roomId),
-      Days: daysString,
+      Title: Title,
+      Description: Description || null,
+      Schedule_Type,
+      Days: uniqueDays.join(','),
       Start_Time: startTime,
       End_Time: endTime,
-      Name: Name,  // Include the required Name field
-      IsActive: true,  // Default to active
+      IsRecurring,
+      Created_By: parseInt(Created_By),
       Created_At: new Date(),
-      Updated_At: new Date()
+      Updated_At: new Date(),
+      IsActive: true,  // Default to active
     };
     
     console.log('Creating schedule with data:', scheduleData);
