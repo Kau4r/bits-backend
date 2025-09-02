@@ -6,32 +6,25 @@ const prisma = new PrismaClient();
 // Create a new computer with items
 router.post('/', async (req, res) => {
   try {
-    const { name, description, itemIds } = req.body;
+    const { name, roomId, itemIds } = req.body;
     
-    const computer = await prisma.$transaction(async (prisma) => {
-      const newComputer = await prisma.computer.create({
-        data: {
-          Name: name,
-          Description: description,
-          Status: 'AVAILABLE',
-          Created_At: new Date(),
-          Updated_At: new Date()
-        }
-      });
-
-      if (itemIds && itemIds.length > 0) {
-        await Promise.all(itemIds.map(itemId => 
-          prisma.computerItem.create({
-            data: {
-              Computer_ID: newComputer.Computer_ID,
-              Item_ID: itemId,
-              Created_At: new Date()
-            }
-          })
-        ));
+    const computer = await prisma.computer.create({
+      data: {
+        Name: name,
+        Status: 'AVAILABLE',
+        Created_At: new Date(),
+        Updated_At: new Date(),
+        // Connect to room if provided
+        ...(roomId && { Room: { connect: { Room_ID: parseInt(roomId) } } }),
+        // Connect items if provided
+        ...(itemIds && itemIds.length > 0 && {
+          Items: { connect: itemIds.map(id => ({ Item_ID: id })) }
+        })
+      },
+      include: {
+        Items: true,
+        Room: true
       }
-
-      return newComputer;
     });
 
     res.status(201).json(computer);
@@ -41,19 +34,16 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Get all computers with their items
+// Get all computers with their items and room
 router.get('/', async (req, res) => {
   try {
     const computers = await prisma.computer.findMany({
       include: {
-        Items: {
-          include: {
-            Item: true
-          }
-        }
+        Items: true,
+        Room: true
       },
       orderBy: {
-        Created_At: 'desc'
+        Name: 'asc'
       }
     });
     res.json(computers);
@@ -63,18 +53,14 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get computer by ID with items
+// Get computer by ID with items and room
 router.get('/:id', async (req, res) => {
   try {
     const computer = await prisma.computer.findUnique({
       where: { Computer_ID: parseInt(req.params.id) },
       include: {
-        Items: {
-          include: {
-            Item: true
-          }
-        },
-        Borrowing_Comp: true
+        Items: true,
+        Room: true
       }
     });
 
@@ -84,8 +70,52 @@ router.get('/:id', async (req, res) => {
 
     res.json(computer);
   } catch (error) {
-    console.error(`Error fetching computer ${req.params.id}:`, error);
+    console.error('Error fetching computer:', error);
     res.status(500).json({ error: 'Failed to fetch computer', details: error.message });
+  }
+});
+
+// Delete a computer
+router.delete('/:id', async (req, res) => {
+  try {
+    const computerId = parseInt(req.params.id);
+    
+    // First verify the computer exists
+    const computer = await prisma.computer.findUnique({
+      where: { Computer_ID: computerId },
+      include: { 
+        Items: true,
+        Room: true
+      }
+    });
+
+    if (!computer) {
+      return res.status(404).json({ error: 'Computer not found' });
+    }
+
+    // First, disconnect all items from the computer
+    await prisma.computer.update({
+      where: { Computer_ID: computerId },
+      data: {
+        Items: {
+          set: []
+        },
+        Room: computer.Room ? { disconnect: true } : undefined
+      }
+    });
+
+    // Then delete the computer
+    await prisma.computer.delete({
+      where: { Computer_ID: computerId }
+    });
+
+    res.status(204).end();
+  } catch (error) {
+    console.error('Error deleting computer:', error);
+    res.status(500).json({ 
+      error: 'Failed to delete computer', 
+      details: error.message 
+    });
   }
 });
 
@@ -113,52 +143,90 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
-// Add items to computer
-router.post('/:id/items', async (req, res) => {
+// Update computer items and room
+router.patch('/:id', async (req, res) => {
   try {
-    const { itemIds } = req.body;
-
+    const { itemIds, roomId } = req.body;
+    const computerId = parseInt(req.params.id);
+    
+    // First verify the computer exists
     const computer = await prisma.computer.findUnique({
-      where: { Computer_ID: parseInt(req.params.id) }
+      where: { Computer_ID: computerId },
+      include: { Items: true }
     });
 
     if (!computer) {
       return res.status(404).json({ error: 'Computer not found' });
     }
 
-    await Promise.all(itemIds.map(itemId => 
-      prisma.computerItem.create({
-        data: {
-          Computer_ID: parseInt(req.params.id),
-          Item_ID: itemId,
-          Created_At: new Date()
-        }
-      })
-    ));
+    // Prepare update data
+    const updateData = {
+      Updated_At: new Date()
+    };
 
-    res.status(201).json({ message: 'Items added to computer' });
+    // Add items update if provided
+    if (itemIds) {
+      updateData.Items = {
+        set: itemIds.map(id => ({ Item_ID: id }))
+      };
+    }
+
+    // Add room update if provided
+    if (roomId !== undefined) {
+      if (roomId === null) {
+        // Remove from room
+        updateData.Room = { disconnect: true };
+      } else {
+        // Connect to new room
+        updateData.Room = { connect: { Room_ID: roomId } };
+      }
+    }
+
+    // Update the computer
+    const updatedComputer = await prisma.computer.update({
+      where: { Computer_ID: computerId },
+      data: updateData,
+      include: {
+        Items: true,
+        Room: true
+      }
+    });
+
+    res.json(updatedComputer);
   } catch (error) {
-    console.error('Error adding items to computer:', error);
-    res.status(500).json({ error: 'Failed to add items to computer', details: error.message });
+    console.error('Error updating computer:', error);
+    res.status(500).json({ 
+      error: 'Failed to update computer', 
+      details: error.message 
+    });
   }
 });
 
 // Remove item from computer
 router.delete('/:computerId/items/:itemId', async (req, res) => {
   try {
-    await prisma.computerItem.delete({
-      where: {
-        Computer_ID_Item_ID: {
-          Computer_ID: parseInt(req.params.computerId),
-          Item_ID: parseInt(req.params.itemId)
+    const computer = await prisma.computer.update({
+      where: { Computer_ID: parseInt(req.params.computerId) },
+      data: {
+        Items: {
+          disconnect: { Item_ID: parseInt(req.params.itemId) }
         }
+      },
+      include: {
+        Items: true
       }
     });
-
-    res.json({ message: 'Item removed from computer' });
+    
+    res.json({ 
+      message: 'Item removed from computer',
+      computer
+    });
   } catch (error) {
     console.error('Error removing item from computer:', error);
-    res.status(500).json({ error: 'Failed to remove item from computer', details: error.message });
+    res.status(500).json({ 
+      error: 'Failed to remove item from computer',
+      details: error.message
+    });
   }
 });
 

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const bcrypt = require('bcrypt');
 
 // Get all users
 router.get('/', async (req, res) => {
@@ -299,6 +300,67 @@ router.get('/:id/history', async (req, res) => {
     res.status(500).json({
       error: 'Failed to fetch user history',
       details: error.message
+    });
+  }
+});
+
+// Bulk create users
+router.post('/bulk', async (req, res) => {
+  try {
+    const { users } = req.body;
+    
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({ 
+        error: 'Invalid request',
+        details: 'Expected an array of users in the request body' 
+      });
+    }
+
+    // Hash passwords and prepare user data
+    const userPromises = users.map(async (user) => {
+      const hashedPassword = user.Password 
+        ? await bcrypt.hash(user.Password, 10)
+        : await bcrypt.hash('defaultPassword123', 10); // Default password if not provided
+
+      return {
+        First_Name: user.First_Name,
+        Middle_Name: user.Middle_Name || '',
+        Last_Name: user.Last_Name,
+        Email: user.Email,
+        Password: hashedPassword,
+        Contact_Number: user.Contact_Number || '',
+        User_Type: user.User_Type || 'STUDENT', // Default to STUDENT if not specified
+        Is_Active: user.Is_Active !== undefined ? user.Is_Active : true,
+        Created_At: new Date(),
+        Updated_At: new Date()
+      };
+    });
+
+    const userData = await Promise.all(userPromises);
+    
+    // Use transaction to create all users
+    const createdUsers = await prisma.$transaction(
+      userData.map(user => 
+        prisma.user.create({ data: user })
+      )
+    );
+
+    res.status(201).json({
+      message: `Successfully created ${createdUsers.length} users`,
+      count: createdUsers.length,
+      users: createdUsers.map(u => ({ 
+        User_ID: u.User_ID, 
+        Email: u.Email,
+        User_Type: u.User_Type 
+      }))
+    });
+
+  } catch (error) {
+    console.error('Error in bulk user creation:', error);
+    res.status(500).json({ 
+      error: 'Failed to create users',
+      details: error.message,
+      ...(error.code && { code: error.code })
     });
   }
 });
