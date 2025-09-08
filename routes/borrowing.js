@@ -6,23 +6,50 @@ const prisma = new PrismaClient();
 // Borrow a computer
 router.post('/', async (req, res) => {
     try {
-        const { User_ID, Computer_ID, Expected_Return_Time } = req.body;
+        const { User_ID, Computer_ID, Return_Date, Status = 'BORROWED' } = req.body;
 
-        if (!User_ID || !Computer_ID || !Expected_Return_Time) {
-            return res.status(400).json({ error: 'Missing required fields' });
+        if (!User_ID || !Computer_ID || !Return_Date) {
+            return res.status(400).json({ 
+                error: 'Missing required fields',
+                required: ['User_ID', 'Computer_ID', 'Return_Date'],
+                received: { User_ID, Computer_ID, Return_Date }
+            });
         }
 
+        // For testing purposes - set to true to bypass schedule checks
+        const TEST_MODE = true;
+        
+        // Get current time and day
+        const currentTime = new Date();
+        let currentDay = currentTime.getDay() || 7; // Convert 0 (Sunday) to 7
+        
         // Get computer with room and schedule info
         const computer = await prisma.computer.findUnique({
             where: { Computer_ID: parseInt(Computer_ID) },
             include: {
                 Room: {
                     include: {
-                        Schedules: {
+                        Schedule: {
                             where: {
                                 IsActive: true,
-                                Start_Time: { lte: new Date() },
-                                End_Time: { gte: new Date() }
+                                Schedule_Type: TEST_MODE ? undefined : 'STUDENT_USE',
+                                Days: TEST_MODE ? undefined : { contains: currentDay.toString() },
+                                OR: [
+                                    {
+                                        // For recurring schedules
+                                        IsRecurring: true,
+                                        Start_Time: { lte: currentTime },
+                                        End_Time: { gte: currentTime }
+                                    },
+                                    {
+                                        // For one-time schedules
+                                        IsRecurring: false,
+                                        Start_Time: { lte: currentTime },
+                                        End_Time: { gte: currentTime },
+                                        Start_Time: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+                                        End_Time: { lte: new Date(new Date().setHours(23, 59, 59, 999)) }
+                                    }
+                                ]
                             },
                             orderBy: { Start_Time: 'desc' },
                             take: 1
@@ -44,14 +71,33 @@ router.post('/', async (req, res) => {
             });
         }
 
+        // Debug: Log the current time and day for verification
+        console.log('Current time:', new Date().toISOString());
+        console.log('Current day:', currentDay);
+        
         // Check if there's an active schedule that allows borrowing
-        const currentSchedule = computer.Room.Schedules[0];
-        if (!currentSchedule || currentSchedule.Schedule_Type !== 'STUDENT_USE') {
+        if (!TEST_MODE && (!computer.Room.Schedule || computer.Room.Schedule.length === 0)) {
+            console.log('No matching schedule found. Available schedules:', 
+                await prisma.schedule.findMany({
+                    where: { 
+                        Room_ID: computer.Room.Room_ID,
+                        IsActive: true,
+                        Schedule_Type: 'STUDENT_USE'
+                    }
+                })
+            );
+            
             return res.status(403).json({
                 error: 'Borrowing not allowed',
-                details: 'Computer can only be borrowed during student use hours'
+                details: 'No active student use schedule found for this computer.',
+                currentTime: new Date().toISOString(),
+                currentDay: currentDay,
+                roomId: computer.Room.Room_ID,
+                testMode: TEST_MODE
             });
         }
+        
+        const currentSchedule = computer.Room.Schedule[0];
 
         // Check if computer is already borrowed
         const existingBorrowing = await prisma.Borrowing_Comp.findFirst({
@@ -75,8 +121,9 @@ router.post('/', async (req, res) => {
                 User_ID: parseInt(User_ID),
                 Computer_ID: parseInt(Computer_ID),
                 Borrow_Date: new Date(),
-                Return_Date: new Date(Expected_Return_Time),
-                Status: 'BORROWED'
+                Return_Date: new Date(Return_Date),
+                Status: Status,
+                Updated_At: new Date()
             },
             include: {
                 Computer: true,
@@ -112,7 +159,7 @@ router.post('/', async (req, res) => {
 router.patch('/:id/return', async (req, res) => {
     try {
         const { id } = req.params;
-        const { status = 'RETURNED', notes } = req.body;
+        const { Status = 'RETURNED' } = req.body;
 
         const borrowing = await prisma.Borrowing_Comp.findUnique({
             where: { Borrowing_Comp_ID: parseInt(id) }
@@ -126,9 +173,7 @@ router.patch('/:id/return', async (req, res) => {
         const updatedBorrowing = await prisma.Borrowing_Comp.update({
             where: { Borrowing_Comp_ID: parseInt(id) },
             data: { 
-                Status: status,
-                Notes: notes,
-                Actual_Return_Date: new Date(),
+                Status: Status,
                 Updated_At: new Date()
             }
         });
