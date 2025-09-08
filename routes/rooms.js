@@ -4,32 +4,13 @@ const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Get all rooms
 router.get('/', async (req, res) => {
-  console.log('\n=== GET /rooms request received ===');
-  console.log('Headers:', JSON.stringify(req.headers, null, 2));
-  
   try {
-    // Verify database connection
-    console.log('Testing database connection...');
-    await prisma.$queryRaw`SELECT 1`;
-    console.log('✅ Database connection successful');
-    
-    console.log('\n🔍 Querying rooms from database...');
-    // First, get all rooms with basic info
+    // Get all rooms
     const rooms = await prisma.room.findMany({
-      orderBy: {
-        Room_ID: 'asc'
-      }
-    });
-    
-    // Then get schedules and bookings separately to avoid relation issues
-    const roomsWithDetails = await Promise.all(rooms.map(async (room) => {
-      // Get schedules for the room
-      let schedules = [];
-      try {
-        schedules = await prisma.schedule.findMany({
-          where: { Room_ID: room.Room_ID },
+      orderBy: { Room_ID: 'asc' },
+      include: {
+        Schedule: {
           select: {
             Schedule_ID: true,
             Days: true,
@@ -38,260 +19,188 @@ router.get('/', async (req, res) => {
             Created_At: true,
             Updated_At: true
           }
-        });
-      } catch (error) {
-        console.error('Error fetching schedules:', error);
-      }
-      
-      // Get bookings for the room
-      let bookings = [];
-      try {
-        // First try with basic fields that should always exist
-        const bookingFields = {
-          Booked_Room_ID: true,
-          Room_ID: true,
-          User_ID: true,
-          Start_Time: true,
-          End_Time: true,
-          Status: true,
-          Created_At: true,
-          Updated_At: true
-        };
-        
-        // Try to get bookings with basic fields first
-        bookings = await prisma.Booked_Room.findMany({
-          where: { Room_ID: room.Room_ID },
-          select: bookingFields
-        });
-      } catch (error) {
-        console.error('Error fetching bookings:', error);
-        // If there's an error, try with minimal fields
-        try {
-          bookings = await prisma.Booked_Room.findMany({
-            where: { Room_ID: room.Room_ID },
-            select: {
-              Booked_Room_ID: true,
-              Room_ID: true,
-              User_ID: true,
-              Start_Time: true,
-              End_Time: true,
-              Status: true
-            }
-          });
-        } catch (innerError) {
-          console.error('Error with minimal booking fields:', innerError);
+        },
+        Booked_Room: {
+          where: {
+            End_Time: { gte: new Date() },
+            Status: { not: 'CANCELLED' }
+          },
+          select: {
+            Booked_Room_ID: true,
+            Room_ID: true,
+            User_ID: true,
+            Start_Time: true,
+            End_Time: true,
+            Status: true,
+            Created_At: true,
+            Updated_At: true
+          },
+          orderBy: { Start_Time: 'asc' }
         }
       }
-      
-      return {
-        ...room,
-        Schedule: schedules,
-        Booked_Room: bookings
-      };
-    }));
-    
-    console.log(`\n📊 Found ${rooms.length} rooms in database`);
-    if (rooms.length > 0) {
-      console.log('\nSample room data:');
-      console.log(JSON.stringify(rooms[0], null, 2));
-    }
-    
-    // Log the response being sent
-    console.log('\n📤 Sending response with status 200');
-    console.log('Response body:', JSON.stringify(rooms, null, 2));
-    
-    // Set explicit content type
-    res.setHeader('Content-Type', 'application/json');
+    });
+
     res.json(rooms);
   } catch (error) {
-    console.error('Error in GET /rooms:', {
-      message: error.message,
-      code: error.code,
-      meta: error.meta,
-      stack: error.stack
-    });
-    
+    console.error('Error fetching rooms:', error);
     res.status(500).json({ 
-      error: 'Error fetching rooms',
-      details: error.message,
-      code: error.code,
-      meta: error.meta
+      error: 'Failed to fetch rooms',
+      details: error.message 
     });
   }
 });
 
 // Get room by ID
 router.get('/:id', async (req, res) => {
+  const roomId = parseInt(req.params.id);
+  
+  if (isNaN(roomId) || roomId <= 0) {
+    return res.status(400).json({ 
+      error: 'Invalid room ID',
+      details: 'Room ID must be a positive number'
+    });
+  }
+
   try {
-    const roomId = parseInt(req.params.id);
-    
-    // Validate room ID
-    if (isNaN(roomId)) {
-      return res.status(400).json({ 
-        error: 'Invalid room ID',
-        details: 'Room ID must be a number'
-      });
-    }
-    
-    // First get the basic room info
     const room = await prisma.room.findUnique({
-      where: { Room_ID: roomId }
+      where: { Room_ID: roomId },
+      include: {
+        Schedule: {
+          select: {
+            Schedule_ID: true,
+            Days: true,
+            Start_Time: true,
+            End_Time: true,
+            Created_At: true,
+            Updated_At: true
+          },
+          orderBy: { Start_Time: 'asc' }
+        }
+      }
     });
 
     if (!room) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Room not found',
         details: `No room found with ID: ${roomId}`
       });
     }
 
-    // Get schedules for the room
-    let schedules = [];
-    try {
-      schedules = await prisma.schedule.findMany({
-        where: { Room_ID: roomId },
-        select: {
-          Schedule_ID: true,
-          Days: true,
-          Start_Time: true,
-          End_Time: true,
-          Created_At: true,
-          Updated_At: true
-        }
-      });
-    } catch (error) {
-      console.error('Error fetching schedules:', error);
-    }
-
-    // Get active bookings for the room
-    let bookings = [];
-    try {
-      bookings = await prisma.Booked_Room.findMany({
-        where: {
-          Room_ID: roomId,
-          End_Time: { gte: new Date() },
-          Status: { not: 'CANCELLED' }
-        },
-        select: {
-          Booked_Room_ID: true,
-          Room_ID: true,
-          User_ID: true,
-          Start_Time: true,
-          End_Time: true,
-          Status: true,
-          Created_At: true,
-          Updated_At: true
-        },
-        orderBy: {
-          Start_Time: 'asc'
-        }
-      });
-    } catch (error) {
-      console.error('Error fetching bookings:', error);
-    }
-
-    // Combine the data
-    const roomWithDetails = {
-      ...room,
-      Schedule: schedules,
-      Booked_Room: bookings
-    };
-    
-    if (!room) {
-      return res.status(404).json({ 
-        error: 'Room not found',
-        details: `No room found with ID: ${roomId}`
-      });
-    }
-    
     res.json(room);
   } catch (error) {
     console.error('Error fetching room:', error);
-    res.status(500).json({ 
-      error: 'Error fetching room',
-      details: error.message,
-      code: error.code
+    res.status(500).json({
+      error: 'Failed to fetch room',
+      details: error.message
     });
   }
 });
 
-// Create new room
 router.post('/', async (req, res) => {
-  console.log('Request body:', req.body);
+  const VALID_ROOM_TYPES = ['CONSULTATION', 'LECTURE', 'LAB'];
+  const { Name, Capacity, Room_Type } = req.body;
+  
+  // Input validation
+  const errors = [];
+  if (!Name?.trim()) errors.push('Name is required');
+  if (!Capacity || isNaN(Capacity) || Capacity <= 0) errors.push('Valid capacity is required');
+  if (Room_Type && !VALID_ROOM_TYPES.includes(Room_Type)) {
+    errors.push(`Room_Type must be one of: ${VALID_ROOM_TYPES.join(', ')}`);
+  }
+  
+  if (errors.length > 0) {
+    return res.status(400).json({ error: 'Validation Error', details: errors });
+  }
   
   try {
-    const { Name, Capacity, Room_Type } = req.body;
-    
-    // Validate required fields
-    if (!Name || typeof Name !== 'string' || Name.trim() === '') {
-      return res.status(400).json({ 
-        error: 'Validation Error',
-        details: 'Name is required and must be a non-empty string',
-        received: req.body
-      });
-    }
-    
-    // Validate Room_Type
-    const validRoomTypes = ['CONSULTATION', 'LECTURE', 'LAB'];
-    if (Room_Type && !validRoomTypes.includes(Room_Type)) {
-      return res.status(400).json({
-        error: 'Validation Error',
-        details: `Room_Type must be one of: ${validRoomTypes.join(', ')}`,
-        received: Room_Type
-      });
-    }
-    
-    // Validate Capacity if provided
-    if (Capacity !== undefined) {
-      const capacityNum = parseInt(Capacity);
-      if (isNaN(capacityNum) || capacityNum < 0) {
-        return res.status(400).json({
-          error: 'Validation Error',
-          details: 'Capacity must be a non-negative number',
-          received: Capacity
-        });
+    // Check for duplicate room name (case-insensitive)
+    const existingRoom = await prisma.room.findFirst({
+      where: {
+        Name: {
+          equals: Name.trim(),
+          mode: 'insensitive'
+        }
       }
-    }
-    
-    const roomData = {
-      Name: Name.trim(),
-      Room_Type: Room_Type || 'LAB',
-      Capacity: Capacity !== undefined ? parseInt(Capacity) : 0,
-      Status: 'AVAILABLE',
-      Created_At: new Date(),
-      Updated_At: new Date()
-    };
-    
-    console.log('Creating room with data:', roomData);
-    
-    const room = await prisma.room.create({
-      data: roomData,
     });
     
-    console.log('Room created successfully:', room);
-    res.status(201).json(room);
+    if (existingRoom) {
+      return res.status(409).json({
+        error: 'Room already exists',
+        details: `A room named '${Name}' already exists`,
+        existingRoomId: existingRoom.Room_ID
+      });
+    }
+    
+    const newRoom = await prisma.room.create({
+      data: {
+        Name: Name.trim(),
+        Capacity: parseInt(Capacity),
+        Room_Type: Room_Type || 'LECTURE',
+        Status: 'AVAILABLE'
+      },
+      select: {
+        Room_ID: true,
+        Name: true,
+        Capacity: true,
+        Room_Type: true,
+        Status: true,
+        Created_At: true,
+        Updated_At: true
+      }
+    });
+    
+    // Log the creation
+    try {
+      await prisma.audit_Log.create({
+        data: {
+          Log_Type: 'SYSTEM',
+          Action: 'ROOM_CREATED',
+          Details: JSON.stringify({
+            roomId: newRoom.Room_ID,
+            roomName: newRoom.Name
+          })
+        }
+      });
+    } catch (auditError) {
+      console.error('Audit log error:', auditError);
+    }
+    
+    res.status(201).json(newRoom);
   } catch (error) {
-    console.error('Error creating room:', error);
-    const statusCode = error.code === 'P2002' ? 409 : 500; // Handle unique constraint violation
-    res.status(statusCode).json({ 
-      error: 'Error creating room',
+    console.error('Create room error:', error);
+    res.status(500).json({
+      error: 'Failed to create room',
       details: error.message,
-      code: error.code,
-      meta: error.meta
+      ...(process.env.NODE_ENV === 'development' && {
+        code: error.code,
+        meta: error.meta
+      })
     });
   }
 });
 
-// Update room
+// Update room by ID
 router.put('/:id', async (req, res) => {
-  try {
-    const roomId = parseInt(req.params.id);
-    const { Name, Capacity } = req.body;
-    
-    // Validate room ID
-    if (isNaN(roomId)) {
-      return res.status(400).json({ error: 'Invalid room ID' });
+  const VALID_ROOM_TYPES = ['CONSULTATION', 'LECTURE', 'LAB'];
+  
+  const validateRoomId = (id) => {
+    const roomId = parseInt(id, 10);
+    if (isNaN(roomId) || roomId <= 0) {
+      return { valid: false, error: 'Room ID must be a positive number' };
     }
+    return { valid: true, roomId };
+  };
+  
+  const { valid, roomId, error } = validateRoomId(req.params.id);
+  if (!valid) {
+    return res.status(400).json({ 
+      error: 'Invalid room ID',
+      details: error
+    });
+  }
+
+  try {
+    const { Name, Capacity, Room_Type, Status } = req.body;
     
     // Check if room exists
     const existingRoom = await prisma.room.findUnique({
@@ -299,43 +208,113 @@ router.put('/:id', async (req, res) => {
     });
     
     if (!existingRoom) {
-      return res.status(404).json({ error: 'Room not found' });
+      return res.status(404).json({ 
+        error: 'Room not found',
+        details: `No room found with ID: ${roomId}`
+      });
     }
     
-    // Validate input
-    const updateData = { Updated_At: new Date() };
+    // Prepare update data
+    const updateData = {};
+    const errors = [];
     
+    // Validate and update Name if provided
     if (Name !== undefined) {
       if (typeof Name !== 'string' || Name.trim() === '') {
-        return res.status(400).json({ error: 'Name must be a non-empty string' });
+        errors.push('Name must be a non-empty string');
+      } else {
+        updateData.Name = Name.trim();
       }
-      updateData.Name = Name.trim();
     }
     
+    // Validate and update Capacity if provided
     if (Capacity !== undefined) {
       const capacityNum = parseInt(Capacity);
-      if (isNaN(capacityNum) || capacityNum < 0) {
-        return res.status(400).json({ error: 'Capacity must be a non-negative number' });
+      if (isNaN(capacityNum) || capacityNum <= 0) {
+        errors.push('Capacity must be a positive number');
+      } else {
+        updateData.Capacity = capacityNum;
       }
-      updateData.Capacity = capacityNum;
+    }
+    
+    // Validate and update Room_Type if provided
+    if (Room_Type !== undefined) {
+      if (!VALID_ROOM_TYPES.includes(Room_Type)) {
+        errors.push(`Room_Type must be one of: ${VALID_ROOM_TYPES.join(', ')}`);
+      } else {
+        updateData.Room_Type = Room_Type;
+      }
+    }
+    
+    
+    // Update Status if provided
+    if (Status !== undefined) {
+      updateData.Status = Status;
+    }
+    
+    // Return validation errors if any
+    if (errors.length > 0) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        details: errors,
+        received: req.body
+      });
     }
     
     // If no valid fields to update
-    if (Object.keys(updateData).length <= 1) { // Only has Updated_At
-      return res.status(400).json({ error: 'No valid fields to update' });
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        details: 'No valid fields provided for update'
+      });
     }
     
+    // Update the room
     const updatedRoom = await prisma.room.update({
       where: { Room_ID: roomId },
       data: updateData,
+      select: {
+        Room_ID: true,
+        Name: true,
+        Capacity: true,
+        Room_Type: true,
+        Status: true,
+        Created_At: true,
+        Updated_At: true
+      }
     });
     
-    res.json(updatedRoom);
+    // Create audit log
+    try {
+      await prisma.audit_Log.create({
+        data: {
+          Log_Type: 'SYSTEM',
+          Action: 'ROOM_UPDATED',
+          Details: JSON.stringify({
+            roomId: updatedRoom.Room_ID,
+            updatedFields: Object.keys(updateData).filter(k => k !== 'Updated_At'),
+            previousValues: Object.fromEntries(
+              Object.entries(updateData)
+                .filter(([k]) => k in existingRoom)
+                .map(([k]) => [k, existingRoom[k]])
+            )
+          })
+        }
+      });
+    } catch (auditError) {
+      console.error('Failed to create audit log:', auditError);
+    }
+    
+    res.json({
+      message: 'Room updated successfully',
+      room: updatedRoom
+    });
+    
   } catch (error) {
     console.error('Error updating room:', error);
     
     let statusCode = 500;
-    let errorMessage = 'Error updating room';
+    let errorMessage = 'Failed to update room';
     
     if (error.code === 'P2025') {
       statusCode = 404;
@@ -355,15 +334,23 @@ router.put('/:id', async (req, res) => {
 
 // Delete room
 router.delete('/:id', async (req, res) => {
-  try {
-    const roomId = parseInt(req.params.id);
-    
-    // Validate room ID
-    if (isNaN(roomId)) {
-      return res.status(400).json({ error: 'Invalid room ID' });
+  const validateRoomId = (id) => {
+    const roomId = parseInt(id, 10);
+    if (isNaN(roomId) || roomId <= 0) {
+      return { valid: false, error: 'Room ID must be a positive number' };
     }
-    
-    // Check if room exists
+    return { valid: true, roomId };
+  };
+
+  const { valid, roomId, error } = validateRoomId(req.params.id);
+  if (!valid) {
+    return res.status(400).json({ 
+      error: 'Invalid room ID',
+      details: error
+    });
+  }
+
+  try {
     const existingRoom = await prisma.room.findUnique({
       where: { Room_ID: roomId },
       include: {
@@ -432,24 +419,15 @@ router.delete('/:id', async (req, res) => {
 
 // Schedule CRUD Operations
 
-// Get all schedules for a room
+// Get all schedules and bookings for a room
 router.get('/:roomId/schedules', async (req, res) => {
   try {
     const roomId = parseInt(req.params.roomId);
-    const { day } = req.query;
+    const { day, startDate, endDate } = req.query;
     
-    console.log(`Fetching schedules for room ${roomId}`);
+    console.log(`Fetching schedules and bookings for room ${roomId}`);
     
-    // Validate room ID
-    if (isNaN(roomId)) {
-      console.error('Invalid room ID:', req.params.roomId);
-      return res.status(400).json({ 
-        error: 'Invalid room ID',
-        details: 'Room ID must be a number'
-      });
-    }
-    
-    // Check if room exists
+    // Validate room ID and check if room exists
     const room = await prisma.room.findUnique({
       where: { Room_ID: roomId },
       select: { 
@@ -459,25 +437,42 @@ router.get('/:roomId/schedules', async (req, res) => {
     });
     
     if (!room) {
-      console.error('Room not found:', roomId);
+      console.error('Room not found or invalid ID:', roomId);
       return res.status(404).json({ 
         error: 'Room not found',
         details: `No room found with ID: ${roomId}`
       });
     }
-    
-    // Get all schedules for the room with only the fields that exist in the database
-    let schedules = [];
-    try {
-      // First, get the minimal schedule data
-      schedules = await prisma.schedule.findMany({
-        where: { Room_ID: roomId },
+
+    // Date range for filtering
+    const now = new Date();
+    const start = startDate ? new Date(startDate) : now;
+    const end = endDate ? new Date(endDate) : new Date(now.setDate(now.getDate() + 7)); // Default to 7 days
+
+    // Get all schedules for the room
+    const [schedules, bookings] = await Promise.all([
+      // Regular schedules
+      prisma.schedule.findMany({
+        where: { 
+          Room_ID: roomId,
+          IsActive: true,
+          OR: [
+            { IsRecurring: true },
+            { 
+              IsRecurring: false,
+              Start_Time: { gte: start },
+              End_Time: { lte: end }
+            }
+          ]
+        },
         select: {
           Schedule_ID: true,
+          Title: true,
           Days: true,
           Start_Time: true,
           End_Time: true,
-          // Only include fields that definitely exist in the database
+          IsRecurring: true,
+          Schedule_Type: true,
           Created_At: true,
           Updated_At: true
         },
@@ -485,21 +480,70 @@ router.get('/:roomId/schedules', async (req, res) => {
           { Start_Time: 'asc' },
           { End_Time: 'asc' }
         ]
-      });
+      }),
       
-      console.log(`Found ${schedules.length} schedules for room ${roomId}`);
-      
-    } catch (error) {
-      console.error('Error fetching schedules:', error);
-      return res.status(500).json({ 
-        error: 'Error fetching schedules',
-        details: error.message,
-        code: error.code
-      });
-    }
-    
+      // Booked rooms
+      prisma.booked_Room.findMany({
+        where: { 
+          Room_ID: roomId,
+          Status: 'APPROVED',
+          Start_Time: { lte: end },
+          End_Time: { gte: start }
+        },
+        select: {
+          Booked_Room_ID: true,
+          Start_Time: true,
+          End_Time: true,
+          Status: true,
+          Purpose: true,
+          Created_At: true,
+          Updated_At: true,
+          User: {
+            select: {
+              First_Name: true,
+              Last_Name: true,
+              Email: true,
+              User_Type: true
+            }
+          },
+          Approver: {
+            select: {
+              First_Name: true,
+              Last_Name: true,
+              User_Type: true
+            }
+          }
+        },
+        orderBy: [
+          { Start_Time: 'asc' },
+          { End_Time: 'asc' }
+        ]
+      })
+    ]);
+
+    console.log(`Found ${schedules.length} schedules and ${bookings.length} bookings for room ${roomId}`);
+
+    // Format the response
+    const response = {
+      room: {
+        Room_ID: room.Room_ID,
+        Name: room.Name
+      },
+      schedules: schedules.map(s => ({
+        ...s,
+        type: 'schedule',
+        isRecurring: s.IsRecurring,
+        scheduleType: s.Schedule_Type
+      })),
+      bookings: bookings.map(b => ({
+        ...b,
+        type: 'booking',
+        bookedBy: b.User ? `${b.User.First_Name} ${b.User.Last_Name}` : null,
+        approvedBy: b.Approver ? `${b.Approver.First_Name} ${b.Approver.Last_Name}` : null
+      }))
+    };
+
     // Filter by day if specified (0-6, where 0 is Sunday)
-    let filteredSchedules = [...schedules];
     if (day !== undefined) {
       const dayNum = parseInt(day);
       if (isNaN(dayNum) || dayNum < 0 || dayNum > 6) {
@@ -509,8 +553,8 @@ router.get('/:roomId/schedules', async (req, res) => {
         });
       }
       
-      // Filter schedules that include the specified day
-      filteredSchedules = schedules.filter(schedule => {
+      // Filter schedules by day
+      response.schedules = response.schedules.filter(schedule => {
         if (!schedule.Days) return false;
         try {
           const days = schedule.Days.split(',').map(d => parseInt(d.trim()));
@@ -521,13 +565,23 @@ router.get('/:roomId/schedules', async (req, res) => {
         }
       });
       
-      console.log(`Filtered to ${filteredSchedules.length} schedules for day ${dayNum}`);
+      // Filter bookings by day
+      response.bookings = response.bookings.filter(booking => {
+        const bookingDay = new Date(booking.Start_Time).getDay(); // 0-6 (0=Sunday)
+        return bookingDay === dayNum;
+      });
+      
+      console.log(`Filtered to ${response.schedules.length} schedules and ${response.bookings.length} bookings for day ${dayNum}`);
     }
     
-    res.json(filteredSchedules);
+    res.json(response);
   } catch (error) {
-    console.error('Error fetching schedules:', error);
-    res.status(500).json({ error: 'Error fetching schedules' });
+    console.error('Error fetching schedules and bookings:', error);
+    res.status(500).json({ 
+      error: 'Error fetching schedules and bookings',
+      details: error.message,
+      code: error.code
+    });
   }
 });
 
@@ -541,13 +595,11 @@ router.post('/:roomId/schedules', async (req, res) => {
   try {
     const {
       Title,
-      Description = null, // Make description optional
       Days = '1,2,3,4,5', // Default to weekdays (Mon-Fri)
       Start_Time,
       End_Time,
       Schedule_Type = 'STUDENT_USE', // Default to STUDENT_USE since that's the main use case
       IsRecurring = true,
-      EndDate = null,
       Created_By
     } = req.body;
     
@@ -561,13 +613,12 @@ router.post('/:roomId/schedules', async (req, res) => {
     // Convert to Date objects for comparison
     const startTime = new Date(Start_Time);
     const endTime = new Date(End_Time);
-    const endDateObj = EndDate ? new Date(EndDate) : null;
-    
+
     // Validate date format
-    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime()) || (endDateObj && isNaN(endDateObj.getTime()))) {
+    if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
       return res.status(400).json({ 
         error: 'Invalid date format',
-        details: 'Please provide valid ISO date strings for Start_Time, End_Time, and EndDate'
+        details: 'Please provide valid ISO date strings for Start_Time and End_Time'
       });
     }
     
@@ -647,7 +698,6 @@ router.post('/:roomId/schedules', async (req, res) => {
     const scheduleData = {
       Room_ID: parseInt(req.params.roomId),
       Title: Title,
-      Description: Description || null,
       Schedule_Type,
       Days: uniqueDays.join(','),
       Start_Time: startTime,
@@ -689,7 +739,6 @@ router.put('/schedules/:scheduleId', async (req, res) => {
     const scheduleId = parseInt(req.params.scheduleId);
     const {
       Name,
-      Description,
       Days,
       Start_Time,
       End_Time,
@@ -715,7 +764,6 @@ router.put('/schedules/:scheduleId', async (req, res) => {
     
     // Only include fields that are provided in the request
     if (Name !== undefined) updateData.Name = Name;
-    if (Description !== undefined) updateData.Description = Description;
     if (Days !== undefined) updateData.Days = Days;
     if (Start_Time) updateData.Start_Time = new Date(Start_Time);
     if (End_Time) updateData.End_Time = new Date(End_Time);
