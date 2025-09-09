@@ -16,7 +16,7 @@ router.post('/', async (req, res) => {
         const room = await prisma.room.findUnique({
             where: { Room_ID: parseInt(Room_ID) },
             include: {
-                Schedules: {
+                Schedule: {
                     where: {
                         IsActive: true,
                         Start_Time: { lte: new Date(End_Time) },
@@ -38,20 +38,21 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // Check if there's a valid schedule for the requested time
-        const validSchedule = room.Schedules.some(schedule => {
+        // Check for any schedule conflicts
+        const hasConflict = room.Schedule.some(schedule => {
             const scheduleStart = new Date(schedule.Start_Time);
             const scheduleEnd = new Date(schedule.End_Time);
             const bookingStart = new Date(Start_Time);
             const bookingEnd = new Date(End_Time);
             
-            return bookingStart >= scheduleStart && bookingEnd <= scheduleEnd;
+            // Check if booking time overlaps with any schedule
+            return (bookingStart < scheduleEnd && bookingEnd > scheduleStart);
         });
 
-        if (!validSchedule) {
-            return res.status(403).json({
-                error: 'Booking not allowed',
-                details: 'No valid schedule found for the requested time'
+        if (hasConflict) {
+            return res.status(409).json({
+                error: 'Time conflict with existing schedule',
+                details: 'The requested time conflicts with an existing schedule'
             });
         }
 
@@ -76,20 +77,22 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // Create booking
+        // Create the booking with PENDING status
         const booking = await prisma.Booked_Room.create({
             data: {
-                Room_ID: parseInt(Room_ID),
                 User_ID: parseInt(User_ID),
+                Room_ID: parseInt(Room_ID),
                 Start_Time: new Date(Start_Time),
                 End_Time: new Date(End_Time),
+                Status: 'PENDING',  // Set to PENDING for review
                 Purpose: Purpose || '',
-                Status: 'PENDING'
+                Created_At: new Date()
             },
             include: {
                 Room: true,
                 User: {
                     select: {
+                        User_ID: true,
                         First_Name: true,
                         Last_Name: true,
                         Email: true
@@ -129,6 +132,13 @@ router.get('/', async (req, res) => {
                         Last_Name: true,
                         Email: true
                     }
+                },
+                Approver: {
+                    select: {
+                        First_Name: true,
+                        Last_Name: true,
+                        User_Type: true
+                    }
                 }
             },
             orderBy: {
@@ -156,14 +166,53 @@ router.patch('/:id/status', async (req, res) => {
             return res.status(400).json({ error: 'Invalid status' });
         }
 
+        // Get the approver's user information
+        const approver = await prisma.user.findUnique({
+            where: { User_ID: parseInt(approverId) },
+            select: { User_Type: true }
+        });
+
+        if (!approver) {
+            return res.status(404).json({ error: 'Approver not found' });
+        }
+
+        // Check if user has permission to approve/reject
+        if (!['LABTECH', 'LABHEAD', 'ADMIN'].includes(approver.User_Type)) {
+            return res.status(403).json({ 
+                error: 'Forbidden',
+                details: 'Only LABTECH, LABHEAD, or ADMIN can approve/reject bookings' 
+            });
+        }
+
+        // Get the booking to check its current status
+        const existingBooking = await prisma.Booked_Room.findUnique({
+            where: { Booked_Room_ID: parseInt(id) },
+            include: { User: true }
+        });
+
+        if (!existingBooking) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        // Only allow status changes for PENDING bookings, unless it's an ADMIN
+        if (existingBooking.Status !== 'PENDING' && approver.User_Type !== 'ADMIN') {
+            return res.status(400).json({ 
+                error: 'Bad Request',
+                details: 'Only PENDING bookings can be updated',
+                currentStatus: existingBooking.Status
+            });
+        }
+
+        const updateData = {
+            Status: status,
+            Updated_At: new Date(),
+            ...(status === 'APPROVED' && { Approved_By: parseInt(approverId) }),
+            ...(notes && { Notes: notes })
+        };
+
         const booking = await prisma.Booked_Room.update({
             where: { Booked_Room_ID: parseInt(id) },
-            data: { 
-                Status: status,
-                Updated_At: new Date(),
-                ...(approverId && { Approved_By: parseInt(approverId) }),
-                ...(notes && { Notes: notes })
-            },
+            data: updateData,
             include: {
                 Room: true,
                 User: {
@@ -171,6 +220,13 @@ router.patch('/:id/status', async (req, res) => {
                         First_Name: true,
                         Last_Name: true,
                         Email: true
+                    }
+                },
+                Approver: {
+                    select: {
+                        First_Name: true,
+                        Last_Name: true,
+                        User_Type: true
                     }
                 }
             }
