@@ -41,8 +41,10 @@ This backend uses Express.js, Prisma ORM, and PostgreSQL. It provides a RESTful 
    ```bash
    npx prisma migrate dev --name init
 
-5. Run migrations:
+5. Initialize Users
+   ```bash
+   npx prisma db seed
+
+6. Run backend:
    ```bash
    npm run dev
-
-Testingi daw balik   

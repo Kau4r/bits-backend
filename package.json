@@ -8,6 +8,7 @@
     "dev": "nodemon src/index.js"
   },
   "devDependencies": {
+    "@types/node": "^24.3.1",
     "nodemon": "^3.1.10",
     "prisma": "^6.11.1"
   },
@@ -21,5 +22,8 @@
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.0",
     "uuid": "^11.1.0"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   }
 }

@@ -117,7 +117,11 @@ router.post('/', async (req, res) => {
         error: 'User_ID and Item_Code are required'
       });
     }
-
+    if (!Item_Code) {
+      return res.status(400).json({
+        error: 'Item_Code is required'
+      });
+    }
     // Check if user exists
     const user = await prisma.User.findUnique({
       where: { User_ID: parseInt(User_ID) }
@@ -156,19 +160,19 @@ router.post('/', async (req, res) => {
       Created_At: currentTime,
       Updated_At: currentTime
     };
-    
+
     // Add Room relation if provided
     if (Room_ID) {
       // Verify room exists
       const room = await prisma.Room.findUnique({
         where: { Room_ID: parseInt(Room_ID) }
       });
-      
+
       if (!room) {
         return res.status(400).json({ error: 'Room not found' });
       }
-      
-      itemData.Room = { connect: { Room_ID: parseInt(Room_ID) }};
+
+      itemData.Room = { connect: { Room_ID: parseInt(Room_ID) } };
     }
 
     const item = await prisma.Item.create({
@@ -261,30 +265,29 @@ router.delete('/:id', async (req, res) => {
 router.post('/bulk', async (req, res) => {
   try {
     const { items, User_ID } = req.body;
-    
-    // Check user role (only ADMIN and LAB_HEAD can bulk create)
+
     const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD']);
     if (roleCheck.error) {
-      return res.status(roleCheck.status).json({ 
-        error: roleCheck.error, 
-        message: roleCheck.message 
+      return res.status(roleCheck.status).json({
+        error: roleCheck.error,
+        message: roleCheck.message
       });
     }
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid request',
-        details: 'Expected an array of items in the request body' 
+        details: 'Expected an array of items in the request body'
       });
     }
 
     const currentYear = new Date().getFullYear();
     const prefix = 'ITM'; // Default prefix if no item type
-    
+
     // First, get all unique item types and serial numbers in this batch
     const itemTypes = [...new Set(items.map(item => item.Item_Type || 'GENERAL'))];
     const serialNumbers = items.map(item => item.Serial_Number).filter(Boolean);
-    
+
     // Check for duplicate serial numbers in the current batch
     const duplicateSerials = serialNumbers.filter((num, index) => serialNumbers.indexOf(num) !== index);
     if (duplicateSerials.length > 0) {
@@ -294,10 +297,10 @@ router.post('/bulk', async (req, res) => {
         duplicateSerials: [...new Set(duplicateSerials)]
       });
     }
-    
+
     // Check if any serial numbers already exist in the database
     if (serialNumbers.length > 0) {
-      const existingItems = await prisma.item.findMany({
+      const existingItems = await prisma.Item.findMany({
         where: {
           Serial_Number: {
             in: serialNumbers
@@ -307,7 +310,7 @@ router.post('/bulk', async (req, res) => {
           Serial_Number: true
         }
       });
-      
+
       if (existingItems.length > 0) {
         return res.status(400).json({
           error: 'Duplicate serial numbers found',
@@ -316,15 +319,15 @@ router.post('/bulk', async (req, res) => {
         });
       }
     }
-    
+
     // Get the highest number for each item type
     const typeCounts = {};
-    
+
     // Find the highest number for each item type in the database
     for (const itemType of itemTypes) {
       const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
-      
-      const latestItem = await prisma.item.findFirst({
+
+      const latestItem = await prisma.Item.findFirst({
         where: {
           Item_Code: {
             startsWith: `${typePrefix}-${currentYear}-`
@@ -337,7 +340,7 @@ router.post('/bulk', async (req, res) => {
           Item_Code: true
         }
       });
-      
+
       // Initialize counter for this item type
       typeCounts[itemType] = 0;
       if (latestItem) {
@@ -348,25 +351,25 @@ router.post('/bulk', async (req, res) => {
         }
       }
     }
-    
+
     // Track counts for the current batch
     const currentBatchCounts = {};
-    
+
     // Prepare item data with generated codes
     const itemData = items.map(item => {
       const itemType = item.Item_Type || 'GENERAL';
       const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
-      
+
       // Initialize counter for this item type if not exists
       if (currentBatchCounts[itemType] === undefined) {
         currentBatchCounts[itemType] = typeCounts[itemType] || 0;
       }
-      
+
       // Increment counter for this item type
       currentBatchCounts[itemType]++;
       const itemNumber = currentBatchCounts[itemType].toString().padStart(3, '0');
       const itemCode = `${typePrefix}-${currentYear}-${itemNumber}`;
-      
+
       return {
         Item_Code: itemCode,
         Item_Type: itemType,
@@ -382,8 +385,8 @@ router.post('/bulk', async (req, res) => {
 
     // Use transaction to create all items
     const createdItems = await prisma.$transaction(
-      itemData.map(item => 
-        prisma.item.create({ data: item })
+      itemData.map(item =>
+        prisma.Item.create({ data: item })
       )
     );
 
@@ -400,7 +403,7 @@ router.post('/bulk', async (req, res) => {
 
   } catch (error) {
     console.error('Error in bulk item creation:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to create items',
       details: error.message,
       ...(error.code && { code: error.code })

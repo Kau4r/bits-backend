@@ -9,7 +9,7 @@ datasource db {
 
 model User {
   User_ID                           Int              @id @default(autoincrement())
-  User_Type                         UserType
+  User_Role                         UserRole          @default(STUDENT)
   Approved_Bookings                 Booked_Room[]    @relation("BookingApprover")
   First_Name                        String
   Middle_Name                       String
@@ -38,29 +38,34 @@ model User {
 }
 
 model Item {
-  Item_ID              Int                    @id @default(autoincrement())
-  User_ID              Int
-  Item_Code            String                 @unique
-  Item_Type            String                 @default("GENERAL")
-  Brand                String?
-  Serial_Number        String?
-  Status               ItemStatus             @default(AVAILABLE)
-  Room_ID              Int?
-  Created_At           DateTime               @default(now())
-  Updated_At           DateTime               @updatedAt
-  Booking              Booking[]
-  Borrow_Item          Borrow_Item[]
-  Computers            Computer[]             @relation("ComputerItems")
-  ReplacedBy           Item?                  @relation("ItemReplacement", fields: [ReplacedById], references: [Item_ID])
-  ReplacedById         Int?                   @unique
-  Replaces             Item?                  @relation("ItemReplacement")
-  Room                 Room?                  @relation(fields: [Room_ID], references: [Room_ID])
-  User                 User                   @relation(fields: [User_ID], references: [User_ID])
+  Item_ID       Int       @id @default(autoincrement())
+  User_ID       Int?
+  Item_Code     String    @unique
+  Item_Type     String    @default("GENERAL")
+  Brand         String?
+  Serial_Number String?
+  Status        ItemStatus
+  Created_At    DateTime  @default(now())
+  Updated_At    DateTime
+  
+  // Foreign keys
+  Room_ID       Int?
+  ReplacedById  Int? @unique
+
+  // Relations
+  Booking       Booking[]
+  Borrow_Item   Borrow_Item[]
+  Computers     Computer[] @relation("ComputerItems")
+  ReplacedBy    Item?      @relation("ItemReplacement", fields: [ReplacedById], references: [Item_ID])
+  Replaces      Item?      @relation("ItemReplacement")
+  Room          Room?      @relation(fields: [Room_ID], references: [Room_ID])
+  User          User?       @relation(fields: [User_ID], references: [User_ID])
 
   @@index([Item_Code])
   @@index([Status])
   @@index([Room_ID])
 }
+
 
 model Form {
   Form_ID                     Int      @id @default(autoincrement())
@@ -273,11 +278,12 @@ model Computer {
   Items          Item[]           @relation("ComputerItems")
 }
 
-enum UserType {
+enum UserRole {
   LAB_HEAD
   LAB_TECH
   FACULTY
   STUDENT
+  SECRETARY
   ADMIN
 }
 
