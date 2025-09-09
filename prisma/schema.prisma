@@ -9,7 +9,7 @@ datasource db {
 
 model User {
   User_ID                           Int              @id @default(autoincrement())
-  User_Type                         UserType
+  User_Role                         UserRole          @default(STUDENT)
   Approved_Bookings                 Booked_Room[]    @relation("BookingApprover")
   First_Name                        String
   Middle_Name                       String
