@@ -12,7 +12,7 @@ app.use(express.json())
 
 // Routes
 app.use('/api/inventory', require('../routes/inventory'))
-app.use('/api/users', require('../routes/users'))
+app.use('/api/users', require('../routes/users'));
 app.use('/api/tickets', require('../routes/tickets'))
 app.use('/api/rooms', require('../routes/rooms'))
 app.use('/api/bookings', require('../routes/bookings'))

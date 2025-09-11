@@ -15,9 +15,9 @@ router.get('/', async (req, res) => {
     res.json(users);
   } catch (error) {
     console.error('Error fetching users:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch users',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -44,9 +44,9 @@ router.get('/:id', async (req, res) => {
     res.json(user);
   } catch (error) {
     console.error(`Error fetching user ${req.params.id}:`, error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch user',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -54,20 +54,20 @@ router.get('/:id', async (req, res) => {
 // Create new user
 router.post('/', async (req, res) => {
   try {
-    const { 
-      User_Type, 
-      First_Name, 
-      Last_Name, 
-      Email, 
+    const {
+      User_Role,
+      First_Name,
+      Last_Name,
+      Email,
       Password,
       Middle_Name = '',
       Is_Active = true
     } = req.body;
 
     // Validate required fields
-    if (!User_Type || !First_Name || !Last_Name || !Email || !Password) {
+    if (!User_Role || !First_Name || !Last_Name || !Email || !Password) {
       return res.status(400).json({
-        error: 'User_Type, First_Name, Last_Name, Email, and Password are required'
+        error: 'User_Role, First_Name, Last_Name, Email, and Password are required'
       });
     }
 
@@ -86,7 +86,7 @@ router.post('/', async (req, res) => {
     const currentTime = new Date();
     const user = await prisma.User.create({
       data: {
-        User_Type,
+        User_Role,
         First_Name,
         Last_Name,
         Middle_Name,
@@ -100,7 +100,7 @@ router.post('/', async (req, res) => {
 
     // Remove password from response
     const { Password: _, ...userWithoutPassword } = user;
-    
+
     res.status(201).json(userWithoutPassword);
   } catch (error) {
     console.error('Error creating user:', error);
@@ -111,16 +111,13 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update user (creates new version)
+// Update user (simple, no versioning)
 router.put('/:id', async (req, res) => {
-  let transaction = [];
-  
   try {
-    const userId = parseInt(req.params.id);
+    const userId = parseInt(req.params.id, 10);
     const updates = req.body;
-    const currentTime = new Date();
 
-    // 1. Get current user data
+    // Find the user
     const currentUser = await prisma.User.findUnique({
       where: { User_ID: userId }
     });
@@ -129,114 +126,65 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Check if email is being updated and if it already exists
-    if (updates.Email && updates.Email !== currentUser.Email) {
-      const existingUser = await prisma.User.findFirst({
-        where: { 
-          Email: updates.Email,
-          Is_Active: true
-        }
-      });
-
-      if (existingUser) {
-        return res.status(400).json({
-          error: 'Email already in use by another active user'
-        });
+    // Update the user
+    const updatedUser = await prisma.User.update({
+      where: { User_ID: userId },
+      data: {
+        ...updates,
+        Updated_At: new Date() // always update the timestamp
       }
-    }
+    });
 
-    // 2. Mark current user as inactive
-    transaction.push(
-      prisma.User.update({
-        where: { User_ID: userId },
-        data: { 
-          Is_Active: false,
-          Updated_At: currentTime
-        }
-      })
-    );
-
-    // 3. Create new user version with updated data
-    const { User_ID, Password: _, ...userData } = currentUser; // Exclude password and ID
-    const newUserData = {
-      ...userData,
-      ...updates,
-      Is_Active: true,
-      Created_At: currentTime,
-      Updated_At: null,
-      Email: updates.Email || currentUser.Email
-    };
-
-    transaction.push(
-      prisma.User.create({
-        data: newUserData
-      })
-    );
-
-    // 4. Log the update in audit log
-    transaction.push(
-      prisma.Audit_Log.create({
-        data: {
-          User_ID: currentUser.User_ID,
-          Action: `USER_UPDATED: ${Object.keys(updates).join(', ')}`,
-          Timestamp: currentTime
-        }
-      })
-    );
-
-    // Execute all operations in a transaction
-    const results = await prisma.$transaction(transaction);
-    const newUser = results[1]; // The second operation is the user creation
-
-    // Remove password from response
-    const { Password: __, ...userWithoutPassword } = newUser;
-    
+    // Remove password before sending response
+    const { Password, ...userWithoutPassword } = updatedUser;
     res.json(userWithoutPassword);
+
   } catch (error) {
     console.error(`Error updating user ${req.params.id}:`, error);
-    
-    // More specific error handling
-    if (error.code === 'P2002') { // Prisma unique constraint error
+
+    if (error.code === 'P2002') {
       return res.status(400).json({
         error: 'Database error',
         details: 'A user with this email already exists'
       });
     }
-    
+
     res.status(500).json({
       error: 'Failed to update user',
-      details: error.message
+      details: error.message || 'Unknown error'
     });
   }
 });
 
+
+
 // Soft delete user (mark as inactive)
 router.delete('/:id', async (req, res) => {
   const prisma = new PrismaClient();
-  
+
   try {
     const userId = parseInt(req.params.id);
-    
+
     // Check if user exists and is active
     const user = await prisma.User.findFirst({
-      where: { 
+      where: {
         User_ID: userId,
         Is_Active: true
       }
     });
 
     if (!user) {
-      return res.status(404).json({ 
-        error: 'User not found or already inactive' 
+      return res.status(404).json({
+        error: 'User not found or already inactive'
       });
     }
 
     // Mark as inactive instead of deleting
     const deletedUser = await prisma.User.update({
       where: { User_ID: userId },
-      data: { 
+      data: {
         Is_Active: false,
-        Updated_At: new Date() 
+        Updated_At: new Date()
       }
     });
 
@@ -251,10 +199,10 @@ router.delete('/:id', async (req, res) => {
 
     // Remove password from response
     const { Password, ...userWithoutPassword } = deletedUser;
-    
-    res.json({ 
+
+    res.json({
       message: 'User marked as inactive',
-      user: userWithoutPassword 
+      user: userWithoutPassword
     });
   } catch (error) {
     console.error(`Error deleting user ${req.params.id}:`, error);
@@ -271,7 +219,7 @@ router.delete('/:id', async (req, res) => {
 router.get('/:id/history', async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
-    
+
     // Get user to verify they exist
     const user = await prisma.User.findUnique({
       where: { User_ID: userId },
@@ -308,17 +256,17 @@ router.get('/:id/history', async (req, res) => {
 router.post('/bulk', async (req, res) => {
   try {
     const { users } = req.body;
-    
+
     if (!Array.isArray(users) || users.length === 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid request',
-        details: 'Expected an array of users in the request body' 
+        details: 'Expected an array of users in the request body'
       });
     }
 
     // Hash passwords and prepare user data
     const userPromises = users.map(async (user) => {
-      const hashedPassword = user.Password 
+      const hashedPassword = user.Password
         ? await bcrypt.hash(user.Password, 10)
         : await bcrypt.hash('defaultPassword123', 10); // Default password if not provided
 
@@ -328,7 +276,7 @@ router.post('/bulk', async (req, res) => {
         Last_Name: user.Last_Name,
         Email: user.Email,
         Password: hashedPassword,
-        User_Type: user.User_Type || 'STUDENT', // Default to STUDENT if not specified
+        User_Role: user.User_Role || 'STUDENT', // Default to STUDENT if not specified
         Is_Active: user.Is_Active !== undefined ? user.Is_Active : true,
         Created_At: new Date(),
         Updated_At: new Date()
@@ -336,10 +284,10 @@ router.post('/bulk', async (req, res) => {
     });
 
     const userData = await Promise.all(userPromises);
-    
+
     // Use transaction to create all users
     const createdUsers = await prisma.$transaction(
-      userData.map(user => 
+      userData.map(user =>
         prisma.user.create({ data: user })
       )
     );
@@ -347,16 +295,16 @@ router.post('/bulk', async (req, res) => {
     res.status(201).json({
       message: `Successfully created ${createdUsers.length} users`,
       count: createdUsers.length,
-      users: createdUsers.map(u => ({ 
-        User_ID: u.User_ID, 
+      users: createdUsers.map(u => ({
+        User_ID: u.User_ID,
         Email: u.Email,
-        User_Type: u.User_Type 
+        User_Role: u.User_Role
       }))
     });
 
   } catch (error) {
     console.error('Error in bulk user creation:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to create users',
       details: error.message,
       ...(error.code && { code: error.code })
