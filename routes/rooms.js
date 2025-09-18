@@ -125,8 +125,8 @@ router.post('/', async (req, res) => {
       await prisma.audit_Log.create({
         data: {
           Action: "ROOM_CREATED", // <-- match schema
-          details: JSON.stringify({ roomId: newRoom.Room_ID, roomName: newRoom.Name }),
-          timestamp: new Date(),
+          Details: JSON.stringify({ roomId: newRoom.Room_ID, roomName: newRoom.Name }),
+          Timestamp: new Date(),
           User: { connect: { User_ID: userId } }
         }
       })
@@ -193,14 +193,14 @@ router.put('/:id', async (req, res) => {
       await prisma.audit_Log.create({
         data: {
           Action: 'ROOM_UPDATED',
-          details: JSON.stringify({
+          Details: JSON.stringify({
             roomId: updatedRoom.Room_ID,
             updatedFields: Object.keys(updateData),
             previousValues: Object.fromEntries(
               Object.entries(updateData).map(([k]) => [k, existingRoom[k]])
             )
           }),
-          timestamp: new Date(),
+          Timestamp: new Date(),
           User: { connect: { User_ID: userId } }
         }
       });
@@ -240,7 +240,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true, message: 'Room and related data deleted' });
   } catch (error) {
     console.error('Delete room error:', error);
-    res.status(500).json({ error: 'Failed to delete room', details: error.message });
+    res.status(500).json({ error: 'Failed to delete room', Details: error.message });
   }
 });
 
