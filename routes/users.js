@@ -2,7 +2,52 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken'); // add this
+
+// Middleware to extract user from JWT
+const authMiddleware = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ message: 'No token provided' });
+
+  const token = authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ message: 'Invalid token' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    req.userId = decoded.userId; // attach userId to request
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+};
+
+
+// Get user by ID
+router.get('/me', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.userId; // comes from JWT
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const user = await prisma.User.findUnique({
+      where: { User_ID: userId },
+      include: {
+        Item: true,
+        Borrow_Item: true,
+        Borrowing_Comp: true,
+        Form_Form_Approver_IDToUser: true,
+        Form_Form_Creator_IDToUser: true,
+        CreatedTickets: true
+      }
+    });
+
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    res.json(user);
+  } catch (error) {
+    console.error('Error fetching current user:', error);
+    res.status(500).json({ error: 'Failed to fetch user', details: error.message });
+  }
+});
 
 // Get all users
 router.get('/', async (req, res) => {
@@ -17,35 +62,6 @@ router.get('/', async (req, res) => {
     console.error('Error fetching users:', error);
     res.status(500).json({
       error: 'Failed to fetch users',
-      details: error.message
-    });
-  }
-});
-
-// Get user by ID
-router.get('/:id', async (req, res) => {
-  try {
-    const user = await prisma.User.findUnique({
-      where: { User_ID: parseInt(req.params.id) },
-      include: {
-        Item: true,
-        Borrow_Item: true,
-        Borrowing_Comp: true,
-        Form_Form_Approver_IDToUser: true,
-        Form_Form_Creator_IDToUser: true,
-        Ticket: true
-      }
-    });
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    res.json(user);
-  } catch (error) {
-    console.error(`Error fetching user ${req.params.id}:`, error);
-    res.status(500).json({
-      error: 'Failed to fetch user',
       details: error.message
     });
   }
@@ -155,8 +171,6 @@ router.put('/:id', async (req, res) => {
     });
   }
 });
-
-
 
 // Soft delete user (mark as inactive)
 router.delete('/:id', async (req, res) => {

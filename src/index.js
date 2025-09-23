@@ -5,12 +5,14 @@ const { PrismaClient } = require('@prisma/client')
 
 const app = express()
 const prisma = new PrismaClient()
+const authRoutes = require('./middleware/auth');
 
 // Middleware
 app.use(cors())
 app.use(express.json())
 
 // Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/inventory', require('../routes/inventory'))
 app.use('/api/users', require('../routes/users'));
 app.use('/api/tickets', require('../routes/tickets'))
