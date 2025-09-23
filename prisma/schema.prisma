@@ -14,7 +14,7 @@ model User {
   First_Name                        String
   Middle_Name                       String
   Last_Name                         String
-  Email                             String
+  Email                             String           @unique
   Password                          String
   Created_At                        DateTime         @default(now())
   Updated_At                        DateTime         @updatedAt
