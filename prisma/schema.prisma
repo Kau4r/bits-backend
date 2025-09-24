@@ -287,4 +287,53 @@ model Borrow_Item {
   Item           Item        @relation(fields: [Item_ID], references: [Item_ID])
   User           User        @relation(fields: [User_ID], references: [User_ID])
   AuditLogs      Audit_Log[] @relation("BorrowingAuditLogs")
-itLogs")
+}
+
+model Borrowing_Comp {
+  Borrowing_Comp_ID Int      @id @default(autoincrement())
+  User_ID           Int
+  Computer_ID       Int
+  Borrow_Date       DateTime @default(now())
+  Return_Date       DateTime
+  Status            String
+  Created_At        DateTime @default(now())
+  Updated_At        DateTime
+  Computer          Computer @relation(fields: [Computer_ID], references: [Computer_ID])
+  User              User     @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Computer {
+  Computer_ID    Int              @id @default(autoincrement())
+  Name           String
+  Created_At     DateTime         @default(now())
+  Updated_At     DateTime         @updatedAt
+  Status         ComputerStatus   @default(AVAILABLE)
+  Room_ID        Int?
+  Room           Room?            @relation(fields: [Room_ID], references: [Room_ID])
+  Borrowing_Comp Borrowing_Comp[]
+  Items          Item[]           @relation("ComputerItems")
+}
+
+enum UserRole {
+  LAB_HEAD
+  LAB_TECH
+  FACULTY
+  STUDENT
+  SECRETARY
+  ADMIN
+}
+
+enum ItemStatus {
+  AVAILABLE
+  BORROWED
+  DEFECTIVE
+  LOST
+  REPLACED
+}
+
+enum ComputerStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  DECOMMISSIONED
+}
