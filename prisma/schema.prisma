@@ -8,18 +8,18 @@ datasource db {
 }
 
 model User {
-  User_ID                           Int              @id @default(autoincrement())
-  User_Role                         UserRole          @default(STUDENT)
-  Approved_Bookings                 Booked_Room[]    @relation("BookingApprover")
-  First_Name                        String
-  Middle_Name                       String
-  Last_Name                         String
-  Email                             String
-  Password                          String
-  Created_At                        DateTime         @default(now())
-  Updated_At                        DateTime         @updatedAt
-  Is_Active                         Boolean          @default(true)
-  
+  User_ID           Int           @id @default(autoincrement())
+  User_Role         UserRole      @default(STUDENT)
+  Approved_Bookings Booked_Room[] @relation("BookingApprover")
+  First_Name        String
+  Middle_Name       String
+  Last_Name         String
+  Email             String        @unique
+  Password          String
+  Created_At        DateTime      @default(now())
+  Updated_At        DateTime      @updatedAt
+  Is_Active         Boolean       @default(true)
+
   // Relations
   Audit_Log                         Audit_Log[]
   Booked_Room                       Booked_Room[]
@@ -31,41 +31,91 @@ model User {
   Form_Form_Creator_IDToUser        Form[]           @relation("Form_Creator_IDToUser")
   Item                              Item[]
   CreatedTickets                    Ticket[]         @relation("Ticket_User")
-  
+
+  AssignedTickets Ticket[] @relation("TicketTechnician")
+
   // New relations for room and schedule management
-  Opened_Rooms                      Room[]           @relation("RoomOpenedBy")
-  Created_Schedules                 Schedule[]       @relation("ScheduleCreatedBy")
+  Opened_Rooms      Room[]     @relation("RoomOpenedBy")
+  Created_Schedules Schedule[] @relation("ScheduleCreatedBy")
 }
 
 model Item {
-  Item_ID       Int       @id @default(autoincrement())
-  User_ID       Int?
-  Item_Code     String    @unique
-  Item_Type     String    @default("GENERAL")
+  Item_ID   Int    @id @default(autoincrement())
+  Item_Code String @unique
+  Item_Type String @default("GENERAL")
+
   Brand         String?
   Serial_Number String?
   Status        ItemStatus
-  Created_At    DateTime  @default(now())
+  Created_At    DateTime   @default(now())
   Updated_At    DateTime
-  
-  // Foreign keys
-  Room_ID       Int?
-  ReplacedById  Int? @unique
 
   // Relations
-  Booking       Booking[]
-  Borrow_Item   Borrow_Item[]
-  Computers     Computer[] @relation("ComputerItems")
-  ReplacedBy    Item?      @relation("ItemReplacement", fields: [ReplacedById], references: [Item_ID])
-  Replaces      Item?      @relation("ItemReplacement")
-  Room          Room?      @relation(fields: [Room_ID], references: [Room_ID])
-  User          User?       @relation(fields: [User_ID], references: [User_ID])
+  Booking     Booking[]
+  Borrow_Item Borrow_Item[]
+  Computers   Computer[]    @relation("ComputerItems")
+
+  ReplacedById Int?  @unique
+  ReplacedBy   Item? @relation("ItemReplacement", fields: [ReplacedById], references: [Item_ID])
+  Replaces     Item? @relation("ItemReplacement")
+
+  Room_ID Int?
+  Room    Room? @relation(fields: [Room_ID], references: [Room_ID])
+  User_ID Int?
+  User    User? @relation(fields: [User_ID], references: [User_ID])
+
+  Tickets Ticket[]
 
   @@index([Item_Code])
   @@index([Status])
   @@index([Room_ID])
 }
 
+model Ticket {
+  Ticket_ID Int @id @default(autoincrement())
+
+  Reported_By_ID Int
+  Reported_By    User  @relation("Ticket_User", fields: [Reported_By_ID], references: [User_ID])
+  Item_ID        Int?
+  Item           Item? @relation(fields: [Item_ID], references: [Item_ID])
+
+  Report_Problem String
+
+  Room_ID  Int?
+  Room     Room?   @relation(fields: [Room_ID], references: [Room_ID])
+  Location String?
+
+  Status        TicketStatus    @default(PENDING)
+  Technician_ID Int?
+  Technician    User?           @relation("TicketTechnician", fields: [Technician_ID], references: [User_ID])
+  Priority      TicketPriority?
+  Category      TicketCategory?
+
+  AuditLogs Audit_Log[] @relation("TicketAuditLogs")
+
+  Created_At DateTime @default(now())
+  Updated_At DateTime @updatedAt
+  Archived   Boolean  @default(false)
+}
+
+enum TicketStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum TicketPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TicketCategory {
+  HARDWARE
+  SOFTWARE
+  FACILITY
+  OTHER
+}
 
 model Form {
   Form_ID                     Int      @id @default(autoincrement())
@@ -80,36 +130,21 @@ model Form {
   User_Form_Creator_IDToUser  User     @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
 }
 
-model Ticket {
-  Ticket_ID   Int          @id @default(autoincrement())
-  User_ID     Int
-  Item_Type   String
-  Item_Code   String
-  Description String
-  Image_URL   String?      // Optional field for storing image path/URL
-  Status      String       
-  Created_At  DateTime     @default(now())
-  Updated_At  DateTime     @updatedAt
-  Closed_At   DateTime?    // Made optional as it won't be set until ticket is closed
-  User        User         @relation("Ticket_User", fields: [User_ID], references: [User_ID])
-  AuditLogs   Audit_Log[]  @relation("TicketAuditLogs")
-}
-
 model Booking {
-  Booking_ID                     Int          @id @default(autoincrement())
+  Booking_ID                     Int         @id @default(autoincrement())
   User_ID                        Int
   Approver_ID                    Int?
   Item_ID                        Int
-  Booking_Date                   DateTime     @default(now())
+  Booking_Date                   DateTime    @default(now())
   Start_Date                     DateTime
   End_Date                       DateTime
   Status                         String
-  Created_At                     DateTime     @default(now())
+  Created_At                     DateTime    @default(now())
   Updated_At                     DateTime
-  User_Booking_Approver_IDToUser User?        @relation("Booking_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
-  Item                           Item         @relation(fields: [Item_ID], references: [Item_ID])
-  User_Booking_User_IDToUser     User         @relation("Booking_User_IDToUser", fields: [User_ID], references: [User_ID])
-  AuditLogs                      Audit_Log[]  @relation("BookingAuditLogs")
+  User_Booking_Approver_IDToUser User?       @relation("Booking_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
+  Item                           Item        @relation(fields: [Item_ID], references: [Item_ID])
+  User_Booking_User_IDToUser     User        @relation("Booking_User_IDToUser", fields: [User_ID], references: [User_ID])
+  AuditLogs                      Audit_Log[] @relation("BookingAuditLogs")
 }
 
 enum RoomStatus {
@@ -135,44 +170,45 @@ enum RoomType {
 }
 
 model Room {
-  Room_ID          Int              @id @default(autoincrement())
+  Room_ID          Int           @id @default(autoincrement())
   Name             String
-  Room_Type        RoomType         @default(LAB)
+  Room_Type        RoomType      @default(LAB)
   Capacity         Int
-  Status           RoomStatus       @default(AVAILABLE)
-  Current_Use_Type ScheduleType?    // Current type of use (if any)
-  Opened_By        Int?             // User_ID of the lab tech who opened the room for student use
-  Opened_At        DateTime?        // When the room was opened for student use
-  Closed_At        DateTime?        // When the room was closed
-  Created_At       DateTime         @default(now())
-  Updated_At       DateTime         @updatedAt
+  Status           RoomStatus    @default(AVAILABLE)
+  Current_Use_Type ScheduleType? // Current type of use (if any)
+  Opened_By        Int? // User_ID of the lab tech who opened the room for student use
+  Opened_At        DateTime? // When the room was opened for student use
+  Closed_At        DateTime? // When the room was closed
+  Created_At       DateTime      @default(now())
+  Updated_At       DateTime      @updatedAt
   Booked_Room      Booked_Room[]
   Items            Item[]
   Schedule         Schedule[]
   Computers        Computer[]
-  
+  Tickets          Ticket[]
+
   // Relations
-  Opened_By_User   User?            @relation("RoomOpenedBy", fields: [Opened_By], references: [User_ID])
+  Opened_By_User User? @relation("RoomOpenedBy", fields: [Opened_By], references: [User_ID])
 }
 
 model Schedule {
-  Schedule_ID Int           @id @default(autoincrement())
-  Room_ID     Int
+  Schedule_ID   Int          @id @default(autoincrement())
+  Room_ID       Int
   Schedule_Type ScheduleType // Type of schedule (CLASS, FACULTY_USE, etc.)
-  Title       String        // Title/description of the schedule
-  Start_Time  DateTime
-  End_Time    DateTime
-  Days        String        @default("1,2,3,4,5") // Comma-separated days (1=Monday, 7=Sunday)
-  IsActive    Boolean       @default(true)
-  IsRecurring Boolean       @default(true) // If false, this is a one-time schedule
-  Created_By  Int           // User_ID who created the schedule
-  Created_At  DateTime      @default(now())
-  Updated_At  DateTime      @updatedAt
-  
+  Title         String // Title/description of the schedule
+  Start_Time    DateTime
+  End_Time      DateTime
+  Days          String       @default("1,2,3,4,5") // Comma-separated days (1=Monday, 7=Sunday)
+  IsActive      Boolean      @default(true)
+  IsRecurring   Boolean      @default(true) // If false, this is a one-time schedule
+  Created_By    Int // User_ID who created the schedule
+  Created_At    DateTime     @default(now())
+  Updated_At    DateTime     @updatedAt
+
   // Relations
-  Room        Room          @relation(fields: [Room_ID], references: [Room_ID])
-  Created_By_User User      @relation("ScheduleCreatedBy", fields: [Created_By], references: [User_ID])
-  Bookings    Booked_Room[]
+  Room            Room          @relation(fields: [Room_ID], references: [Room_ID])
+  Created_By_User User          @relation("ScheduleCreatedBy", fields: [Created_By], references: [User_ID])
+  Bookings        Booked_Room[]
 
   @@map("Schedule")
 }
@@ -185,32 +221,32 @@ enum LogType {
 }
 
 model Audit_Log {
-  Log_ID      Int       @id @default(autoincrement())
-  Log_Type    LogType   @default(SYSTEM)
-  Action      String
-  
+  Log_ID   Int     @id @default(autoincrement())
+  Log_Type LogType @default(SYSTEM)
+  Action   String
+
   // Optional user reference (null for system-generated logs)
-  User_ID     Int?      // Made optional with '?'
-  User        User?     @relation(fields: [User_ID], references: [User_ID])
-  
+  User_ID Int? // Made optional with '?'
+  User    User? @relation(fields: [User_ID], references: [User_ID])
+
   // Related entities (optional, for tracking specific items)
-  Ticket_ID   Int?         // For TICKET logs
-  Ticket      Ticket?      @relation("TicketAuditLogs", fields: [Ticket_ID], references: [Ticket_ID])
-  
-  Booking_ID  Int?         // For BOOKING logs
-  Booking     Booking?     @relation("BookingAuditLogs", fields: [Booking_ID], references: [Booking_ID])
-  
-  Borrowing_ID Int?        // For BORROWING logs
-  Borrowing   Borrow_Item? @relation("BorrowingAuditLogs", fields: [Borrowing_ID], references: [Borrow_Item_ID])
-  
+  Ticket_ID Int? // For TICKET logs
+  Ticket    Ticket? @relation("TicketAuditLogs", fields: [Ticket_ID], references: [Ticket_ID])
+
+  Booking_ID Int? // For BOOKING logs
+  Booking    Booking? @relation("BookingAuditLogs", fields: [Booking_ID], references: [Booking_ID])
+
+  Borrowing_ID Int? // For BORROWING logs
+  Borrowing    Borrow_Item? @relation("BorrowingAuditLogs", fields: [Borrowing_ID], references: [Borrow_Item_ID])
+
   // Additional context
-  Details     Json?     // For storing additional structured data
-  Timestamp   DateTime  @default(now())
-  
+  Details   Json? // For storing additional structured data
+  Timestamp DateTime @default(now())
+
   // System notifications
-  Is_Notification Boolean @default(false)
+  Is_Notification      Boolean   @default(false)
   Notification_Read_At DateTime?
-  
+
   @@index([Log_Type])
   @@index([User_ID])
   @@index([Ticket_ID])
@@ -227,8 +263,8 @@ model Booked_Room {
   Status         String    @default("PENDING")
   Created_At     DateTime  @default(now())
   Updated_At     DateTime  @updatedAt
-  Approved_By    Int?      // User_ID of the approver
-  Notes          String?   // For approval/rejection notes
+  Approved_By    Int? // User_ID of the approver
+  Notes          String? // For approval/rejection notes
   Purpose        String?
   Schedule_ID    Int?
   Room           Room      @relation(fields: [Room_ID], references: [Room_ID])
@@ -240,64 +276,15 @@ model Booked_Room {
 }
 
 model Borrow_Item {
-  Borrow_Item_ID Int           @id @default(autoincrement())
+  Borrow_Item_ID Int         @id @default(autoincrement())
   User_ID        Int
   Item_ID        Int
-  Borrow_Date    DateTime      @default(now())
+  Borrow_Date    DateTime    @default(now())
   Return_Date    DateTime
   Status         String
-  Created_At     DateTime      @default(now())
+  Created_At     DateTime    @default(now())
   Updated_At     DateTime
-  Item           Item          @relation(fields: [Item_ID], references: [Item_ID])
-  User           User          @relation(fields: [User_ID], references: [User_ID])
-  AuditLogs      Audit_Log[]   @relation("BorrowingAuditLogs")
-}
-
-model Borrowing_Comp {
-  Borrowing_Comp_ID Int      @id @default(autoincrement())
-  User_ID           Int
-  Computer_ID       Int
-  Borrow_Date       DateTime @default(now())
-  Return_Date       DateTime
-  Status            String
-  Created_At        DateTime @default(now())
-  Updated_At        DateTime
-  Computer          Computer @relation(fields: [Computer_ID], references: [Computer_ID])
-  User              User     @relation(fields: [User_ID], references: [User_ID])
-}
-
-model Computer {
-  Computer_ID    Int              @id @default(autoincrement())
-  Name           String
-  Created_At     DateTime         @default(now())
-  Updated_At     DateTime         @updatedAt
-  Status         ComputerStatus   @default(AVAILABLE)
-  Room_ID        Int?
-  Room           Room?            @relation(fields: [Room_ID], references: [Room_ID])
-  Borrowing_Comp Borrowing_Comp[]
-  Items          Item[]           @relation("ComputerItems")
-}
-
-enum UserRole {
-  LAB_HEAD
-  LAB_TECH
-  FACULTY
-  STUDENT
-  SECRETARY
-  ADMIN
-}
-
-enum ItemStatus {
-  AVAILABLE
-  BORROWED
-  DEFECTIVE
-  LOST
-  REPLACED
-}
-
-enum ComputerStatus {
-  AVAILABLE
-  IN_USE
-  MAINTENANCE
-  DECOMMISSIONED
-}
+  Item           Item        @relation(fields: [Item_ID], references: [Item_ID])
+  User           User        @relation(fields: [User_ID], references: [User_ID])
+  AuditLogs      Audit_Log[] @relation("BorrowingAuditLogs")
+itLogs")
