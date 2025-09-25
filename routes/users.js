@@ -21,12 +21,11 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
-
 // Get user by ID
 router.get('/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.userId; // comes from JWT
-    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!req.userId) return res.status(401).json({ message: 'Unauthorized' });
 
     const user = await prisma.User.findUnique({
       where: { User_ID: userId },
@@ -53,7 +52,7 @@ router.get('/me', authMiddleware, async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { active } = req.query;
-    const users = await prisma.User.findMany({
+    const users = await prisma.user.findMany({
       where: active === 'true' ? { Is_Active: true } : {},
       orderBy: { Last_Name: 'asc' }
     });
