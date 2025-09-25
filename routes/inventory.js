@@ -74,6 +74,25 @@ router.get('/', async (req, res) => {
   }
 })
 
+// GET /inventory/code/:itemCode
+router.get('/code/:itemCode', async (req, res) => {
+  const { itemCode } = req.params;
+
+  try {
+    const item = await prisma.Item.findUnique({
+      where: { Item_Code: itemCode },
+      include: { Room: true },
+    });
+
+    if (!item) return res.status(404).json({ error: 'Item not found' });
+
+    res.json(item);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get item by ID
 router.get('/:id', async (req, res) => {
   try {
@@ -410,5 +429,6 @@ router.post('/bulk', async (req, res) => {
     });
   }
 });
+
 
 module.exports = router;

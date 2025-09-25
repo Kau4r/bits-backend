@@ -3,147 +3,138 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// Create a new ticket
+// Create Ticket
 router.post('/', async (req, res) => {
   try {
-    const { User_ID, Title, Description } = req.body;
+    const {
+      Reported_By_ID,
+      Report_Problem,
+      Location,
+      Item_ID,
+      Room_ID,
+      Status,
+      Priority,
+      Category,
+    } = req.body;
 
-    // Validate required fields
-    if (!User_ID || !Title || !Description) {
+    if (!Reported_By_ID || !Report_Problem) {
       return res.status(400).json({
-        error: 'User_ID, Title, and Description are required'
+        error: 'Reported_By_ID and Report_Problem are required',
       });
     }
 
-    // Create the ticket with status 'PENDING'
-    const ticket = await prisma.Ticket.create({
+    const ticket = await prisma.ticket.create({
       data: {
-        User_ID: parseInt(User_ID),
-        Title,
-        Description,
-        Status: 'PENDING',
-        // Created_At and Updated_At are automatically handled by Prisma
+        Reported_By_ID: parseInt(Reported_By_ID),
+        Report_Problem,
+        Location,
+        Item_ID: Item_ID ? parseInt(Item_ID) : undefined,
+        Room_ID: Room_ID ? parseInt(Room_ID) : undefined,
+        Status: Status || 'PENDING',
+        Priority,
+        Category,
       },
       include: {
-        User: {
-          select: {
-            First_Name: true,
-            Last_Name: true,
-            Email: true
-          }
-        }
-      }
+        Reported_By: {
+          select: { User_ID: true, First_Name: true, Last_Name: true, Email: true, User_Role: true },
+        },
+        Item: {
+          include: { Room: true },
+        },
+        Technician: {
+          select: { User_ID: true, First_Name: true, Last_Name: true, Email: true, User_Role: true },
+        },
+        Room: true,
+      },
     });
 
     res.status(201).json(ticket);
   } catch (error) {
-    console.error('Error creating ticket:', error);
-    res.status(500).json({
-      error: 'Failed to create ticket',
-      details: error.message
-    });
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create ticket', details: error.message });
   }
 });
 
-// Get all tickets (with filtering by status)
+// Get all tickets (optionally filter by status)
 router.get('/', async (req, res) => {
   try {
     const { status } = req.query;
     const where = {};
-    
-    if (status) {
-      where.Status = status;
-    }
 
-    const tickets = await prisma.Ticket.findMany({
+    if (status) where.Status = status;
+
+    const tickets = await prisma.ticket.findMany({
       where,
       include: {
-        User: {
-          select: {
-            First_Name: true,
-            Last_Name: true,
-            Email: true
-          }
-        }
+        Reported_By: true,
+        Technician: true,
+        Item: { include: { Room: true } },
+        Room: true,
+        AuditLogs: true,
       },
-      orderBy: {
-        Created_At: 'desc'
-      }
+      orderBy: { Created_At: 'desc' },
     });
+
 
     res.json(tickets);
   } catch (error) {
-    console.error('Error fetching tickets:', error);
+    console.error("Ticket creation error:", error);
     res.status(500).json({
-      error: 'Failed to fetch tickets',
-      details: error.message
+      error: "Failed to create ticket",
+      details: error instanceof Error ? error.message : String(error),
+      meta: error
     });
   }
 });
 
-// Update ticket status (for lab techs)
-router.patch('/:id/status', async (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-
+// Update ticket (status, priority, category)
+router.put('/:id', async (req, res) => {
   try {
-    // Validate required fields
-    if (!status) {
-      return res.status(400).json({ error: 'Status is required' });
-    }
+    const { id } = req.params;
+    const { Status, Priority, Category, Archived } = req.body;
 
-    // Validate status value
-    const validStatuses = ['PENDING', 'ACCEPTED', 'REJECTED', 'IN_PROGRESS', 'COMPLETED'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ 
-        error: 'Invalid status',
-        message: `Status must be one of: ${validStatuses.join(', ')}`
+    // Validate status if provided
+    const validStatuses = ['PENDING', 'IN_PROGRESS', 'RESOLVED'];
+    if (Status && !validStatuses.includes(Status)) {
+      return res.status(400).json({
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
       });
     }
 
-    const updateData = {
-      Status: status,
-      Updated_At: new Date()
-    };
-
-    const updatedTicket = await prisma.Ticket.update({
+    const updatedTicket = await prisma.ticket.update({
       where: { Ticket_ID: parseInt(id) },
-      data: updateData,
+      data: {
+        Status,
+        Priority,
+        Category,
+        Archived,
+      },
       include: {
-        User: {
-          select: {
-            First_Name: true,
-            Last_Name: true,
-            Email: true
-          }
-        }
-      }
+        Reported_By: true,
+        Item: { include: { Room: true } },
+        Technician: true,
+        Room: true,
+      },
     });
 
     res.json(updatedTicket);
   } catch (error) {
-    console.error(`Error updating ticket ${id}:`, error);
-    res.status(500).json({
-      error: 'Failed to update ticket status',
-      details: error.message
-    });
+    console.error(`Error updating ticket ${req.params.id}:`, error);
+    res.status(500).json({ error: 'Failed to update ticket', details: error.message });
   }
 });
 
-// Get ticket by ID
+// Get single ticket
 router.get('/:id', async (req, res) => {
   try {
-    const ticket = await prisma.Ticket.findUnique({
+    const ticket = await prisma.ticket.findUnique({
       where: { Ticket_ID: parseInt(req.params.id) },
       include: {
-        User: {
-          select: {
-            First_Name: true,
-            Last_Name: true,
-            Email: true
-          }
-        }
-      }
+        Reported_By: true,
+        Item: { include: { Room: true } },
+        Technician: true,
+        Room: true,
+      },
     });
 
     if (!ticket) {
@@ -153,10 +144,7 @@ router.get('/:id', async (req, res) => {
     res.json(ticket);
   } catch (error) {
     console.error(`Error fetching ticket ${req.params.id}:`, error);
-    res.status(500).json({
-      error: 'Failed to fetch ticket',
-      details: error.message
-    });
+    res.status(500).json({ error: 'Failed to fetch ticket', details: error.message });
   }
 });
 
