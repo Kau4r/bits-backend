@@ -27,17 +27,24 @@ router.get('/me', authMiddleware, async (req, res) => {
     const userId = req.userId; // comes from JWT
     if (!req.userId) return res.status(401).json({ message: 'Unauthorized' });
 
-    const user = await prisma.User.findUnique({
+    const user = await prisma.user.findUnique({
       where: { User_ID: userId },
       include: {
-        Item: true,
-        Borrow_Item: true,
-        Borrowing_Comp: true,
-        Form_Form_Approver_IDToUser: true,
-        Form_Form_Creator_IDToUser: true,
-        CreatedTickets: true
+        Items: true,               // previously Item
+        Borrowed_Items: true,      // previously Borrow_Item
+        Lent_Items: true,
+        Forms_Approved: true,      // previously Form_Form_Approver_IDToUser
+        Forms_Created: true,       // previously Form_Form_Creator_IDToUser
+        CreatedTickets: true,
+        AssignedTickets: true,
+        Opened_Rooms: true,
+        Booked_Room: true,
+        Created_Schedules: true,
+        Approved_Schedules: true,
+        Audit_Log: true
       }
     });
+
 
     if (!user) return res.status(404).json({ message: 'User not found' });
 

@@ -3,6 +3,8 @@ const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 const prisma = new PrismaClient();
 
+
+
 // Create a new room booking
 router.post('/', async (req, res) => {
     try {
@@ -44,7 +46,7 @@ router.post('/', async (req, res) => {
             const scheduleEnd = new Date(schedule.End_Time);
             const bookingStart = new Date(Start_Time);
             const bookingEnd = new Date(End_Time);
-            
+
             // Check if booking time overlaps with any schedule
             return (bookingStart < scheduleEnd && bookingEnd > scheduleStart);
         });
@@ -71,7 +73,7 @@ router.post('/', async (req, res) => {
         });
 
         if (conflictingBooking) {
-            return res.status(409).json({ 
+            return res.status(409).json({
                 error: 'Room is already booked for the selected time',
                 conflictingBooking
             });
@@ -84,7 +86,7 @@ router.post('/', async (req, res) => {
                 Room_ID: parseInt(Room_ID),
                 Start_Time: new Date(Start_Time),
                 End_Time: new Date(End_Time),
-                Status: 'PENDING',  // Set to PENDING for review
+                Status: 'PENDING',
                 Purpose: Purpose || '',
                 Created_At: new Date()
             },
@@ -97,17 +99,26 @@ router.post('/', async (req, res) => {
                         Last_Name: true,
                         Email: true
                     }
+                },
+                Approver: {
+                    select: {
+                        User_ID: true,
+                        First_Name: true,
+                        Last_Name: true,
+                        User_Role: true
+                    }
                 }
             }
         });
+
 
         res.status(201).json(booking);
 
     } catch (error) {
         console.error('Booking error:', error);
-        res.status(500).json({ 
-            error: 'Failed to create booking', 
-            details: error.message 
+        res.status(500).json({
+            error: 'Failed to create booking',
+            details: error.message
         });
     }
 });
@@ -116,7 +127,7 @@ router.post('/', async (req, res) => {
 router.get('/', async (req, res) => {
     try {
         const { status, roomId, userId } = req.query;
-        
+
         const where = {};
         if (status) where.Status = status;
         if (roomId) where.Room_ID = parseInt(roomId);
@@ -137,7 +148,7 @@ router.get('/', async (req, res) => {
                     select: {
                         First_Name: true,
                         Last_Name: true,
-                        User_Type: true
+                        User_Role: true
                     }
                 }
             },
@@ -149,9 +160,9 @@ router.get('/', async (req, res) => {
         res.json(bookings);
     } catch (error) {
         console.error('Error fetching room bookings:', error);
-        res.status(500).json({ 
-            error: 'Failed to fetch room bookings', 
-            details: error.message 
+        res.status(500).json({
+            error: 'Failed to fetch room bookings',
+            details: error.message
         });
     }
 });
@@ -169,7 +180,7 @@ router.patch('/:id/status', async (req, res) => {
         // Get the approver's user information
         const approver = await prisma.user.findUnique({
             where: { User_ID: parseInt(approverId) },
-            select: { User_Type: true }
+            select: { User_Role: true }
         });
 
         if (!approver) {
@@ -177,10 +188,10 @@ router.patch('/:id/status', async (req, res) => {
         }
 
         // Check if user has permission to approve/reject
-        if (!['LABTECH', 'LABHEAD', 'ADMIN'].includes(approver.User_Type)) {
-            return res.status(403).json({ 
+        if (!['LABTECH', 'LABHEAD', 'ADMIN'].includes(approver.User_Role)) {
+            return res.status(403).json({
                 error: 'Forbidden',
-                details: 'Only LABTECH, LABHEAD, or ADMIN can approve/reject bookings' 
+                details: 'Only LABTECH, LABHEAD, or ADMIN can approve/reject bookings'
             });
         }
 
@@ -195,8 +206,8 @@ router.patch('/:id/status', async (req, res) => {
         }
 
         // Only allow status changes for PENDING bookings, unless it's an ADMIN
-        if (existingBooking.Status !== 'PENDING' && approver.User_Type !== 'ADMIN') {
-            return res.status(400).json({ 
+        if (existingBooking.Status !== 'PENDING' && approver.User_Role !== 'ADMIN') {
+            return res.status(400).json({
                 error: 'Bad Request',
                 details: 'Only PENDING bookings can be updated',
                 currentStatus: existingBooking.Status
@@ -226,7 +237,7 @@ router.patch('/:id/status', async (req, res) => {
                     select: {
                         First_Name: true,
                         Last_Name: true,
-                        User_Type: true
+                        User_Role: true
                     }
                 }
             }
@@ -235,9 +246,9 @@ router.patch('/:id/status', async (req, res) => {
         res.json(booking);
     } catch (error) {
         console.error('Error updating room booking status:', error);
-        res.status(500).json({ 
-            error: 'Failed to update room booking status', 
-            details: error.message 
+        res.status(500).json({
+            error: 'Failed to update room booking status',
+            details: error.message
         });
     }
 });
@@ -246,7 +257,7 @@ router.patch('/:id/status', async (req, res) => {
 router.get('/available', async (req, res) => {
     try {
         const { startTime, endTime, capacity } = req.query;
-        
+
         if (!startTime || !endTime) {
             return res.status(400).json({ error: 'Start time and end time are required' });
         }
@@ -270,9 +281,9 @@ router.get('/available', async (req, res) => {
         res.json(availableRooms);
     } catch (error) {
         console.error('Error finding available rooms:', error);
-        res.status(500).json({ 
-            error: 'Failed to find available rooms', 
-            details: error.message 
+        res.status(500).json({
+            error: 'Failed to find available rooms',
+            details: error.message
         });
     }
 });
