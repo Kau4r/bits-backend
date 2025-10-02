@@ -37,6 +37,10 @@ model User {
   // New relations for room and schedule management
   Opened_Rooms      Room[]     @relation("RoomOpenedBy")
   Created_Schedules Schedule[] @relation("ScheduleCreatedBy")
+  
+  // Notification relations
+  ReceivedNotifications Notification[] @relation("NotificationRecipient")
+  SentNotifications     Notification[] @relation("NotificationSender")
 }
 
 model Item {
@@ -115,6 +119,60 @@ enum TicketCategory {
   SOFTWARE
   FACILITY
   OTHER
+}
+
+enum NotificationType {
+  // System Alerts (Yellow)
+  ITEM_SCHEDULE_ENDING
+  ROOM_FULL
+  ROOM_QUEUE
+  
+  // Form Updates (Green)
+  FORM_UPDATE_REMINDER
+  FORM_COMPLETED
+  FORM_APPROVED
+  
+  // System Notifications (Blue)
+  COMPUTER_USAGE
+  ITEM_BORROWED
+  ROOM_BOOKED
+  
+  // Issues/Reports (Red)
+  ITEM_REPORTED
+  COMPUTER_REPORTED
+  TICKET_UPDATED
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Notification {
+  id          Int              @id @default(autoincrement())
+  type        NotificationType
+  title       String
+  message     String
+  priority    NotificationPriority @default(MEDIUM)
+  isRead      Boolean          @default(false)
+  relatedId   Int?             // ID of related entity (e.g., booking ID, ticket ID)
+  relatedType String?          // Type of related entity (e.g., 'booking', 'ticket')
+  
+  // Recipient (null means broadcast to all)
+  recipientId Int?
+  recipient   User?            @relation("NotificationRecipient", fields: [recipientId], references: [User_ID])
+  
+  // Sender (null means system-generated)
+  senderId    Int?
+  sender      User?            @relation("NotificationSender", fields: [senderId], references: [User_ID])
+  
+  createdAt   DateTime         @default(now())
+  readAt      DateTime?
+  
+  @@index([recipientId, isRead])
+  @@index([type, relatedId, relatedType])
 }
 
 model Form {
@@ -224,6 +282,13 @@ model Audit_Log {
   Log_ID   Int     @id @default(autoincrement())
   Log_Type LogType @default(SYSTEM)
   Action   String
+  Details  String? // For storing notification messages
+  
+  // Notification specific fields
+  Is_Notification      Boolean   @default(false)
+  Notification_Read_At DateTime?
+  Notification_Type    String?   // e.g., 'BOOKING_REMINDER', 'FORM_APPROVAL', etc.
+  Notification_Data    Json?     // Additional notification-specific data
 
   // Optional user reference (null for system-generated logs)
   User_ID Int? // Made optional with '?'
@@ -238,20 +303,23 @@ model Audit_Log {
 
   Borrowing_ID Int? // For BORROWING logs
   Borrowing    Borrow_Item? @relation("BorrowingAuditLogs", fields: [Borrowing_ID], references: [Borrow_Item_ID])
-
-  // Additional context
-  Details   Json? // For storing additional structured data
+  
+  // Timestamps
+  Created_At DateTime @default(now())
+  Updated_At DateTime @updatedAt
+  
+  // Timestamp for when the log was created
   Timestamp DateTime @default(now())
 
-  // System notifications
-  Is_Notification      Boolean   @default(false)
-  Notification_Read_At DateTime?
-
+  // Add indexes for better query performance
   @@index([Log_Type])
   @@index([User_ID])
   @@index([Ticket_ID])
   @@index([Booking_ID])
   @@index([Borrowing_ID])
+  @@index([Is_Notification, User_ID, Notification_Read_At])
+  @@index([Action, Created_At])
+  @@index([Notification_Type, Created_At])
 }
 
 model Booked_Room {
