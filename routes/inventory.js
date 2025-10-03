@@ -105,77 +105,81 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+// ===== Helper: Generate Item Code =====
+async function generateItemCode(itemType) {
+  const prefix = itemType.substring(0, 3).toUpperCase(); // e.g., MON for Monitor
+  const lastItem = await prisma.item.findFirst({
+    where: { Item_Type: itemType },
+    orderBy: { Item_ID: 'desc' },
+    select: { Item_Code: true }
+  });
+
+  let nextNumber = 1;
+  if (lastItem && lastItem.Item_Code) {
+    const match = lastItem.Item_Code.match(/\d+$/);
+    if (match) {
+      nextNumber = parseInt(match[0], 10) + 1;
+    }
+  }
+
+  return `${prefix}${String(nextNumber).padStart(3, '0')}`;
+}
+
+// ===== POST: Create Item(s) =====
+router.post("/", async (req, res) => {
   try {
-    const { items, User_ID, Item_Type, Brand, Serial_Number, Status, Room_ID } = req.body;
+    const { items, User_ID } = req.body;
+    if (!User_ID) return res.status(400).json({ error: "User_ID is required" });
+    const user = await prisma.user.findUnique({ where: { User_ID: parseInt(User_ID) } });
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-    if (!User_ID) {
-      return res.status(400).json({ error: 'User_ID is required' });
-    }
+    const itemArray = Array.isArray(items) ? items : [items];
 
-    // Normalize to array for single or bulk
-    const itemsArray = Array.isArray(items) ? items : [
-      { Item_Type, Brand, Serial_Number, Status, Room_ID }
-    ];
+    // Keep track of last number per item type
+    const lastNumbers = {};
 
-    if (itemsArray.length === 0) {
-      return res.status(400).json({ error: 'No items provided' });
-    }
+    const createdItems = [];
+    for (const item of itemArray) {
+      const type = item.Item_Type || "GENERAL";
 
-    // Validate each item
-    for (const item of itemsArray) {
-      if (!item.Item_Type || !item.Brand || !item.Serial_Number || !item.Status || !item.Room_ID) {
-        return res.status(400).json({
-          error: 'Each item must have Item_Type, Brand, Serial_Number, Status, and Room_ID'
+      // Fetch last item number for this type only once
+      if (!(type in lastNumbers)) {
+        const lastItem = await prisma.item.findFirst({
+          where: { Item_Type: type },
+          orderBy: { Item_ID: "desc" },
+          select: { Item_Code: true }
         });
-      }
-    }
-
-    // Track last numbers per prefix to increment correctly
-    const typeCounters = {};
-
-    const itemsWithCode = [];
-
-    for (const item of itemsArray) {
-      const prefix = item.Item_Type.slice(0, 3).toUpperCase();
-
-      // Initialize counter if not already
-      if (!(prefix in typeCounters)) {
-        const lastItem = await prisma.Item.findFirst({
-          where: { Item_Code: { startsWith: prefix } },
-          orderBy: { Item_ID: 'desc' }
-        });
-        typeCounters[prefix] = lastItem ? parseInt(lastItem.Item_Code.slice(3)) : 0;
+        let nextNumber = 1;
+        if (lastItem?.Item_Code) {
+          const match = lastItem.Item_Code.match(/\d+$/);
+          if (match) nextNumber = parseInt(match[0], 10) + 1;
+        }
+        lastNumbers[type] = nextNumber;
       }
 
-      // Increment counter
-      typeCounters[prefix] += 1;
+      // Generate unique code in memory
+      const code = `${type.substring(0, 3).toUpperCase()}${String(lastNumbers[type]).padStart(3, "0")}`;
+      lastNumbers[type]++;
 
-      const itemCode = `${prefix}${String(typeCounters[prefix]).padStart(3, '0')}`;
-
-      itemsWithCode.push({
-        ...item,
-        User_ID,
-        Item_Code: itemCode,
+      const itemData = {
+        Item_Code: code,
+        Item_Type: type,
+        Brand: item.Brand || null,
+        Serial_Number: item.Serial_Number || null,
+        Status: item.Status || "AVAILABLE",
+        IsBorrowable: item.IsBorrowable ?? true,
         Created_At: new Date(),
         Updated_At: new Date(),
-      });
-    }
+        User: { connect: { User_ID: parseInt(User_ID) } },
+      };
 
-    // Create items, skipping duplicates
-    const createdItems = [];
-    for (const item of itemsWithCode) {
-      try {
-        const created = await prisma.Item.create({ data: item });
-        createdItems.push(created);
-      } catch (err) {
-        if (err.code === 'P2002' && err.meta?.target?.includes('Item_Code')) {
-          // skip duplicate Item_Code
-          continue;
-        } else {
-          throw err;
-        }
+      if (item.Room_ID) {
+        const room = await prisma.room.findUnique({ where: { Room_ID: parseInt(item.Room_ID) } });
+        if (!room) throw new Error(`Room with ID ${item.Room_ID} not found`);
+        itemData.Room = { connect: { Room_ID: parseInt(item.Room_ID) } };
       }
+
+      createdItems.push(await prisma.item.create({ data: itemData }));
     }
 
     res.status(201).json({
@@ -192,9 +196,6 @@ router.post('/', async (req, res) => {
     });
   }
 });
-
-
-
 
 // Update item
 router.put('/:id', async (req, res) => {
