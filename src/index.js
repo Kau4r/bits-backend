@@ -20,6 +20,7 @@ app.use('/api/rooms', require('../routes/rooms'))
 app.use('/api/bookings', require('../routes/bookings'))
 app.use('/api/computers', require('../routes/computers'))
 app.use('/api/borrowing', require('../routes/borrowing'))
+app.use('/api/notifications', require('../routes/notifications'))
 
 // Error handling middleware
 app.use((err, req, res, next) => {
