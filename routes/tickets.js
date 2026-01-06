@@ -91,7 +91,7 @@ router.get('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { Status, Priority, Category, Archived } = req.body;
+    const { Status, Priority, Category, Archived, Technician_ID } = req.body;
 
     // Validate status if provided
     const validStatuses = ['PENDING', 'IN_PROGRESS', 'RESOLVED'];
@@ -108,6 +108,7 @@ router.put('/:id', async (req, res) => {
         Priority,
         Category,
         Archived,
+        Technician_ID: Technician_ID === null ? null : (Technician_ID !== undefined ? parseInt(Technician_ID) : undefined),
       },
       include: {
         Reported_By: true,
