@@ -14,6 +14,10 @@ router.post('/login', async (req, res) => {
     const user = await prisma.user.findUnique({ where: { Email: email } });
     if (!user) return res.status(401).json({ message: 'Invalid email or password' });
 
+    if (user.Is_Active === false) {
+      return res.status(401).json({ message: 'Account is deactivated' });
+    }
+
     console.log('User from DB:', user);
 
     // if password column is capitalized
