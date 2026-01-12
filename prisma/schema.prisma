@@ -149,10 +149,17 @@ enum RoomType {
   LAB
 }
 
+enum LabCategory {
+  MAC
+  WINDOWS
+  NETWORKING
+}
+
 model Room {
   Room_ID          Int           @id @default(autoincrement())
   Name             String
   Room_Type        RoomType      @default(LAB)
+  Lab_Category     LabCategory?  // Only for LAB type rooms
   Capacity         Int
   Status           RoomStatus    @default(AVAILABLE)
   Current_Use_Type ScheduleType?
