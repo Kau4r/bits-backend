@@ -42,13 +42,32 @@ router.get('/me', authMiddleware, async (req, res) => {
   }
 });
 
-// Get all users
+// Get all users (with optional filters: active, role)
 router.get('/', async (req, res) => {
   try {
-    const { active } = req.query;
+    const { active, role } = req.query;
+
+    const where = {};
+    if (active === 'true') {
+      where.Is_Active = true;
+    }
+    if (role) {
+      where.User_Role = role;
+    }
+
     const users = await prisma.user.findMany({
-      where: active === 'true' ? { Is_Active: true } : {},
-      orderBy: { Last_Name: 'asc' }
+      where,
+      orderBy: { Last_Name: 'asc' },
+      select: {
+        User_ID: true,
+        First_Name: true,
+        Last_Name: true,
+        Email: true,
+        User_Role: true,
+        Is_Active: true,
+        Created_At: true,
+        Updated_At: true
+      }
     });
     res.json(users);
   } catch (error) {
