@@ -7,16 +7,32 @@ const { v4: uuidv4 } = require('uuid');
 // ===== GET: All Items =====
 router.get('/', async (req, res) => {
   try {
+    const { roomId, status } = req.query;
+
+    const where = {};
+    if (roomId) {
+      where.Room_ID = parseInt(roomId);
+    }
+    if (status) {
+      where.Status = status;
+    }
+
     const items = await prisma.Item.findMany({
+      where,
       include: {
         User: true,
         ReplacedBy: true,
         Replaces: true,
         Borrow_Item: true,
-        Computers: true,
-        Tickets: true,  // probably what you intended instead of Booking
+        Computers: {
+          include: {
+            Room: true
+          }
+        },
+        Tickets: true,
         Room: true
-      }
+      },
+      orderBy: { Created_At: 'desc' }
     });
 
     res.json(items);
@@ -24,6 +40,7 @@ router.get('/', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch items', details: error.message });
   }
 });
+
 
 // ===== GET: Item by Code =====
 router.get('/code/:itemCode', async (req, res) => {
