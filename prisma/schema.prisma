@@ -145,13 +145,12 @@ model Form {
   Status      String
   Created_At  DateTime @default(now())
   Updated_At  DateTime @updatedAt
-=======
+
 // Form-related enums
 enum FormType {
   WRF
   RIS
 }
->>>>>>> origin/main
 
 enum FormStatus {
   PENDING

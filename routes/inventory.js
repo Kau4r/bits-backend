@@ -68,14 +68,6 @@ router.get('/', async (req, res) => {
       where,
       include: {
         User: true,
-<<<<<<< HEAD
-        ReplacedBy: true,  // Replaced items (self-relation)
-        Replaces: true,  // Items that this item replaces
-        Borrow_Item: true,  // Borrow history
-        Booking: true,  // Booking history
-        Computers: true  // Computers this item is part of
-      }
-=======
         ReplacedBy: true,
         Replaces: true,
         Borrow_Item: true,
@@ -88,7 +80,6 @@ router.get('/', async (req, res) => {
         Room: true
       },
       orderBy: { Created_At: 'desc' }
->>>>>>> origin/main
     });
     res.json(items);
   } catch (error) {
@@ -100,12 +91,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-// GET /inventory/code/:itemCode
-=======
 
 // ===== GET: Item by Code =====
->>>>>>> origin/main
 router.get('/code/:itemCode', async (req, res) => {
   const { itemCode } = req.params;
   try {
