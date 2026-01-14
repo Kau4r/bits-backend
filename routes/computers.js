@@ -7,7 +7,7 @@ const prisma = new PrismaClient();
 router.post('/', async (req, res) => {
   try {
     const { name, roomId, itemIds } = req.body;
-    
+
     const computer = await prisma.computer.create({
       data: {
         Name: name,
@@ -79,11 +79,11 @@ router.get('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const computerId = parseInt(req.params.id);
-    
+
     // First verify the computer exists
     const computer = await prisma.computer.findUnique({
       where: { Computer_ID: computerId },
-      include: { 
+      include: {
         Items: true,
         Room: true
       }
@@ -112,9 +112,9 @@ router.delete('/:id', async (req, res) => {
     res.status(204).end();
   } catch (error) {
     console.error('Error deleting computer:', error);
-    res.status(500).json({ 
-      error: 'Failed to delete computer', 
-      details: error.message 
+    res.status(500).json({
+      error: 'Failed to delete computer',
+      details: error.message
     });
   }
 });
@@ -123,7 +123,7 @@ router.delete('/:id', async (req, res) => {
 router.patch('/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
-    
+
     if (!['AVAILABLE', 'IN_USE', 'MAINTENANCE', 'DECOMMISSIONED'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
@@ -148,7 +148,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const { itemIds, roomId } = req.body;
     const computerId = parseInt(req.params.id);
-    
+
     // First verify the computer exists
     const computer = await prisma.computer.findUnique({
       where: { Computer_ID: computerId },
@@ -195,9 +195,9 @@ router.patch('/:id', async (req, res) => {
     res.json(updatedComputer);
   } catch (error) {
     console.error('Error updating computer:', error);
-    res.status(500).json({ 
-      error: 'Failed to update computer', 
-      details: error.message 
+    res.status(500).json({
+      error: 'Failed to update computer',
+      details: error.message
     });
   }
 });
@@ -216,14 +216,14 @@ router.delete('/:computerId/items/:itemId', async (req, res) => {
         Items: true
       }
     });
-    
-    res.json({ 
+
+    res.json({
       message: 'Item removed from computer',
       computer
     });
   } catch (error) {
     console.error('Error removing item from computer:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to remove item from computer',
       details: error.message
     });
