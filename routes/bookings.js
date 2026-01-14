@@ -58,24 +58,34 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // Check for conflicting bookings
+        // Check for conflicting bookings (both APPROVED and PENDING)
         const conflictingBooking = await prisma.Booked_Room.findFirst({
             where: {
                 Room_ID: parseInt(Room_ID),
-                Status: 'APPROVED',
-                OR: [
-                    {
-                        Start_Time: { lt: new Date(End_Time) },
-                        End_Time: { gt: new Date(Start_Time) }
-                    }
-                ]
+                Status: { in: ['APPROVED', 'PENDING'] },
+                Start_Time: { lt: new Date(End_Time) },
+                End_Time: { gt: new Date(Start_Time) }
+            },
+            include: {
+                User: { select: { First_Name: true, Last_Name: true } }
             }
         });
 
         if (conflictingBooking) {
+            const statusMsg = conflictingBooking.Status === 'PENDING'
+                ? 'A pending booking already exists for this time slot'
+                : 'Room is already booked for the selected time';
             return res.status(409).json({
-                error: 'Room is already booked for the selected time',
-                conflictingBooking
+                error: statusMsg,
+                conflictingBooking: {
+                    id: conflictingBooking.Booked_Room_ID,
+                    status: conflictingBooking.Status,
+                    startTime: conflictingBooking.Start_Time,
+                    endTime: conflictingBooking.End_Time,
+                    bookedBy: conflictingBooking.User
+                        ? `${conflictingBooking.User.First_Name} ${conflictingBooking.User.Last_Name}`
+                        : 'Unknown'
+                }
             });
         }
 
@@ -167,6 +177,102 @@ router.get('/', async (req, res) => {
     }
 });
 
+// Update room booking details (time, room, purpose)
+router.patch('/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { Start_Time, End_Time, Room_ID, Purpose, Notes } = req.body;
+
+        // Get the existing booking
+        const existingBooking = await prisma.Booked_Room.findUnique({
+            where: { Booked_Room_ID: parseInt(id) },
+            include: { User: true }
+        });
+
+        if (!existingBooking) {
+            return res.status(404).json({ error: 'Booking not found' });
+        }
+
+        // Build update data
+        const updateData = {
+            Updated_At: new Date(),
+        };
+
+        if (Start_Time) updateData.Start_Time = new Date(Start_Time);
+        if (End_Time) updateData.End_Time = new Date(End_Time);
+        if (Room_ID) updateData.Room_ID = parseInt(Room_ID);
+        if (Purpose !== undefined) updateData.Purpose = Purpose;
+        if (Notes !== undefined) updateData.Notes = Notes;
+
+        // Check for conflicts if time or room is being changed
+        const newStart = updateData.Start_Time || existingBooking.Start_Time;
+        const newEnd = updateData.End_Time || existingBooking.End_Time;
+        const newRoom = updateData.Room_ID || existingBooking.Room_ID;
+
+        const conflictingBooking = await prisma.Booked_Room.findFirst({
+            where: {
+                Room_ID: newRoom,
+                Booked_Room_ID: { not: parseInt(id) },
+                Status: { in: ['APPROVED', 'PENDING'] },
+                Start_Time: { lt: newEnd },
+                End_Time: { gt: newStart }
+            },
+            include: {
+                User: { select: { First_Name: true, Last_Name: true } }
+            }
+        });
+
+        if (conflictingBooking) {
+            const statusMsg = conflictingBooking.Status === 'PENDING'
+                ? 'A pending booking already exists for this time slot'
+                : 'Room is already booked for the selected time';
+            return res.status(409).json({
+                error: statusMsg,
+                conflictingBooking: {
+                    id: conflictingBooking.Booked_Room_ID,
+                    status: conflictingBooking.Status,
+                    startTime: conflictingBooking.Start_Time,
+                    endTime: conflictingBooking.End_Time,
+                    bookedBy: conflictingBooking.User
+                        ? `${conflictingBooking.User.First_Name} ${conflictingBooking.User.Last_Name}`
+                        : 'Unknown'
+                }
+            });
+        }
+
+        // Update the booking
+        const booking = await prisma.Booked_Room.update({
+            where: { Booked_Room_ID: parseInt(id) },
+            data: updateData,
+            include: {
+                Room: true,
+                User: {
+                    select: {
+                        First_Name: true,
+                        Last_Name: true,
+                        Email: true
+                    }
+                },
+                Approver: {
+                    select: {
+                        First_Name: true,
+                        Last_Name: true,
+                        User_Role: true
+                    }
+                }
+            }
+        });
+
+        res.json(booking);
+    } catch (error) {
+        console.error('Error updating booking:', error);
+        res.status(500).json({
+            error: 'Failed to update booking',
+            details: error.message
+        });
+    }
+});
+
 // Update room booking status
 router.patch('/:id/status', async (req, res) => {
     try {
@@ -188,10 +294,10 @@ router.patch('/:id/status', async (req, res) => {
         }
 
         // Check if user has permission to approve/reject
-        if (!['LABTECH', 'LABHEAD', 'ADMIN'].includes(approver.User_Role)) {
+        if (!['LABTECH', 'LABHEAD', 'ADMIN', 'LAB_TECH', 'LAB_HEAD'].includes(approver.User_Role)) {
             return res.status(403).json({
                 error: 'Forbidden',
-                details: 'Only LABTECH, LABHEAD, or ADMIN can approve/reject bookings'
+                details: 'Only LAB_TECH, LAB_HEAD, or ADMIN can approve/reject bookings'
             });
         }
 

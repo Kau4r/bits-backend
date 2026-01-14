@@ -58,10 +58,14 @@ router.post('/', async (req, res) => {
 // Get all tickets (optionally filter by status)
 router.get('/', async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, technicianId, excludeStatus } = req.query;
     const where = {};
 
     if (status) where.Status = status;
+    if (technicianId) where.Technician_ID = parseInt(technicianId);
+    if (excludeStatus) {
+      where.Status = { not: excludeStatus };
+    }
 
     const tickets = await prisma.ticket.findMany({
       where,
@@ -91,7 +95,7 @@ router.get('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { Status, Priority, Category, Archived } = req.body;
+    const { Status, Priority, Category, Archived, Technician_ID } = req.body;
 
     // Validate status if provided
     const validStatuses = ['PENDING', 'IN_PROGRESS', 'RESOLVED'];
@@ -108,6 +112,7 @@ router.put('/:id', async (req, res) => {
         Priority,
         Category,
         Archived,
+        Technician_ID: Technician_ID === null ? null : (Technician_ID !== undefined ? parseInt(Technician_ID) : undefined),
       },
       include: {
         Reported_By: true,

@@ -116,6 +116,7 @@ model Ticket {
   Archived   Boolean  @default(false)
 }
 
+<<<<<<< HEAD
 enum TicketStatus {
   PENDING
   IN_PROGRESS
@@ -144,9 +145,62 @@ model Form {
   Status      String
   Created_At  DateTime @default(now())
   Updated_At  DateTime @updatedAt
+=======
+// Form-related enums
+enum FormType {
+  WRF
+  RIS
+}
+>>>>>>> origin/main
 
-  User_Form_Approver_IDToUser User? @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
-  User_Form_Creator_IDToUser  User  @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
+enum FormStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum FormDepartment {
+  REGISTRAR
+  FINANCE
+  DCISM
+  LABORATORY
+}
+
+model Form {
+  Form_ID        Int            @id @default(autoincrement())
+  Form_Code      String         @unique
+  Creator_ID     Int
+  Approver_ID    Int?
+  Form_Type      FormType
+  Status         FormStatus     @default(PENDING)
+  Department     FormDepartment @default(REGISTRAR)
+  Title          String?
+  Content        String?        @db.Text
+
+  // File attachment
+  File_Name      String?
+  File_URL       String?
+  File_Type      String?
+
+  Is_Archived    Boolean        @default(false)
+  Created_At     DateTime       @default(now())
+  Updated_At     DateTime       @updatedAt
+
+  Creator        User           @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
+  Approver       User?          @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
+  History        FormHistory[]
+}
+
+model FormHistory {
+  History_ID   Int            @id @default(autoincrement())
+  Form_ID      Int
+  Department   FormDepartment
+  Changed_At   DateTime       @default(now())
+  Notes        String?
+
+  Form         Form           @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
 }
 
 enum RoomStatus {
@@ -171,10 +225,17 @@ enum RoomType {
   LAB
 }
 
+enum LabCategory {
+  MAC
+  WINDOWS
+  NETWORKING
+}
+
 model Room {
   Room_ID          Int           @id @default(autoincrement())
   Name             String
   Room_Type        RoomType      @default(LAB)
+  Lab_Category     LabCategory?  // Only for LAB type rooms
   Capacity         Int
   Status           RoomStatus    @default(AVAILABLE)
   Current_Use_Type ScheduleType?

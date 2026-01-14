@@ -54,15 +54,41 @@ const checkUserRole = async (userId, allowedRoles) => {
 // Get all items
 router.get('/', async (req, res) => {
   try {
+    const { roomId, status } = req.query;
+
+    const where = {};
+    if (roomId) {
+      where.Room_ID = parseInt(roomId);
+    }
+    if (status) {
+      where.Status = status;
+    }
+
     const items = await prisma.Item.findMany({
+      where,
       include: {
         User: true,
+<<<<<<< HEAD
         ReplacedBy: true,  // Replaced items (self-relation)
         Replaces: true,  // Items that this item replaces
         Borrow_Item: true,  // Borrow history
         Booking: true,  // Booking history
         Computers: true  // Computers this item is part of
       }
+=======
+        ReplacedBy: true,
+        Replaces: true,
+        Borrow_Item: true,
+        Computers: {
+          include: {
+            Room: true
+          }
+        },
+        Tickets: true,
+        Room: true
+      },
+      orderBy: { Created_At: 'desc' }
+>>>>>>> origin/main
     });
     res.json(items);
   } catch (error) {
@@ -74,7 +100,12 @@ router.get('/', async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // GET /inventory/code/:itemCode
+=======
+
+// ===== GET: Item by Code =====
+>>>>>>> origin/main
 router.get('/code/:itemCode', async (req, res) => {
   const { itemCode } = req.params;
   try {
