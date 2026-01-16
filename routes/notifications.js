@@ -2,8 +2,36 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const NotificationService = require('../services/notificationService');
-const { authenticateToken } = require('../middleware/auth');
+const NotificationService = require('../src/services/notificationService');
+const { authenticateToken } = require('../src/middleware/auth');
+const NotificationManager = require('../src/services/notificationManager');
+
+// SSE Stream Endpoint
+router.get('/stream', authenticateToken, (req, res) => {
+  const userId = req.user.User_ID;
+
+  // SSE Headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  // Add client to manager
+  NotificationManager.add(userId, res);
+
+  // Send initial ping to establish connection
+  res.write('data: {"type":"PING"}\n\n');
+
+  // Keep connection alive with heartbeat
+  const heartbeat = setInterval(() => {
+    res.write(': keep-alive\n\n');
+  }, 30000);
+
+  // Clean up on close
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    NotificationManager.remove(userId, res);
+  });
+});
 
 // Get user's notifications
 router.get('/', authenticateToken, async (req, res) => {

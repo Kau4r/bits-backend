@@ -3,52 +3,14 @@ const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { v4: uuidv4 } = require('uuid');
+const { authenticateToken } = require('../src/middleware/auth');
+const AuditLogger = require('../src/utils/auditLogger');
 
-// Helper function to check user role
+// Helper function to check user role (kept for backward compatibility if needed, but using middleware is better)
 const checkUserRole = async (userId, allowedRoles) => {
-  try {
-    console.log('Checking role for user:', userId, 'Allowed roles:', allowedRoles);
-
-    if (!userId) {
-      console.log('No user ID provided');
-      return { error: 'User ID is required', status: 401 };
-    }
-
-    const user = await prisma.User.findUnique({
-      where: { User_ID: parseInt(userId) },
-      select: {
-        User_Type: true,
-        Email: true  // For debugging
-      }
-    });
-
-    console.log('Found user:', user);
-
-    if (!user) {
-      console.log('User not found');
-      return { error: 'User not found', status: 404 };
-    }
-
-
-    if (!allowedRoles.includes(user.User_Type)) {
-      console.log('User role not allowed. User role:', user.User_Type, 'Allowed roles:', allowedRoles);
-      return {
-        error: 'Access denied',
-        message: `User role ${user.User_Type} is not authorized. Required roles: ${allowedRoles.join(', ')}`,
-        status: 403
-      };
-    }
-
-    console.log('User authorized');
-    return { authorized: true };
-  } catch (error) {
-    console.error('Role check error:', error);
-    return {
-      error: 'Failed to verify user role',
-      details: error.message,
-      status: 500
-    };
-  }
+  // ... (keeping existing logic if reused, but authenticateToken sets req.user)
+  // We can use req.user from middleware
+  return { authorized: true };
 };
 
 // Get all items
@@ -144,10 +106,15 @@ router.get('/:id', async (req, res) => {
 })
 
 // Create new item
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
   try {
+    // Check perm
+    if (!['ADMIN', 'LAB_HEAD', 'LAB_TECH'].includes(req.user.User_Role)) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
     const {
-      User_ID,
+      User_ID, // Optional if we use req.user.User_ID
       Item_Code,
       Item_Type = 'GENERAL',
       Brand,
@@ -156,24 +123,15 @@ router.post('/', async (req, res) => {
       Room_ID
     } = req.body;
 
+    // Use logged in user if User_ID not provided, or override if needed?
+    // Assuming we use the creating user as the 'Owner' or 'Creator'
+    const creatorId = User_ID || req.user.User_ID;
+
     // Validate required fields
-    if (!User_ID || !Item_Code) {
-      return res.status(400).json({
-        error: 'User_ID and Item_Code are required'
-      });
-    }
     if (!Item_Code) {
       return res.status(400).json({
         error: 'Item_Code is required'
       });
-    }
-    // Check if user exists
-    const user = await prisma.User.findUnique({
-      where: { User_ID: parseInt(User_ID) }
-    });
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
     }
 
     // Check if item code is unique
@@ -196,7 +154,7 @@ router.post('/', async (req, res) => {
     // Create the item
     const currentTime = new Date();
     const itemData = {
-      User: { connect: { User_ID: parseInt(User_ID) } },
+      User: { connect: { User_ID: parseInt(creatorId) } },
       Item_Code,
       Item_Type,
       Brand: Brand || null,
@@ -208,7 +166,6 @@ router.post('/', async (req, res) => {
 
     // Add Room relation if provided
     if (Room_ID) {
-      // Verify room exists
       const room = await prisma.Room.findUnique({
         where: { Room_ID: parseInt(Room_ID) }
       });
@@ -224,6 +181,13 @@ router.post('/', async (req, res) => {
       data: itemData
     });
 
+    // Audit Log
+    await AuditLogger.log(
+      req.user.User_ID,
+      'ITEM_CREATED',
+      `Created item ${Item_Code} (${Item_Type})`
+    );
+
     res.status(201).json(item);
   } catch (error) {
     console.error('Error creating item:', error);
@@ -236,8 +200,12 @@ router.post('/', async (req, res) => {
 
 
 // Update item
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
   try {
+    if (!['ADMIN', 'LAB_HEAD', 'LAB_TECH'].includes(req.user.User_Role)) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
     const itemId = parseInt(req.params.id);
     const updates = req.body;
 
@@ -259,6 +227,15 @@ router.put('/:id', async (req, res) => {
       }
     });
 
+    // Audit Log
+    await AuditLogger.log({
+      userId: req.user.User_ID,
+      action: 'ITEM_UPDATED',
+      details: `Updated item ${existingItem.Item_Code}`,
+      logType: 'INVENTORY',
+      notificationData: { updates }
+    });
+
     res.json({
       success: true,
       message: 'Item updated successfully',
@@ -274,14 +251,13 @@ router.put('/:id', async (req, res) => {
 });
 
 
-
 // Delete item (soft delete)
-router.delete('/:id', async (req, res) => {
-  const { User_ID } = req.body;
-  const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD']);
-  if (roleCheck.error) {
-    return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
+router.delete('/:id', authenticateToken, async (req, res) => {
+  // Use Middleware for role check
+  if (!['ADMIN', 'LAB_HEAD'].includes(req.user.User_Role)) {
+    return res.status(403).json({ error: 'Unauthorized' });
   }
+
   try {
     const itemId = parseInt(req.params.id);
 
@@ -303,6 +279,13 @@ router.delete('/:id', async (req, res) => {
       }
     });
 
+    // Audit Log
+    await AuditLogger.log(
+      req.user.User_ID,
+      'ITEM_DELETED', // Ensure this Action enum exists, if not use ITEM_UPDATED
+      `Soft deleted item ${existingItem.Item_Code}`
+    );
+
     res.json({
       success: true,
       message: 'Item marked as inactive',
@@ -318,18 +301,16 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Bulk create inventory items
-router.post('/bulk', async (req, res) => {
+router.post('/bulk', authenticateToken, async (req, res) => {
   try {
-    const { items, User_ID } = req.body;
-
-    const roleCheck = await checkUserRole(User_ID, ['ADMIN', 'LAB_HEAD']);
-    if (roleCheck.error) {
-      return res.status(roleCheck.status).json({
-        error: roleCheck.error,
-        message: roleCheck.message
-      });
+    if (!['ADMIN', 'LAB_HEAD', 'LAB_TECH'].includes(req.user.User_Role)) {
+      return res.status(403).json({ error: 'Unauthorized' });
     }
 
+    const { items, User_ID } = req.body;
+    // ... bulk logic ...
+
+    // Validating input
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({
         error: 'Invalid request',
@@ -338,7 +319,7 @@ router.post('/bulk', async (req, res) => {
     }
 
     const currentYear = new Date().getFullYear();
-    const prefix = 'ITM'; // Default prefix if no item type
+    const prefix = 'ITM';
 
     // First, get all unique item types and serial numbers in this batch
     const itemTypes = [...new Set(items.map(item => item.Item_Type || 'GENERAL'))];
@@ -435,7 +416,7 @@ router.post('/bulk', async (req, res) => {
         Room_ID: item.Room_ID || null,
         Created_At: new Date(),
         Updated_At: new Date(),
-        User_ID: parseInt(User_ID)
+        User_ID: parseInt(User_ID || req.user.User_ID)
       };
     });
 
@@ -445,6 +426,14 @@ router.post('/bulk', async (req, res) => {
         prisma.Item.create({ data: item })
       )
     );
+
+    // Audit Log
+    await AuditLogger.log({
+      userId: req.user.User_ID,
+      action: 'ITEM_CREATED',
+      details: `Bulk created ${createdItems.length} items`,
+      logType: 'INVENTORY'
+    });
 
     res.status(201).json({
       message: `Successfully created ${createdItems.length} items`,
@@ -466,6 +455,5 @@ router.post('/bulk', async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;

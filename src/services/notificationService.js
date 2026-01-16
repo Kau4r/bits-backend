@@ -1,40 +1,67 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const NotificationManager = require('./notificationManager');
 
 class NotificationService {
-  // Create a new notification using Audit_Log
+  /**
+   * Send a real-time notification to a user.
+   * NOTE: This should NOT create a database entry. The AuditLogger already creates
+   * the audit log entry with Is_Notification=true. This method only handles 
+   * the real-time push via NotificationManager.
+   */
   static async createNotification({
     type,
     title,
     message,
     userId = null,
-    relatedId = null,
-    relatedType = null,
+    logId = null,
+    timestamp = null,
     data = {}
   }) {
-    // Map notification type to appropriate log type
-    const logType = this._getLogTypeFromNotificationType(type);
-    
-    // Prepare the notification data
-    const notificationData = {
-      Action: `NOTIFICATION_${type}`,
-      Details: message,
-      Is_Notification: true,
-      Notification_Type: type,
-      Notification_Data: Object.keys(data).length > 0 ? data : undefined,
-      User_ID: userId,
-      Log_Type: logType,
-    };
-
-    // Add related entity reference if provided
-    if (relatedId && relatedType) {
-      const relationField = `${relatedType}_ID`;
-      notificationData[relationField] = relatedId;
+    // Only send real-time notification if there's a userId
+    if (userId) {
+      NotificationManager.send(userId, {
+        id: logId || Date.now(),
+        type: type,
+        title: title || type.replace(/_/g, ' '),
+        message: message,
+        time: timestamp || new Date().toISOString(),
+        read: false
+      });
     }
 
-    return await prisma.audit_Log.create({
-      data: notificationData
-    });
+    // Return a simple object for compatibility (no DB entry created)
+    return {
+      Log_ID: logId,
+      Action: type,
+      Details: message,
+      User_ID: userId
+    };
+  }
+
+  // Broadcast notification to all users with a specific role
+  static async notifyRole(role, notificationData) {
+    try {
+      const users = await prisma.User.findMany({
+        where: { User_Role: role },
+        select: { User_ID: true }
+      });
+
+      const notifications = await Promise.all(
+        users.map(user =>
+          this.createNotification({
+            ...notificationData,
+            userId: user.User_ID
+          })
+        )
+      );
+
+      return notifications;
+    } catch (error) {
+      console.error(`Failed to broadcast to role ${role}:`, error);
+      // Don't throw, just log error to avoid breaking the main flow
+      return [];
+    }
   }
 
   // Helper to determine log type from notification type
@@ -44,17 +71,19 @@ class NotificationService {
       'ITEM_SCHEDULE_ENDING': 'SYSTEM',
       'ROOM_FULL': 'SYSTEM',
       'ROOM_QUEUE': 'SYSTEM',
-      
+
       // Form Updates
       'FORM_UPDATE_REMINDER': 'TICKET',
       'FORM_COMPLETED': 'TICKET',
       'FORM_APPROVED': 'TICKET',
-      
+
       // System Notifications
       'COMPUTER_USAGE': 'SYSTEM',
       'ITEM_BORROWED': 'BORROWING',
+      'COMPUTER_BORROWED': 'BORROWING',
       'ROOM_BOOKED': 'BOOKING',
-      
+      'TICKET_CREATED': 'TICKET',
+
       // Issues/Reports
       'ITEM_REPORTED': 'TICKET',
       'COMPUTER_REPORTED': 'TICKET',
@@ -65,14 +94,70 @@ class NotificationService {
   }
 
   // Get notifications for a user
-  static async getUserNotifications(userId, { limit = 20, cursor = null, unreadOnly = false } = {}) {
-    const where = {
-      OR: [
-        { User_ID: userId },
-        { User_ID: null, Is_Notification: true } // System-wide notifications
-      ],
-      Is_Notification: true
-    };
+  static async getUserNotifications(userId, options = {}) {
+    const { limit = 20, cursor, unreadOnly } = options;
+
+    // Get user role
+    const user = await prisma.User.findUnique({
+      where: { User_ID: userId },
+      select: { User_Role: true }
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Build role-specific query
+    let where;
+
+    if (user.User_Role === 'FACULTY') {
+      // Faculty ONLY sees approval/rejection notifications
+      where = {
+        Is_Notification: true,
+        OR: [
+          // Booking approvals/rejections where faculty is the requester
+          {
+            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
+            Booked_Room: {
+              User_ID: userId
+            }
+          },
+          // Borrow request approvals/rejections
+          {
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+          }
+        ]
+      };
+    } else if (user.User_Role === 'STUDENT') {
+      // Students see room availability notifications from staff
+      where = {
+        Is_Notification: true,
+        OR: [
+          { User_ID: userId }, // Direct notifications
+          { User_ID: null, Is_Notification: true }, // System-wide notifications
+          // Room availability notifications for students
+          {
+            Action: { in: ['ROOM_AVAILABLE', 'ROOM_OPENED_FOR_STUDENTS'] }
+          }
+        ]
+      };
+    } else {
+      // Other roles (LAB_HEAD, LAB_TECH, ADMIN)
+      where = {
+        Is_Notification: true,
+        OR: [
+          { User_ID: userId }, // Direct notifications/actions by user
+          { User_ID: null, Is_Notification: true }, // System-wide notifications
+          // Role-Based Shared Notifications
+          ...(user.User_Role === 'LAB_HEAD' ? [{
+            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED'] }
+          }] : []),
+          ...(user.User_Role === 'LAB_TECH' ? [{
+            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED'] }
+          }] : []),
+        ]
+      };
+    }
 
     if (unreadOnly) {
       where.Notification_Read_At = null;
@@ -82,10 +167,10 @@ class NotificationService {
       where.Log_ID = { lt: cursor };
     }
 
-    const notifications = await prisma.audit_Log.findMany({
+    const notifications = await prisma.Audit_Log.findMany({
       where,
       take: limit + 1, // Get one extra to determine if there are more
-      orderBy: { Created_At: 'desc' },
+      orderBy: { Timestamp: 'desc' },
       include: {
         User: {
           select: {
@@ -98,20 +183,21 @@ class NotificationService {
         Ticket: {
           select: {
             Ticket_ID: true,
-            Title: true,
-            Status: true
+            Status: true,
+            Report_Problem: true
           }
         },
-        Booking: {
+        Booked_Room: {
           select: {
-            Booking_ID: true,
-            Status: true
-          }
-        },
-        Borrowing: {
-          select: {
-            Borrow_Item_ID: true,
-            Status: true
+            Booked_Room_ID: true,
+            Status: true,
+            Start_Time: true,
+            End_Time: true,
+            Room: {
+              select: {
+                Name: true
+              }
+            }
           }
         }
       }
@@ -131,7 +217,7 @@ class NotificationService {
 
   // Mark a notification as read
   static async markAsRead(notificationId, userId) {
-    return await prisma.audit_Log.updateMany({
+    return await prisma.Audit_Log.updateMany({
       where: {
         Log_ID: notificationId,
         User_ID: userId,
@@ -146,7 +232,7 @@ class NotificationService {
 
   // Mark all notifications as read for a user
   static async markAllAsRead(userId) {
-    return await prisma.audit_Log.updateMany({
+    return await prisma.Audit_Log.updateMany({
       where: {
         User_ID: userId,
         Is_Notification: true,
@@ -215,7 +301,7 @@ class NotificationService {
   // Notify about form status updates
   static async notifyFormStatusUpdate(form) {
     let title, message, type;
-    
+
     switch (form.Status) {
       case 'PENDING_APPROVAL':
         title = 'Form Requires Approval';
