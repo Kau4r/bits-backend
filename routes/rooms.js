@@ -1,4 +1,5 @@
 const express = require('express');
+const { authenticateToken } = require('../src/middleware/authenticateToken');
 const { PrismaClient } = require('@prisma/client');
 
 const router = express.Router();
@@ -172,7 +173,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Open room for student usage (LAB_HEAD/LAB_TECH only)
-router.post('/:id/student-availability', authenticateToken, async (req, res) => {
+router.post('/:id/student-room-schedule', authenticateToken, async (req, res) => {
   // Only LAB_HEAD, LAB_TECH, ADMIN can open rooms for student usage
   if (!['LAB_HEAD', 'LAB_TECH', 'LABHEAD', 'LABTECH', 'ADMIN'].includes(req.user.User_Role)) {
     return res.status(403).json({ error: 'Unauthorized. Only LAB_HEAD, LAB_TECH, or ADMIN can set room availability.' });
