@@ -2,6 +2,8 @@ const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 const prisma = new PrismaClient();
+const NotificationService = require('../src/services/notificationService');
+const AuditLogger = require('../src/utils/auditLogger');
 
 
 
@@ -12,6 +14,14 @@ router.post('/', async (req, res) => {
 
         if (!User_ID || !Room_ID || !Start_Time || !End_Time) {
             return res.status(400).json({ error: 'Missing required fields' });
+        }
+
+        // Block bookings on Sundays
+        if (new Date(Start_Time).getDay() === 0) {
+            return res.status(400).json({
+                error: 'Bookings are not allowed on Sundays',
+                details: 'Please select a different day of the week.'
+            });
         }
 
         // Get room with active schedules
@@ -121,6 +131,15 @@ router.post('/', async (req, res) => {
             }
         });
 
+        // Log and notify Lab Heads about the new booking request
+        await AuditLogger.logBooking(
+            parseInt(User_ID),
+            'ROOM_BOOKED',
+            booking.Booked_Room_ID,
+            `New booking request for ${booking.Room.Name} by ${booking.User.First_Name} ${booking.User.Last_Name}`,
+            'LAB_HEAD' // Notify Lab Heads
+        );
+
 
         res.status(201).json(booking);
 
@@ -139,7 +158,11 @@ router.get('/', async (req, res) => {
         const { status, roomId, userId } = req.query;
 
         const where = {};
-        if (status) where.Status = status;
+        // Support comma-separated statuses (e.g., "PENDING,APPROVED")
+        if (status) {
+            const statuses = status.split(',').map(s => s.trim());
+            where.Status = statuses.length > 1 ? { in: statuses } : statuses[0];
+        }
         if (roomId) where.Room_ID = parseInt(roomId);
         if (userId) where.User_ID = parseInt(userId);
 
@@ -293,15 +316,10 @@ router.patch('/:id/status', async (req, res) => {
             return res.status(404).json({ error: 'Approver not found' });
         }
 
-        // Check if user has permission to approve/reject
-        if (!['LABTECH', 'LABHEAD', 'ADMIN', 'LAB_TECH', 'LAB_HEAD'].includes(approver.User_Role)) {
-            return res.status(403).json({
-                error: 'Forbidden',
-                details: 'Only LAB_TECH, LAB_HEAD, or ADMIN can approve/reject bookings'
-            });
-        }
+        // Check if user has permission to change booking status
+        const isStaff = ['LABTECH', 'LABHEAD', 'ADMIN', 'LAB_TECH', 'LAB_HEAD'].includes(approver.User_Role);
 
-        // Get the booking to check its current status
+        // Get the booking to check ownership and current status
         const existingBooking = await prisma.Booked_Room.findUnique({
             where: { Booked_Room_ID: parseInt(id) },
             include: { User: true }
@@ -311,8 +329,21 @@ router.patch('/:id/status', async (req, res) => {
             return res.status(404).json({ error: 'Booking not found' });
         }
 
-        // Only allow status changes for PENDING bookings, unless it's an ADMIN
-        if (existingBooking.Status !== 'PENDING' && approver.User_Role !== 'ADMIN') {
+        // Permission logic:
+        // - STAFF (LAB_TECH, LAB_HEAD, ADMIN) can approve/reject/cancel any booking
+        // - FACULTY can only CANCEL their OWN bookings
+        const isOwner = existingBooking.User_ID === parseInt(approverId);
+        const isFacultyCancellingOwn = approver.User_Role === 'FACULTY' && status === 'CANCELLED' && isOwner;
+
+        if (!isStaff && !isFacultyCancellingOwn) {
+            return res.status(403).json({
+                error: 'Forbidden',
+                details: 'Only LAB_TECH, LAB_HEAD, or ADMIN can approve/reject bookings. Faculty can only cancel their own bookings.'
+            });
+        }
+
+        // Only allow status changes for PENDING bookings, unless it's an ADMIN or owner cancelling
+        if (existingBooking.Status !== 'PENDING' && approver.User_Role !== 'ADMIN' && !isFacultyCancellingOwn) {
             return res.status(400).json({
                 error: 'Bad Request',
                 details: 'Only PENDING bookings can be updated',
@@ -348,6 +379,33 @@ router.patch('/:id/status', async (req, res) => {
                 }
             }
         });
+
+        // Notify the requester about approval/rejection/cancellation
+        let notificationType = null;
+        let message = '';
+
+        if (status === 'APPROVED') {
+            notificationType = 'BOOKING_APPROVED';
+            message = `Your booking for ${booking.Room.Name} has been approved!`;
+        } else if (status === 'REJECTED') {
+            notificationType = 'BOOKING_REJECTED';
+            message = `Your booking for ${booking.Room.Name} was rejected.${notes ? ` Reason: ${notes}` : ''}`;
+        } else if (status === 'CANCELLED') {
+            notificationType = 'BOOKING_CANCELLED';
+            message = `Booking for ${booking.Room.Name} has been cancelled.`;
+        }
+
+        if (notificationType) {
+            // Log to audit trail
+            await AuditLogger.logBooking(
+                parseInt(approverId),
+                notificationType,
+                booking.Booked_Room_ID,
+                message,
+                null, // No role to notify
+                existingBooking.User_ID // Notify the requester (or actor for cancellation)
+            );
+        }
 
         res.json(booking);
     } catch (error) {
