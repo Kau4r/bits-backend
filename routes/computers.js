@@ -87,17 +87,26 @@ router.get('/:id', async (req, res) => {
 // POST create new computer with items
 router.post('/', async (req, res) => {
   try {
-    const { name, roomId, status, items } = req.body;
+    const { name, roomId, status, items, macAddress } = req.body;
     // items: [{ itemType, brand, serialNumber }]
 
     if (!name) {
       return res.status(400).json({ error: 'Computer name is required' });
     }
 
+    // Validate MAC address format if provided
+    if (macAddress) {
+      const macRegex = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+      if (!macRegex.test(macAddress)) {
+        return res.status(400).json({ error: 'Invalid MAC address format. Use XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX' });
+      }
+    }
+
     // Create computer first
     const computer = await prisma.computer.create({
       data: {
         Name: name,
+        Mac_Address: macAddress || null,
         Room_ID: roomId ? parseInt(roomId) : null,
         Status: status || 'AVAILABLE',
       }
@@ -149,15 +158,24 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, roomId, status, items } = req.body;
+    const { name, roomId, status, items, macAddress } = req.body;
 
     const computerId = parseInt(id);
+
+    // Validate MAC address format if provided
+    if (macAddress !== undefined && macAddress !== null) {
+      const macRegex = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+      if (!macRegex.test(macAddress)) {
+        return res.status(400).json({ error: 'Invalid MAC address format. Use XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX' });
+      }
+    }
 
     // Update computer
     const updateData = {};
     if (name !== undefined) updateData.Name = name;
     if (roomId !== undefined) updateData.Room_ID = roomId ? parseInt(roomId) : null;
     if (status !== undefined) updateData.Status = status;
+    if (macAddress !== undefined) updateData.Mac_Address = macAddress;
 
     await prisma.computer.update({
       where: { Computer_ID: computerId },
@@ -244,6 +262,51 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting computer:', error);
     res.status(500).json({ error: 'Failed to delete computer' });
+  }
+});
+
+// GET computer by MAC address
+router.get('/by-mac/:macAddress', async (req, res) => {
+  try {
+    const { macAddress } = req.params;
+
+    // Validate MAC address format
+    const macRegex = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+    if (!macRegex.test(macAddress)) {
+      return res.status(400).json({ error: 'Invalid MAC address format' });
+    }
+
+    const computer = await prisma.computer.findUnique({
+      where: { Mac_Address: macAddress },
+      include: {
+        Room: {
+          select: {
+            Room_ID: true,
+            Name: true,
+            Room_Type: true,
+          }
+        },
+        Items: {
+          select: {
+            Item_ID: true,
+            Item_Code: true,
+            Item_Type: true,
+            Brand: true,
+            Serial_Number: true,
+            Status: true,
+          }
+        }
+      }
+    });
+
+    if (!computer) {
+      return res.status(404).json({ error: 'Computer not found with this MAC address' });
+    }
+
+    res.json(computer);
+  } catch (error) {
+    console.error('Error fetching computer by MAC:', error);
+    res.status(500).json({ error: 'Failed to fetch computer' });
   }
 });
 

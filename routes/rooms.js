@@ -1,6 +1,7 @@
 const express = require('express');
+const { authenticateToken } = require('../src/middleware/authenticateToken');
 const { PrismaClient } = require('@prisma/client');
-const { authenticateToken } = require('../src/middleware/auth');
+
 const AuditLogger = require('../src/utils/auditLogger');
 
 const router = express.Router();
@@ -212,7 +213,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 });
 
 // Open room for student usage (LAB_HEAD/LAB_TECH only)
-router.post('/:id/student-availability', authenticateToken, async (req, res) => {
+router.post('/:id/student-room-schedule', authenticateToken, async (req, res) => {
   // Only LAB_HEAD, LAB_TECH, ADMIN can open rooms for student usage
   if (!['LAB_HEAD', 'LAB_TECH', 'LABHEAD', 'LABTECH', 'ADMIN'].includes(req.user.User_Role)) {
     return res.status(403).json({ error: 'Unauthorized. Only LAB_HEAD, LAB_TECH, or ADMIN can set room availability.' });
@@ -365,6 +366,69 @@ router.post('/:id/student-availability', authenticateToken, async (req, res) => 
   } catch (error) {
     console.error('Error setting room availability:', error);
     res.status(500).json({ error: 'Failed to set room availability', details: error.message });
+  }
+});
+
+// GET opened lab rooms for students
+router.get('/opened-labs', async (req, res) => {
+  try {
+    const now = new Date();
+
+    // Get LAB rooms that are currently in use or have active student usage bookings
+    const openedLabs = await prisma.Room.findMany({
+      where: {
+        Room_Type: 'LAB',
+        OR: [
+          { Status: 'IN_USE' },
+          {
+            Booked_Rooms: {
+              some: {
+                Status: 'APPROVED',
+                Purpose: 'Student Usage',
+                Start_Time: { lte: now },
+                End_Time: { gte: now }
+              }
+            }
+          }
+        ]
+      },
+      include: {
+        Computers: {
+          select: {
+            Computer_ID: true,
+            Name: true,
+            Mac_Address: true,
+            Status: true
+          }
+        },
+        Opened_By_User: {
+          select: {
+            First_Name: true,
+            Last_Name: true,
+            User_Role: true
+          }
+        },
+        Booked_Rooms: {
+          where: {
+            Status: 'APPROVED',
+            Purpose: 'Student Usage',
+            Start_Time: { lte: now },
+            End_Time: { gte: now }
+          },
+          select: {
+            Start_Time: true,
+            End_Time: true,
+            Notes: true
+          }
+        }
+      },
+      orderBy: { Name: 'asc' }
+    });
+
+    res.json(openedLabs);
+  } catch (error) {
+    console.error('Error fetching opened labs:', error);
+    res.status(500).json({ error: 'Failed to fetch opened labs', details: error.message });
   }
 });
 
