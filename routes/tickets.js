@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const NotificationService = require('../src/services/notificationService');
+const AuditLogger = require('../src/utils/auditLogger');
 
 // Create Ticket
 router.post('/', async (req, res) => {
@@ -21,6 +23,16 @@ router.post('/', async (req, res) => {
       return res.status(400).json({
         error: 'Reported_By_ID and Report_Problem are required',
       });
+    }
+
+    // Validate Room_ID if provided
+    if (Room_ID) {
+      const roomExists = await prisma.room.findUnique({
+        where: { Room_ID: parseInt(Room_ID) }
+      });
+      if (!roomExists) {
+        return res.status(400).json({ error: 'Invalid Room_ID: Room does not exist' });
+      }
     }
 
     const ticket = await prisma.ticket.create({
@@ -48,6 +60,15 @@ router.post('/', async (req, res) => {
       },
     });
 
+    // Log and notify Lab Techs about the new ticket
+    await AuditLogger.logTicket(
+      parseInt(Reported_By_ID),
+      'TICKET_CREATED',
+      ticket.Ticket_ID,
+      `New ticket reported: ${Report_Problem.substring(0, 50)}${Report_Problem.length > 50 ? '...' : ''}`,
+      'LAB_TECH' // Notify Lab Techs
+    );
+
     res.status(201).json(ticket);
   } catch (error) {
     console.error(error);
@@ -58,10 +79,14 @@ router.post('/', async (req, res) => {
 // Get all tickets (optionally filter by status)
 router.get('/', async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, technicianId, excludeStatus } = req.query;
     const where = {};
 
     if (status) where.Status = status;
+    if (technicianId) where.Technician_ID = parseInt(technicianId);
+    if (excludeStatus) {
+      where.Status = { not: excludeStatus };
+    }
 
     const tickets = await prisma.ticket.findMany({
       where,
@@ -91,7 +116,7 @@ router.get('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { Status, Priority, Category, Archived } = req.body;
+    const { Status, Priority, Category, Archived, Technician_ID } = req.body;
 
     // Validate status if provided
     const validStatuses = ['PENDING', 'IN_PROGRESS', 'RESOLVED'];
@@ -101,6 +126,15 @@ router.put('/:id', async (req, res) => {
       });
     }
 
+    // Get existing ticket to check for changes
+    const existingTicket = await prisma.ticket.findUnique({
+      where: { Ticket_ID: parseInt(id) }
+    });
+
+    if (!existingTicket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
     const updatedTicket = await prisma.ticket.update({
       where: { Ticket_ID: parseInt(id) },
       data: {
@@ -108,6 +142,7 @@ router.put('/:id', async (req, res) => {
         Priority,
         Category,
         Archived,
+        Technician_ID: Technician_ID === null ? null : (Technician_ID !== undefined ? parseInt(Technician_ID) : undefined),
       },
       include: {
         Reported_By: true,
@@ -116,6 +151,30 @@ router.put('/:id', async (req, res) => {
         Room: true,
       },
     });
+
+    // Check for technician assignment
+    if (Technician_ID && Technician_ID !== existingTicket.Technician_ID) {
+      await AuditLogger.logTicket(
+        req.user ? req.user.User_ID : existingTicket.Reported_By_ID, // Use current user or original reporter
+        'TICKET_ASSIGNED',
+        updatedTicket.Ticket_ID,
+        `Ticket assigned to ${updatedTicket.Technician.First_Name} ${updatedTicket.Technician.Last_Name}`,
+        null, // No role notification
+        parseInt(Technician_ID) // Notify the technician
+      );
+    }
+
+    // Check for resolution
+    if (Status === 'RESOLVED' && existingTicket.Status !== 'RESOLVED') {
+      await AuditLogger.logTicket(
+        req.user ? req.user.User_ID : existingTicket.Technician_ID || existingTicket.Reported_By_ID,
+        'TICKET_RESOLVED',
+        updatedTicket.Ticket_ID,
+        `Ticket resolved: ${updatedTicket.Report_Problem.substring(0, 30)}...`,
+        null,
+        updatedTicket.Reported_By_ID // Notify the reporter
+      );
+    }
 
     res.json(updatedTicket);
   } catch (error) {

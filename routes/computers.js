@@ -1,66 +1,75 @@
 const express = require('express');
-const router = express.Router();
 const { PrismaClient } = require('@prisma/client');
+
+const router = express.Router();
 const prisma = new PrismaClient();
 
-// Create a new computer with items
-router.post('/', async (req, res) => {
-  try {
-    const { name, roomId, itemIds } = req.body;
-
-    const computer = await prisma.computer.create({
-      data: {
-        Name: name,
-        Status: 'AVAILABLE',
-        Created_At: new Date(),
-        Updated_At: new Date(),
-        // Connect to room if provided
-        ...(roomId && { Room: { connect: { Room_ID: parseInt(roomId) } } }),
-        // Connect items if provided
-        ...(itemIds && itemIds.length > 0 && {
-          Items: { connect: itemIds.map(id => ({ Item_ID: id })) }
-        })
-      },
-      include: {
-        Items: true,
-        Room: true
-      }
-    });
-
-    res.status(201).json(computer);
-  } catch (error) {
-    console.error('Error creating computer:', error);
-    res.status(500).json({ error: 'Failed to create computer', details: error.message });
-  }
-});
-
-// Get all computers with their items and room
+// GET all computers (with optional roomId filter)
 router.get('/', async (req, res) => {
   try {
+    const { roomId } = req.query;
+
+    const where = {};
+    if (roomId) {
+      where.Room_ID = parseInt(roomId);
+    }
+
     const computers = await prisma.computer.findMany({
+      where,
       include: {
-        Items: true,
-        Room: true
+        Room: {
+          select: {
+            Room_ID: true,
+            Name: true,
+            Room_Type: true,
+          }
+        },
+        Items: {
+          select: {
+            Item_ID: true,
+            Item_Code: true,
+            Item_Type: true,
+            Brand: true,
+            Serial_Number: true,
+            Status: true,
+          }
+        }
       },
-      orderBy: {
-        Name: 'asc'
-      }
+      orderBy: { Name: 'asc' }
     });
+
     res.json(computers);
   } catch (error) {
     console.error('Error fetching computers:', error);
-    res.status(500).json({ error: 'Failed to fetch computers', details: error.message });
+    res.status(500).json({ error: 'Failed to fetch computers' });
   }
 });
 
-// Get computer by ID with items and room
+// GET single computer by ID
 router.get('/:id', async (req, res) => {
   try {
+    const { id } = req.params;
+
     const computer = await prisma.computer.findUnique({
-      where: { Computer_ID: parseInt(req.params.id) },
+      where: { Computer_ID: parseInt(id) },
       include: {
-        Items: true,
-        Room: true
+        Room: {
+          select: {
+            Room_ID: true,
+            Name: true,
+            Room_Type: true,
+          }
+        },
+        Items: {
+          select: {
+            Item_ID: true,
+            Item_Code: true,
+            Item_Type: true,
+            Brand: true,
+            Serial_Number: true,
+            Status: true,
+          }
+        }
       }
     });
 
@@ -71,12 +80,12 @@ router.get('/:id', async (req, res) => {
     res.json(computer);
   } catch (error) {
     console.error('Error fetching computer:', error);
-    res.status(500).json({ error: 'Failed to fetch computer', details: error.message });
+    res.status(500).json({ error: 'Failed to fetch computer' });
   }
 });
 
-// Delete a computer
-router.delete('/:id', async (req, res) => {
+// POST create new computer with items
+router.post('/', async (req, res) => {
   try {
     const { name, roomId, status, items, macAddress } = req.body;
     // items: [{ itemType, brand, serialNumber }]
@@ -138,15 +147,15 @@ router.delete('/:id', async (req, res) => {
       }
     });
 
-    res.json(computer);
+    res.status(201).json(result);
   } catch (error) {
-    console.error(`Error updating computer ${req.params.id} status:`, error);
-    res.status(500).json({ error: 'Failed to update computer status', details: error.message });
+    console.error('Error creating computer:', error);
+    res.status(500).json({ error: 'Failed to create computer' });
   }
 });
 
-// Update computer items and room
-router.patch('/:id', async (req, res) => {
+// PUT update computer
+router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, roomId, status, items, macAddress } = req.body;
