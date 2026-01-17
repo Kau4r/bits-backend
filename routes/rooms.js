@@ -171,4 +171,224 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Open room for student usage (LAB_HEAD/LAB_TECH only)
+router.post('/:id/student-availability', authenticateToken, async (req, res) => {
+  // Only LAB_HEAD, LAB_TECH, ADMIN can open rooms for student usage
+  if (!['LAB_HEAD', 'LAB_TECH', 'LABHEAD', 'LABTECH', 'ADMIN'].includes(req.user.User_Role)) {
+    return res.status(403).json({ error: 'Unauthorized. Only LAB_HEAD, LAB_TECH, or ADMIN can set room availability.' });
+  }
+
+  const roomId = parseInt(req.params.id);
+  if (isNaN(roomId) || roomId <= 0) {
+    return res.status(400).json({ error: 'Invalid room ID' });
+  }
+
+  const { startTime, endTime, notes } = req.body;
+
+  if (!startTime || !endTime) {
+    return res.status(400).json({ error: 'startTime and endTime are required' });
+  }
+
+  const requestedStart = new Date(startTime);
+  const requestedEnd = new Date(endTime);
+
+  // Validate time range
+  if (requestedStart >= requestedEnd) {
+    return res.status(400).json({ error: 'End time must be after start time' });
+  }
+
+  try {
+    // Get the room with schedules
+    const room = await prisma.Room.findUnique({
+      where: { Room_ID: roomId },
+      include: {
+        Schedule: {
+          where: { IsActive: true }
+        }
+      }
+    });
+
+    if (!room) {
+      return res.status(404).json({ error: 'Room not found' });
+    }
+
+    // Only LAB rooms can be opened for student usage
+    if (room.Room_Type !== 'LAB') {
+      return res.status(400).json({ error: 'Only LAB rooms can be opened for student usage' });
+    }
+
+    // Check for overlapping schedules
+    const conflictingSchedule = room.Schedule.find(schedule => {
+      const scheduleStart = new Date(schedule.Start_Time);
+      const scheduleEnd = new Date(schedule.End_Time);
+      // Check if time ranges overlap
+      return (requestedStart < scheduleEnd && requestedEnd > scheduleStart);
+    });
+
+    if (conflictingSchedule) {
+      const formatTime = (d) => new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return res.status(409).json({
+        error: 'Time conflict with existing schedule',
+        details: `There is already a schedule from ${formatTime(conflictingSchedule.Start_Time)} to ${formatTime(conflictingSchedule.End_Time)}`,
+        conflictingSchedule: {
+          id: conflictingSchedule.Schedule_ID,
+          startTime: conflictingSchedule.Start_Time,
+          endTime: conflictingSchedule.End_Time
+        }
+      });
+    }
+
+    // Check for overlapping bookings
+    const conflictingBooking = await prisma.Booked_Room.findFirst({
+      where: {
+        Room_ID: roomId,
+        Status: { in: ['APPROVED', 'PENDING'] },
+        Start_Time: { lt: requestedEnd },
+        End_Time: { gt: requestedStart }
+      },
+      include: {
+        User: { select: { First_Name: true, Last_Name: true } }
+      }
+    });
+
+    if (conflictingBooking) {
+      const formatTime = (d) => new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return res.status(409).json({
+        error: 'Time conflict with existing booking',
+        details: `There is already a ${conflictingBooking.Status.toLowerCase()} booking from ${formatTime(conflictingBooking.Start_Time)} to ${formatTime(conflictingBooking.End_Time)}`,
+        conflictingBooking: {
+          id: conflictingBooking.Booked_Room_ID,
+          status: conflictingBooking.Status,
+          startTime: conflictingBooking.Start_Time,
+          endTime: conflictingBooking.End_Time,
+          bookedBy: conflictingBooking.User ? `${conflictingBooking.User.First_Name} ${conflictingBooking.User.Last_Name}` : 'Unknown'
+        }
+      });
+    }
+
+    // Format time display for notification message
+    const formatTime = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const formatDate = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+    // Create 'APPROVED' booking to persist the availability
+    const booking = await prisma.Booked_Room.create({
+      data: {
+        User_ID: req.user.User_ID,
+        Room_ID: roomId,
+        Start_Time: requestedStart,
+        End_Time: requestedEnd,
+        Status: 'APPROVED',
+        Purpose: 'Student Usage',
+        Notes: notes || 'Opened for student usage by Lab Head/Tech',
+        Approved_By: req.user.User_ID,
+        Created_At: new Date(),
+        Updated_At: new Date()
+      }
+    });
+
+    const message = `${room.Name} is now available for student use from ${formatTime(requestedStart)} to ${formatTime(requestedEnd)} on ${formatDate(requestedStart)}`;
+
+    console.log('[RoomAvailability] Creating audit log for room availability:', { roomId, message });
+
+    // Create audit log with student notification
+    const auditLog = await AuditLogger.log({
+      userId: req.user.User_ID,
+      action: 'ROOM_AVAILABLE',
+      logType: 'ROOM',
+      isNotification: true,
+      notifyRole: 'STUDENT', // Notify all students
+      details: message,
+      notificationData: {
+        roomId: room.Room_ID,
+        roomName: room.Name,
+        startTime: requestedStart.toISOString(),
+        endTime: requestedEnd.toISOString(),
+        notes,
+        bookingId: booking.Booked_Room_ID
+      }
+    });
+
+    console.log('[RoomAvailability] Audit log created:', auditLog);
+
+    res.status(201).json({
+      success: true,
+      message: 'Room availability set successfully. Students have been notified.',
+      data: {
+        roomId: room.Room_ID,
+        roomName: room.Name,
+        startTime: requestedStart.toISOString(),
+        endTime: requestedEnd.toISOString(),
+        auditLogId: auditLog?.Log_ID,
+        bookingId: booking.Booked_Room_ID
+      }
+    });
+  } catch (error) {
+    console.error('Error setting room availability:', error);
+    res.status(500).json({ error: 'Failed to set room availability', details: error.message });
+  }
+});
+
+// GET opened lab rooms for students
+router.get('/opened-labs', async (req, res) => {
+  try {
+    const now = new Date();
+
+    // Get LAB rooms that are currently in use or have active student usage bookings
+    const openedLabs = await prisma.Room.findMany({
+      where: {
+        Room_Type: 'LAB',
+        OR: [
+          { Status: 'IN_USE' },
+          {
+            Booked_Rooms: {
+              some: {
+                Status: 'APPROVED',
+                Purpose: 'Student Usage',
+                Start_Time: { lte: now },
+                End_Time: { gte: now }
+              }
+            }
+          }
+        ]
+      },
+      include: {
+        Computers: {
+          select: {
+            Computer_ID: true,
+            Name: true,
+            Mac_Address: true,
+            Status: true
+          }
+        },
+        Opened_By_User: {
+          select: {
+            First_Name: true,
+            Last_Name: true,
+            User_Role: true
+          }
+        },
+        Booked_Rooms: {
+          where: {
+            Status: 'APPROVED',
+            Purpose: 'Student Usage',
+            Start_Time: { lte: now },
+            End_Time: { gte: now }
+          },
+          select: {
+            Start_Time: true,
+            End_Time: true,
+            Notes: true
+          }
+        }
+      },
+      orderBy: { Name: 'asc' }
+    });
+
+    res.json(openedLabs);
+  } catch (error) {
+    console.error('Error fetching opened labs:', error);
+    res.status(500).json({ error: 'Failed to fetch opened labs', details: error.message });
+  }
+});
+
 module.exports = router;
