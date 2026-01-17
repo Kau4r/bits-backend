@@ -1,6 +1,8 @@
 const express = require('express');
 const { authenticateToken } = require('../src/middleware/authenticateToken');
 const { PrismaClient } = require('@prisma/client');
+const { authenticateToken } = require('../src/middleware/auth');
+const AuditLogger = require('../src/utils/auditLogger');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -9,7 +11,7 @@ const prisma = new PrismaClient();
 router.get('/', async (req, res) => {
   try {
     // Get all rooms (no booked rooms included)
-    const rooms = await prisma.room.findMany({
+    const rooms = await prisma.Room.findMany({ // Fixed casing
       orderBy: { Room_ID: 'asc' },
       include: {
         Schedule: {
@@ -44,7 +46,7 @@ router.get('/:id', async (req, res) => {
   }
 
   try {
-    const room = await prisma.room.findUnique({
+    const room = await prisma.Room.findUnique({
       where: { Room_ID: roomId },
       include: {
         Schedule: {
@@ -74,7 +76,12 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create room
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, async (req, res) => {
+  // Permission Check
+  if (!['ADMIN', 'LAB_HEAD'].includes(req.user.User_Role)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
   const VALID_ROOM_TYPES = ['CONSULTATION', 'LECTURE', 'LAB'];
   const { Name, Capacity, Room_Type } = req.body;
 
@@ -87,7 +94,7 @@ router.post('/', async (req, res) => {
   if (errors.length > 0) return res.status(400).json({ error: 'Validation Error', details: errors });
 
   try {
-    const existingRoom = await prisma.room.findFirst({
+    const existingRoom = await prisma.Room.findFirst({
       where: { Name: { equals: Name.trim(), mode: 'insensitive' } }
     });
 
@@ -95,10 +102,17 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ error: 'Room already exists', details: `A room named '${Name}' already exists`, existingRoomId: existingRoom.Room_ID });
     }
 
-    const newRoom = await prisma.room.create({
+    const newRoom = await prisma.Room.create({
       data: { Name: Name.trim(), Capacity: parseInt(Capacity), Room_Type: Room_Type || 'LECTURE', Status: 'AVAILABLE' },
       select: { Room_ID: true, Name: true, Capacity: true, Room_Type: true, Status: true, Created_At: true, Updated_At: true }
     });
+
+    // Audit Log
+    await AuditLogger.log(
+      req.user.User_ID,
+      'ROOM_UPDATED', // Using ROOM_UPDATED as generic 'Room Mgmt' action, or create specific ROOM_CREATED if enum allows
+      `Created room ${Name}`
+    );
 
     res.status(201).json(newRoom);
   } catch (error) {
@@ -108,7 +122,11 @@ router.post('/', async (req, res) => {
 });
 
 // Update room
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, async (req, res) => {
+  if (!['ADMIN', 'LAB_HEAD'].includes(req.user.User_Role)) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
   const roomId = parseInt(req.params.id);
   if (isNaN(roomId) || roomId <= 0) return res.status(400).json({ error: 'Invalid room ID', details: 'Room ID must be a positive number' });
 
@@ -137,7 +155,19 @@ router.put('/:id', async (req, res) => {
   if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'Validation Error', details: 'No valid fields provided for update' });
 
   try {
-    const updatedRoom = await prisma.room.update({ where: { Room_ID: roomId }, data: updateData });
+    const updatedRoom = await prisma.Room.update({ where: { Room_ID: roomId }, data: updateData });
+
+    // Determine Action
+    let action = 'ROOM_UPDATED';
+    if (Status === 'CLOSED') action = 'ROOM_CLOSED';
+    if (Status === 'AVAILABLE' && req.body.Status) action = 'ROOM_OPENED';
+
+    await AuditLogger.log(
+      req.user.User_ID,
+      action,
+      `Updated room ${updatedRoom.Name}`
+    );
+
     res.json({ message: 'Room updated successfully', room: updatedRoom });
   } catch (error) {
     console.error('Error updating room:', error);
@@ -147,12 +177,16 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete room
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, async (req, res) => {
+  if (!['ADMIN'].includes(req.user.User_Role)) { // Only Admin can delete rooms? Assuming strict
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
   const roomId = parseInt(req.params.id);
   if (isNaN(roomId) || roomId <= 0) return res.status(400).json({ error: 'Invalid room ID', details: 'Room ID must be a positive number' });
 
   try {
-    const existingRoom = await prisma.room.findUnique({ where: { Room_ID: roomId }, include: { Booked_Rooms: true, Schedule: true } });
+    const existingRoom = await prisma.Room.findUnique({ where: { Room_ID: roomId }, include: { Booked_Rooms: true, Schedule: true } });
     if (!existingRoom) return res.status(404).json({ error: 'Room not found' });
 
     const now = new Date();
@@ -160,10 +194,16 @@ router.delete('/:id', async (req, res) => {
     if (hasActiveBookings) return res.status(400).json({ error: 'Cannot delete room with active or future bookings' });
 
     await prisma.$transaction([
-      prisma.schedule.deleteMany({ where: { Room_ID: roomId } }),
-      prisma.booked_Room.deleteMany({ where: { Room_ID: roomId } }),
-      prisma.room.delete({ where: { Room_ID: roomId } })
+      prisma.Schedule.deleteMany({ where: { Room_ID: roomId } }),
+      prisma.Booked_Room.deleteMany({ where: { Room_ID: roomId } }),
+      prisma.Room.delete({ where: { Room_ID: roomId } })
     ]);
+
+    await AuditLogger.log(
+      req.user.User_ID,
+      'ROOM_UPDATED',
+      `Deleted room ${existingRoom.Name}`
+    );
 
     res.json({ success: true, message: 'Room and related data deleted successfully' });
   } catch (error) {
@@ -393,3 +433,4 @@ router.get('/opened-labs', async (req, res) => {
 });
 
 module.exports = router;
+

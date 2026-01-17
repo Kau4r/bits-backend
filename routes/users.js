@@ -21,47 +21,53 @@ const authMiddleware = (req, res, next) => {
   }
 };
 
-// Get user by ID
+// Get current authenticated user
 router.get('/me', authMiddleware, async (req, res) => {
   try {
     const userId = req.userId; // comes from JWT
-    if (!req.userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
 
     const user = await prisma.user.findUnique({
       where: { User_ID: userId },
-      include: {
-        Items: true,               // previously Item
-        Borrowed_Items: true,      // previously Borrow_Item
-        Lent_Items: true,
-        Forms_Approved: true,      // previously Form_Form_Approver_IDToUser
-        Forms_Created: true,       // previously Form_Form_Creator_IDToUser
-        CreatedTickets: true,
-        AssignedTickets: true,
-        Opened_Rooms: true,
-        Booked_Room: true,
-        Created_Schedules: true,
-        Approved_Schedules: true,
-        Audit_Log: true
-      }
     });
-
 
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    res.json(user);
+    // Remove password from response
+    const { Password, ...userWithoutPassword } = user;
+    res.json(userWithoutPassword);
   } catch (error) {
     console.error('Error fetching current user:', error);
     res.status(500).json({ error: 'Failed to fetch user', details: error.message });
   }
 });
 
-// Get all users
+// Get all users (with optional filters: active, role)
 router.get('/', async (req, res) => {
   try {
-    const { active } = req.query;
+    const { active, role } = req.query;
+
+    const where = {};
+    if (active === 'true') {
+      where.Is_Active = true;
+    }
+    if (role) {
+      where.User_Role = role;
+    }
+
     const users = await prisma.user.findMany({
-      where: active === 'true' ? { Is_Active: true } : {},
-      orderBy: { Last_Name: 'asc' }
+      where,
+      orderBy: { Last_Name: 'asc' },
+      select: {
+        User_ID: true,
+        First_Name: true,
+        Last_Name: true,
+        Email: true,
+        User_Role: true,
+        Is_Active: true,
+        Created_At: true,
+        Updated_At: true
+      }
     });
     res.json(users);
   } catch (error) {
