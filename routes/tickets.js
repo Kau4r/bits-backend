@@ -60,13 +60,25 @@ router.post('/', async (req, res) => {
       },
     });
 
-    // Log and notify Lab Techs about the new ticket
+    // Log and notify Lab Techs and Lab Head about the new ticket
+    const ticketDetails = `New ticket reported: ${Report_Problem.substring(0, 50)}${Report_Problem.length > 50 ? '...' : ''}`;
+
+    // Notify Lab Techs
     await AuditLogger.logTicket(
       parseInt(Reported_By_ID),
       'TICKET_CREATED',
       ticket.Ticket_ID,
-      `New ticket reported: ${Report_Problem.substring(0, 50)}${Report_Problem.length > 50 ? '...' : ''}`,
-      'LAB_TECH' // Notify Lab Techs
+      ticketDetails,
+      'LAB_TECH'
+    );
+
+    // Also notify Lab Head
+    await AuditLogger.logTicket(
+      parseInt(Reported_By_ID),
+      'TICKET_CREATED',
+      ticket.Ticket_ID,
+      ticketDetails,
+      'LAB_HEAD'
     );
 
     res.status(201).json(ticket);

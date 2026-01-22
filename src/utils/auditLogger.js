@@ -67,19 +67,13 @@ class AuditLogger {
                 };
 
                 if (notifyRole) {
-                    console.log(`[AuditLogger] Notification role ${notifyRole} will view shared log: ${action}`);
-                    // Database deduplication: We rely on shared logs for role-based notifications (ROOM_BOOKED, etc.)
-                    // instead of creating individual notification entries for each user in the role.
-
-                    /* 
-                    console.log(`[AuditLogger] Sending notification to role: ${notifyRole}`);
+                    console.log(`[AuditLogger] Sending real-time notification to role: ${notifyRole}`);
                     try {
                         await NotificationService.notifyRole(notifyRole, notificationPayload);
                         console.log(`[AuditLogger] Notification sent to role: ${notifyRole}`);
                     } catch (notifyError) {
                         console.error(`[AuditLogger] Failed to notify role ${notifyRole}:`, notifyError.message);
                     }
-                    */
                 }
 
                 if (notifyUserId) {
