@@ -143,8 +143,8 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Item with this code already exists' });
     }
 
-    // Validate Item_Type against available enums
-    const validItemTypes = ['GENERAL', 'KEYBOARD', 'MOUSE', 'MONITOR', 'SYSTEM_UNIT'];
+    // Validate Item_Type against available enums (must match Prisma schema)
+    const validItemTypes = ['HDMI', 'VGA', 'ADAPTER', 'PROJECTOR', 'EXTENSION', 'MOUSE', 'KEYBOARD', 'MONITOR', 'GENERAL', 'OTHER'];
     if (!validItemTypes.includes(Item_Type)) {
       return res.status(400).json({
         error: `Invalid Item_Type. Must be one of: ${validItemTypes.join(', ')}`
@@ -438,12 +438,7 @@ router.post('/bulk', authenticateToken, async (req, res) => {
     res.status(201).json({
       message: `Successfully created ${createdItems.length} items`,
       count: createdItems.length,
-      items: createdItems.map(i => ({
-        Item_ID: i.Item_ID,
-        Item_Name: i.Item_Name,
-        Barcode_Number: i.Barcode_Number,
-        Status: i.Status
-      }))
+      items: createdItems // Return full item objects for frontend
     });
 
   } catch (error) {

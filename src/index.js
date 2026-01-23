@@ -38,6 +38,8 @@ app.use('/api/borrowing', require('../routes/borrowing'));
 console.log('Registering notifications route...');
 app.use('/api/notifications', require('../routes/notifications'));
 app.use('/api/forms', require('../routes/forms'));
+app.use('/api/upload', require('../routes/upload'));
+app.use('/uploads', express.static(require('path').join(__dirname, '../uploads')));
 console.log('Registering dashboard route...');
 app.use('/api/dashboard', require('../routes/dashboard'));
 
