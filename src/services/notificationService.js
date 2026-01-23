@@ -42,11 +42,26 @@ class NotificationService {
     };
   }
 
-  // Broadcast notification to all users with a specific role
-  static async notifyRole(role, notificationData) {
+  // Broadcast notification to all users with specific role(s), optionally excluding specific users
+  static async notifyRole(roleOrRoles, notificationData, excludeUserIds = []) {
     try {
+      const roles = Array.isArray(roleOrRoles) ? roleOrRoles : [roleOrRoles];
+      const exclusions = Array.isArray(excludeUserIds) ? excludeUserIds : [excludeUserIds];
+
+      const whereClause = {
+        User_Role: { in: roles }
+      };
+
+      if (exclusions.length > 0) {
+        // Filter out null/undefined values just in case
+        const validExclusions = exclusions.filter(id => id !== null && id !== undefined);
+        if (validExclusions.length > 0) {
+          whereClause.User_ID = { notIn: validExclusions };
+        }
+      }
+
       const users = await prisma.User.findMany({
-        where: { User_Role: role },
+        where: whereClause,
         select: { User_ID: true }
       });
 
@@ -61,7 +76,7 @@ class NotificationService {
 
       return notifications;
     } catch (error) {
-      console.error(`Failed to broadcast to role ${role}:`, error);
+      console.error(`Failed to broadcast to roles ${roleOrRoles}:`, error);
       // Don't throw, just log error to avoid breaking the main flow
       return [];
     }

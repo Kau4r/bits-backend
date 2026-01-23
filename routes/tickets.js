@@ -63,28 +63,34 @@ router.post('/', async (req, res) => {
     // Log and notify Lab Techs and Lab Head about the new ticket
     const ticketDetails = `New ticket reported: ${Report_Problem.substring(0, 50)}${Report_Problem.length > 50 ? '...' : ''}`;
 
-    // Notify Lab Techs
+    // Notify both Lab Techs and Lab Head in one call to avoid duplicates
     await AuditLogger.logTicket(
       parseInt(Reported_By_ID),
       'TICKET_CREATED',
       ticket.Ticket_ID,
       ticketDetails,
-      'LAB_TECH'
-    );
-
-    // Also notify Lab Head
-    await AuditLogger.logTicket(
-      parseInt(Reported_By_ID),
-      'TICKET_CREATED',
-      ticket.Ticket_ID,
-      ticketDetails,
-      'LAB_HEAD'
+      ['LAB_TECH', 'LAB_HEAD']
     );
 
     res.status(201).json(ticket);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create ticket', details: error.message });
+  }
+});
+
+// Get ticket count by status
+router.get('/count', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = {};
+    if (status) where.Status = status;
+
+    const count = await prisma.ticket.count({ where });
+    res.json({ count });
+  } catch (error) {
+    console.error('Error counting tickets:', error);
+    res.status(500).json({ error: 'Failed to count tickets' });
   }
 });
 
@@ -165,15 +171,20 @@ router.put('/:id', async (req, res) => {
     });
 
     // Check for technician assignment
-    if (Technician_ID && Technician_ID !== existingTicket.Technician_ID) {
+    let notificationSent = false;
+    const newTechId = Technician_ID ? parseInt(Technician_ID) : null;
+
+    // Check if technician changed (handling newly assigned or re-assigned)
+    if (newTechId && newTechId !== existingTicket.Technician_ID) {
       await AuditLogger.logTicket(
         req.user ? req.user.User_ID : existingTicket.Reported_By_ID, // Use current user or original reporter
         'TICKET_ASSIGNED',
         updatedTicket.Ticket_ID,
         `Ticket assigned to ${updatedTicket.Technician.First_Name} ${updatedTicket.Technician.Last_Name}`,
-        null, // No role notification
-        parseInt(Technician_ID) // Notify the technician
+        ['LAB_TECH', 'LAB_HEAD'],
+        newTechId // Notify the technician
       );
+      notificationSent = true;
     }
 
     // Check for resolution
@@ -183,8 +194,24 @@ router.put('/:id', async (req, res) => {
         'TICKET_RESOLVED',
         updatedTicket.Ticket_ID,
         `Ticket resolved: ${updatedTicket.Report_Problem.substring(0, 30)}...`,
-        null,
+        ['LAB_TECH', 'LAB_HEAD'],
         updatedTicket.Reported_By_ID // Notify the reporter
+      );
+      notificationSent = true;
+    }
+
+    // Only notify Staff of generic updates if no specific notification was sent AND actual meaningful changes occurred
+    const hasOtherChanges = (Status && Status !== existingTicket.Status) ||
+      (Priority && Priority !== existingTicket.Priority) ||
+      (Category && Category !== existingTicket.Category);
+
+    if (!notificationSent && hasOtherChanges) {
+      await AuditLogger.logTicket(
+        req.user ? req.user.User_ID : existingTicket.Reported_By_ID,
+        'TICKET_UPDATED',
+        updatedTicket.Ticket_ID,
+        `Ticket updated via System`,
+        ['LAB_TECH', 'LAB_HEAD']
       );
     }
 

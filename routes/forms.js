@@ -256,6 +256,8 @@ router.patch('/:id', authenticateToken, async (req, res) => {
             if (status === 'APPROVED') action = 'FORM_APPROVED';
             if (status === 'REJECTED') action = 'FORM_REJECTED';
             if (status === 'ARCHIVED') action = 'FORM_ARCHIVED';
+            if (status === 'PENDING') action = 'FORM_PENDING';
+            if (status === 'IN_REVIEW') action = 'FORM_IN_REVIEW';
         }
 
         if (approverId !== undefined) {
@@ -276,8 +278,8 @@ router.patch('/:id', authenticateToken, async (req, res) => {
             include: { Creator: true }
         });
 
-        // Notify Creator if Approved/Rejected
-        const notifyUserId = (status === 'APPROVED' || status === 'REJECTED') ? form.Creator_ID : null;
+        // Notify Creator if status changes to Approved, Rejected, Pending, or In Review
+        const notifyUserId = ['APPROVED', 'REJECTED', 'PENDING', 'IN_REVIEW'].includes(status) ? form.Creator_ID : null;
 
         // Notify LAB_TECH & LAB_HEAD for Laboratory forms; LAB_HEAD for Registrar (replacing ADMIN)
         const notifyAuditRole = form.Department === 'LABORATORY'
@@ -381,7 +383,7 @@ router.post('/:id/transfer', authenticateToken, async (req, res) => {
             req.user.User_ID,
             'FORM_TRANSFERRED',
             `Transferred form ${form.Form_Code} to ${department}`,
-            getNotifyRoles(department)
+            ['LAB_TECH', 'LAB_HEAD']
         );
 
         res.json(form);

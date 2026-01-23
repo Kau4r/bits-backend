@@ -41,16 +41,24 @@ const getDashboardMetrics = async (req, res) => {
                 where: { Status: 'DEFECTIVE' }
             });
 
-            // 4. Pending Forms
+            // 4. Form Stats
             const pendingForms = await prisma.form.count({
                 where: { Status: 'PENDING' }
+            });
+            const approvedForms = await prisma.form.count({
+                where: { Status: 'APPROVED' }
+            });
+            const inReviewForms = await prisma.form.count({
+                where: { Status: 'IN_REVIEW' }
             });
 
             metrics.counts = {
                 pendingTickets,
                 activeBookings,
                 brokenItems,
-                pendingForms
+                pendingForms,
+                approvedForms,
+                inReviewForms
             };
 
             // 5. Recent Activity (System-wide)
@@ -84,10 +92,19 @@ const getDashboardMetrics = async (req, res) => {
                 where: { Status: 'BORROWED' }
             });
 
+            // 4. Pending Forms (Laboratory)
+            const pendingForms = await prisma.form.count({
+                where: {
+                    Status: 'PENDING',
+                    Department: 'LABORATORY'
+                }
+            });
+
             metrics.counts = {
                 myAssignedTickets: myTickets,
                 activeMaintenance: maintenanceTasks,
-                activeBorrowings: borrowedItems
+                activeBorrowings: borrowedItems,
+                pendingForms
             };
 
             // 4. My Recent Activity
