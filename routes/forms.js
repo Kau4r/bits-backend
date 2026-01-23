@@ -6,6 +6,14 @@ const AuditLogger = require('../src/utils/auditLogger');
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// Helper to determine notification roles based on department
+const getNotifyRoles = (department) => {
+    if (department === 'LABORATORY') return ['LAB_TECH', 'LAB_HEAD'];
+    // User requested LAB_HEAD for Registrar forms instead of ADMIN
+    if (department === 'REGISTRAR') return ['LAB_HEAD'];
+    return ['ADMIN'];
+};
+
 // Generate form code (e.g., WRF-2026-001)
 const generateFormCode = async (formType) => {
     const year = new Date().getFullYear();
@@ -192,9 +200,7 @@ router.post('/', authenticateToken, async (req, res) => {
         });
 
         // Audit Log
-        // Notify Role logic: If Department is LABORATORY, notify LAB_HEAD. Else (REGISTRAR/FINANCE) maybe ADMIN?
-        // Using LAB_HEAD for LAB forms for now.
-        const notifyRole = departmentEnum === 'LABORATORY' ? 'LAB_HEAD' : (departmentEnum === 'REGISTRAR' ? 'ADMIN' : null);
+        const notifyRole = getNotifyRoles(departmentEnum);
 
         await AuditLogger.logForm(
             userId,
@@ -202,6 +208,13 @@ router.post('/', authenticateToken, async (req, res) => {
             `Submitted form ${formCode} to ${departmentEnum}`,
             notifyRole
         );
+
+        // Explicitly notify LAB_TECH for Laboratory forms (real-time only)
+        // Note: The AuditLogger above now handles real-time notification to the correct roles (including LAB_TECH),
+        // so we don't need this explicit extra call depending on AuditLogger implementation.
+        // But AuditLogger uses logForm which calls NotificationService. 
+        // We can optimize by removing this block if AuditLogger handles it, which it does now.
+        // Removing explicit extra call to avoid double notification if AuditLogger does it.
 
         // Fetch the form again with history included
         const formWithHistory = await prisma.Form.findUnique({
@@ -266,11 +279,16 @@ router.patch('/:id', authenticateToken, async (req, res) => {
         // Notify Creator if Approved/Rejected
         const notifyUserId = (status === 'APPROVED' || status === 'REJECTED') ? form.Creator_ID : null;
 
+        // Notify LAB_TECH & LAB_HEAD for Laboratory forms; LAB_HEAD for Registrar (replacing ADMIN)
+        const notifyAuditRole = form.Department === 'LABORATORY'
+            ? ['LAB_TECH', 'LAB_HEAD']
+            : (form.Department === 'REGISTRAR' ? ['LAB_HEAD'] : null);
+
         await AuditLogger.logForm(
             req.user.User_ID,
             action,
             `Form ${form.Form_Code} ${action === 'FORM_UPDATED' ? 'updated' : status.toLowerCase()}`,
-            null,
+            notifyAuditRole,
             notifyUserId
         );
 
@@ -301,7 +319,8 @@ router.patch('/:id/archive', authenticateToken, async (req, res) => {
         await AuditLogger.logForm(
             req.user.User_ID,
             'FORM_ARCHIVED',
-            `Archived form ${form.Form_Code}`
+            `Archived form ${form.Form_Code}`,
+            getNotifyRoles(form.Department)
         );
 
         res.json(form);
@@ -362,8 +381,7 @@ router.post('/:id/transfer', authenticateToken, async (req, res) => {
             req.user.User_ID,
             'FORM_TRANSFERRED',
             `Transferred form ${form.Form_Code} to ${department}`,
-            // Notify receiving department?
-            department === 'LABORATORY' ? 'LAB_HEAD' : 'ADMIN'
+            getNotifyRoles(department)
         );
 
         res.json(form);

@@ -19,6 +19,7 @@ model User {
   Is_Active                   Boolean          @default(true)
   User_Role                   UserRole         @default(STUDENT)
   Audit_Log                   Audit_Log[]
+  NotificationReads           NotificationRead[]
   ApprovedBookings            Booked_Room[]    @relation("ScheduleApprover")
   Booked_Room                 Booked_Room[]
   LentItems                   Borrow_Item[]    @relation("BorroweeRelation")
@@ -197,6 +198,19 @@ model Audit_Log {
   @@index([Is_Notification, User_ID, Notification_Read_At])
   @@index([Action, Timestamp])
   @@index([Notification_Type, Timestamp])
+  NotificationReads    NotificationRead[]
+}
+
+model NotificationRead {
+  Read_ID      Int       @id @default(autoincrement())
+  User_ID      Int
+  Log_ID       Int
+  Read_At      DateTime  @default(now())
+
+  User         User      @relation(fields: [User_ID], references: [User_ID])
+  Audit_Log    Audit_Log @relation(fields: [Log_ID], references: [Log_ID])
+
+  @@unique([User_ID, Log_ID])
 }
 
 model Borrow_Item {

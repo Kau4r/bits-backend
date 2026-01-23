@@ -67,12 +67,16 @@ class AuditLogger {
                 };
 
                 if (notifyRole) {
-                    console.log(`[AuditLogger] Sending real-time notification to role: ${notifyRole}`);
-                    try {
-                        await NotificationService.notifyRole(notifyRole, notificationPayload);
-                        console.log(`[AuditLogger] Notification sent to role: ${notifyRole}`);
-                    } catch (notifyError) {
-                        console.error(`[AuditLogger] Failed to notify role ${notifyRole}:`, notifyError.message);
+                    const roles = Array.isArray(notifyRole) ? notifyRole : [notifyRole];
+                    console.log(`[AuditLogger] Sending real-time notification to roles: ${roles.join(', ')}`);
+
+                    for (const role of roles) {
+                        try {
+                            await NotificationService.notifyRole(role, notificationPayload);
+                            console.log(`[AuditLogger] Notification sent to role: ${role}`);
+                        } catch (notifyError) {
+                            console.error(`[AuditLogger] Failed to notify role ${role}:`, notifyError.message);
+                        }
                     }
                 }
 

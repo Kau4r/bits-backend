@@ -20,7 +20,8 @@ class NotificationService {
   }) {
     // Only send real-time notification if there's a userId
     if (userId) {
-      NotificationManager.send(userId, {
+      console.log(`[NotificationService] Sending real-time via Manager to user: ${userId}`);
+      NotificationManager.send(String(userId), {
         id: logId || Date.now(),
         type: type,
         title: title || type.replace(/_/g, ' '),
@@ -28,6 +29,8 @@ class NotificationService {
         time: timestamp || new Date().toISOString(),
         read: false
       });
+    } else {
+      console.log('[NotificationService] Skipping real-time send: No userId provided');
     }
 
     // Return a simple object for compatibility (no DB entry created)
@@ -153,14 +156,18 @@ class NotificationService {
             Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED'] }
           }] : []),
           ...(user.User_Role === 'LAB_TECH' ? [{
-            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED'] }
+            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'FORM_APPROVED', 'FORM_REJECTED'] }
           }] : []),
         ]
       };
     }
 
     if (unreadOnly) {
-      where.Notification_Read_At = null;
+      where.NotificationReads = {
+        none: {
+          User_ID: userId
+        }
+      };
     }
 
     if (cursor) {
@@ -199,6 +206,14 @@ class NotificationService {
               }
             }
           }
+        },
+        NotificationReads: {
+          where: {
+            User_ID: userId
+          },
+          select: {
+            Read_At: true
+          }
         }
       }
     });
@@ -209,53 +224,198 @@ class NotificationService {
       nextCursor = nextItem.Log_ID;
     }
 
+    // Transform result to include polyfilled read status
+    const transformedNotifications = notifications.map(n => {
+      const readRecord = n.NotificationReads && n.NotificationReads[0];
+      return {
+        ...n,
+        // If we found a read record for this user, use its timestamp, otherwise null
+        Notification_Read_At: readRecord ? readRecord.Read_At : null,
+        // Remove the helper relation from the final output if desirable, 
+        // though keeping it doesn't hurt much.
+        NotificationReads: undefined
+      };
+    });
+
     return {
-      notifications,
+      notifications: transformedNotifications,
       nextCursor
     };
   }
 
   // Mark a notification as read
   static async markAsRead(notificationId, userId) {
-    return await prisma.Audit_Log.updateMany({
-      where: {
-        Log_ID: notificationId,
-        User_ID: userId,
-        Is_Notification: true,
-        Notification_Read_At: null
-      },
-      data: {
-        Notification_Read_At: new Date()
-      }
-    });
+    try {
+      // Try to create the read record. If it exists, unique constraint will throw or we can use upsert/ignore
+      return await prisma.NotificationRead.upsert({
+        where: {
+          User_ID_Log_ID: {
+            User_ID: userId,
+            Log_ID: notificationId
+          }
+        },
+        update: {}, // No update needed if exists
+        create: {
+          User_ID: userId,
+          Log_ID: notificationId,
+          Read_At: new Date()
+        }
+      });
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+      throw error;
+    }
   }
 
   // Mark all notifications as read for a user
   static async markAllAsRead(userId) {
-    return await prisma.Audit_Log.updateMany({
-      where: {
-        User_ID: userId,
+    // 1. Get all unread notifications for this user (reusing getUserNotifications logic partly)
+    // We need to fetch the IDs of all notifications visible to this user that are NOT read.
+
+    // Get user role
+    const user = await prisma.User.findUnique({
+      where: { User_ID: userId },
+      select: { User_Role: true }
+    });
+
+    if (!user) return;
+
+    // Build role-specific query (Duplicated logic from getUserNotifications for now, best to extract this)
+    let where;
+
+    if (user.User_Role === 'FACULTY') {
+      where = {
         Is_Notification: true,
-        Notification_Read_At: null
-      },
-      data: {
-        Notification_Read_At: new Date()
+        OR: [
+          {
+            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
+            Booked_Room: { User_ID: userId }
+          },
+          {
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+          }
+        ]
+      };
+    } else if (user.User_Role === 'STUDENT') {
+      where = {
+        Is_Notification: true,
+        OR: [
+          { User_ID: userId },
+          { User_ID: null, Is_Notification: true },
+          {
+            Action: { in: ['ROOM_AVAILABLE', 'ROOM_OPENED_FOR_STUDENTS'] }
+          }
+        ]
+      };
+    } else {
+      where = {
+        Is_Notification: true,
+        OR: [
+          { User_ID: userId },
+          { User_ID: null, Is_Notification: true },
+          ...(user.User_Role === 'LAB_HEAD' ? [{
+            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED'] }
+          }] : []),
+          ...(user.User_Role === 'LAB_TECH' ? [{
+            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED'] }
+          }] : []),
+        ]
+      };
+    }
+
+    // Only get those that don't have a read record for this user
+    where.NotificationReads = {
+      none: {
+        User_ID: userId
       }
+    };
+
+    const unreadLogs = await prisma.Audit_Log.findMany({
+      where,
+      select: { Log_ID: true }
+    });
+
+    if (unreadLogs.length === 0) return { count: 0 };
+
+    // Bulk create read records
+    const readRecords = unreadLogs.map(log => ({
+      User_ID: userId,
+      Log_ID: log.Log_ID,
+      Read_At: new Date()
+    }));
+
+    return await prisma.NotificationRead.createMany({
+      data: readRecords,
+      skipDuplicates: true
     });
   }
 
   // Get unread notification count for a user
   static async getUnreadCount(userId) {
-    return await prisma.audit_Log.count({
-      where: {
+    // Get user role to build role-specific query
+    const user = await prisma.User.findUnique({
+      where: { User_ID: userId },
+      select: { User_Role: true }
+    });
+
+    if (!user) {
+      return 0;
+    }
+
+    // Build role-specific query (same logic as getUserNotifications)
+    let where;
+
+    if (user.User_Role === 'FACULTY') {
+      where = {
+        Is_Notification: true,
+        OR: [
+          {
+            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
+            Booked_Room: {
+              User_ID: userId
+            }
+          },
+          {
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+          }
+        ]
+      };
+    } else if (user.User_Role === 'STUDENT') {
+      where = {
+        Is_Notification: true,
         OR: [
           { User_ID: userId },
-          { User_ID: null, Is_Notification: true } // System-wide notifications
-        ],
+          { User_ID: null, Is_Notification: true },
+          {
+            Action: { in: ['ROOM_AVAILABLE', 'ROOM_OPENED_FOR_STUDENTS'] }
+          }
+        ]
+      };
+    } else {
+      // LAB_HEAD, LAB_TECH, ADMIN
+      where = {
         Is_Notification: true,
-        Notification_Read_At: null
+        OR: [
+          { User_ID: userId },
+          { User_ID: null, Is_Notification: true },
+          ...(user.User_Role === 'LAB_HEAD' ? [{
+            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED'] }
+          }] : []),
+          ...(user.User_Role === 'LAB_TECH' ? [{
+            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED'] }
+          }] : []),
+        ]
+      };
+    }
+
+    // Exclude read notifications
+    where.NotificationReads = {
+      none: {
+        User_ID: userId
       }
-    });
+    };
+
+    return await prisma.Audit_Log.count({ where });
   }
 
   // Helper method to notify about schedule ending
@@ -358,7 +518,7 @@ class NotificationService {
     // Notify all lab technicians
     const labTechs = await prisma.user.findMany({
       where: {
-        User_Role: 'LABTECH',
+        User_Role: 'LAB_TECH',
       },
       select: {
         User_ID: true,

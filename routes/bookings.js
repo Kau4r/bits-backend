@@ -317,7 +317,7 @@ router.patch('/:id/status', async (req, res) => {
         }
 
         // Check if user has permission to change booking status
-        const isStaff = ['LABTECH', 'LABHEAD', 'ADMIN', 'LAB_TECH', 'LAB_HEAD'].includes(approver.User_Role);
+        const isStaff = ['ADMIN', 'LAB_TECH', 'LAB_HEAD'].includes(approver.User_Role);
 
         // Get the booking to check ownership and current status
         const existingBooking = await prisma.Booked_Room.findUnique({
