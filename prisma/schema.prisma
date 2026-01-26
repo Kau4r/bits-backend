@@ -24,7 +24,6 @@ model User {
   Booked_Room                 Booked_Room[]
   LentItems                   Borrow_Item[]    @relation("BorroweeRelation")
   BorrowedItems               Borrow_Item[]    @relation("BorrowerRelation")
-  Borrowing_Comp              Borrowing_Comp[]
   Form_Form_Approver_IDToUser Form[]           @relation("Form_Approver_IDToUser")
   Form_Form_Creator_IDToUser  Form[]           @relation("Form_Creator_IDToUser")
   Item                        Item[]
@@ -39,6 +38,7 @@ model Item {
   User_ID       Int?
   Item_Code     String        @unique
   Item_Type     ItemType      @default(GENERAL)
+  Name          String?
   Brand         String?
   Serial_Number String?
   Status        ItemStatus
@@ -53,7 +53,7 @@ model Item {
   Room          Room?         @relation(fields: [Room_ID], references: [Room_ID])
   User          User?         @relation(fields: [User_ID], references: [User_ID])
   Tickets       Ticket[]
-  Computers     Computer[]    @relation("ComputerItems")
+
 
   @@index([Item_Code])
   @@index([Status])
@@ -125,7 +125,6 @@ model Room {
   Updated_At       DateTime      @updatedAt
   Booked_Rooms     Booked_Room[]
   Borrow_Items     Borrow_Item[]
-  Computers        Computer[]
   Items            Item[]
   Opened_By_User   User?         @relation("RoomOpenedBy", fields: [Opened_By], references: [User_ID])
   Schedule         Schedule[]
@@ -229,29 +228,9 @@ model Borrow_Item {
   Room           Room?        @relation(fields: [Room_ID], references: [Room_ID])
 }
 
-model Borrowing_Comp {
-  Borrowing_Comp_ID Int      @id @default(autoincrement())
-  User_ID           Int
-  Computer_ID       Int
-  Return_Date       DateTime
-  Status            String
-  Created_At        DateTime @default(now())
-  Updated_At        DateTime @updatedAt
-  Computer          Computer @relation(fields: [Computer_ID], references: [Computer_ID])
-  User              User     @relation(fields: [User_ID], references: [User_ID])
-}
 
-model Computer {
-  Computer_ID    Int              @id @default(autoincrement())
-  Name           String
-  Created_At     DateTime         @default(now())
-  Updated_At     DateTime         @updatedAt
-  Status         ComputerStatus   @default(AVAILABLE)
-  Room_ID        Int?
-  Borrowing_Comp Borrowing_Comp[]
-  Room           Room?            @relation(fields: [Room_ID], references: [Room_ID])
-  Items          Item[]           @relation("ComputerItems")
-}
+
+
 
 enum TicketStatus {
   PENDING
@@ -352,12 +331,7 @@ enum ItemStatus {
   REPLACED
 }
 
-enum ComputerStatus {
-  AVAILABLE
-  IN_USE
-  MAINTENANCE
-  DECOMMISSIONED
-}
+
 
 enum ItemType {
   HDMI
@@ -370,4 +344,5 @@ enum ItemType {
   MONITOR
   GENERAL
   OTHER
+  COMPUTER
 }

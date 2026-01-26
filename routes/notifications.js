@@ -9,6 +9,7 @@ const NotificationManager = require('../src/services/notificationManager');
 // SSE Stream Endpoint
 router.get('/stream', authenticateToken, (req, res) => {
   const userId = req.user.User_ID;
+  console.log(`[SSE] User ${userId} (${req.user.User_Role}) connecting to notification stream...`);
 
   // SSE Headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -17,6 +18,7 @@ router.get('/stream', authenticateToken, (req, res) => {
 
   // Add client to manager
   NotificationManager.add(userId, res);
+  console.log(`[SSE] User ${userId} added to NotificationManager`);
 
   // Send initial ping to establish connection
   res.write('data: {"type":"PING"}\n\n');
@@ -28,6 +30,7 @@ router.get('/stream', authenticateToken, (req, res) => {
 
   // Clean up on close
   req.on('close', () => {
+    console.log(`[SSE] User ${userId} disconnected from notification stream`);
     clearInterval(heartbeat);
     NotificationManager.remove(userId, res);
   });

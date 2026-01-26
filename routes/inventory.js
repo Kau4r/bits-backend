@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../src/lib/prisma');
 const { v4: uuidv4 } = require('uuid');
 const { authenticateToken } = require('../src/middleware/auth');
+const { asyncHandler } = require('../src/middleware/errorHandler');
 const AuditLogger = require('../src/utils/auditLogger');
 
 // Helper function to check user role (kept for backward compatibility if needed, but using middleware is better)
@@ -33,11 +33,6 @@ router.get('/', async (req, res) => {
         ReplacedBy: true,
         Replaces: true,
         Borrow_Item: true,
-        Computers: {
-          include: {
-            Room: true
-          }
-        },
         Tickets: true,
         Room: true
       },
@@ -91,7 +86,6 @@ router.get('/:id', async (req, res) => {
         Replaces: true,
         Borrow_Item: true,
         Booking: true,
-        Computers: true,
         Room: true
       }
     })

@@ -29,18 +29,38 @@ const NotificationManager = {
         console.log(`[NotificationManager] Sending to User ${id} (Original: ${userId})`);
         if (this.clients.has(id)) {
             const sockets = this.clients.get(id);
-            console.log(`[NotificationManager] User has ${sockets.size} active sockets`);
+            console.log(`[NotificationManager] User has ${sockets.size} active connections`);
             const message = JSON.stringify(data);
             let sentCount = 0;
-            sockets.forEach(ws => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(message);
-                    sentCount++;
-                } else {
-                    console.log(`[NotificationManager] Socket not open state: ${ws.readyState}`);
+            sockets.forEach(client => {
+                try {
+                    // Check if it's an SSE Response object (has .write method and .writableEnded)
+                    if (client.write && typeof client.writableEnded !== 'undefined') {
+                        // SSE Response
+                        if (!client.writableEnded) {
+                            client.write(`data: ${message}\n\n`);
+                            sentCount++;
+                            console.log(`[NotificationManager] Sent via SSE`);
+                        } else {
+                            console.log(`[NotificationManager] SSE connection already ended`);
+                        }
+                    } else if (client.readyState !== undefined) {
+                        // WebSocket
+                        if (client.readyState === WebSocket.OPEN) {
+                            client.send(message);
+                            sentCount++;
+                            console.log(`[NotificationManager] Sent via WebSocket`);
+                        } else {
+                            console.log(`[NotificationManager] WebSocket not open, state: ${client.readyState}`);
+                        }
+                    } else {
+                        console.log(`[NotificationManager] Unknown client type`);
+                    }
+                } catch (err) {
+                    console.error(`[NotificationManager] Error sending to client:`, err.message);
                 }
             });
-            console.log(`[NotificationManager] Sent to ${sentCount} sockets`);
+            console.log(`[NotificationManager] Sent to ${sentCount} connections`);
         } else {
             console.log(`[NotificationManager] User ${id} not found. Active users:`, [...this.clients.keys()]);
         }

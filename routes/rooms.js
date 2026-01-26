@@ -1,10 +1,9 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
-const { authenticateToken } = require('../src/middleware/auth');
-const AuditLogger = require('../src/utils/auditLogger');
-
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../src/lib/prisma');
+const { authenticateToken } = require('../src/middleware/auth');
+const { asyncHandler } = require('../src/middleware/errorHandler');
+const AuditLogger = require('../src/utils/auditLogger');
 
 // Get all rooms
 router.get('/', async (req, res) => {
