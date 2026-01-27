@@ -1,14 +1,16 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../src/lib/prisma');
+const { authenticateToken } = require('../src/middleware/auth');
+const { authorize, ROLES } = require('../src/middleware/authorize');
+const { asyncHandler } = require('../src/middleware/errorHandler');
+const { validate, bookingSchemas } = require('../src/middleware/validate');
 const NotificationService = require('../src/services/notificationService');
+const NotificationManager = require('../src/services/notificationManager');
 const AuditLogger = require('../src/utils/auditLogger');
 
-
-
 // Create a new room booking
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, validate(bookingSchemas.create), asyncHandler(async (req, res) => {
     try {
         const { User_ID, Room_ID, Start_Time, End_Time, Purpose } = req.body;
 
@@ -132,13 +134,22 @@ router.post('/', async (req, res) => {
         });
 
         // Log and notify Lab Heads about the new booking request
-        await AuditLogger.logBooking(
-            parseInt(User_ID),
-            'ROOM_BOOKED',
-            booking.Booked_Room_ID,
-            `New booking request for ${booking.Room.Name} by ${booking.User.First_Name} ${booking.User.Last_Name}`,
-            'LAB_HEAD' // Notify Lab Heads
-        );
+        console.log('[Bookings] About to call AuditLogger.logBooking...');
+        try {
+            await AuditLogger.logBooking(
+                parseInt(User_ID),
+                'ROOM_BOOKED',
+                booking.Booked_Room_ID,
+                `New booking request for ${booking.Room.Name} by ${booking.User.First_Name} ${booking.User.Last_Name}`,
+                'LAB_HEAD' // Notify Lab Heads
+            );
+            console.log('[Bookings] AuditLogger.logBooking completed successfully');
+        } catch (auditError) {
+            console.error('[Bookings] AuditLogger.logBooking FAILED:', auditError);
+        }
+
+        // Broadcast real-time UI update to LAB_HEAD and LAB_TECH
+        await NotificationManager.broadcastBookingEvent('BOOKING_CREATED', booking, ['LAB_HEAD', 'LAB_TECH']);
 
 
         res.status(201).json(booking);
@@ -150,10 +161,10 @@ router.post('/', async (req, res) => {
             details: error.message
         });
     }
-});
+}));
 
 // Get all room bookings
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, asyncHandler(async (req, res) => {
     try {
         const { status, roomId, userId } = req.query;
 
@@ -198,10 +209,10 @@ router.get('/', async (req, res) => {
             details: error.message
         });
     }
-});
+}));
 
 // Update room booking details (time, room, purpose)
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', authenticateToken, asyncHandler(async (req, res) => {
     try {
         const { id } = req.params;
         const { Start_Time, End_Time, Room_ID, Purpose, Notes } = req.body;
@@ -294,10 +305,10 @@ router.patch('/:id', async (req, res) => {
             details: error.message
         });
     }
-});
+}));
 
 // Update room booking status
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', authenticateToken, validate(bookingSchemas.updateStatus), asyncHandler(async (req, res) => {
     try {
         const { id } = req.params;
         const { status, approverId, notes } = req.body;
@@ -405,6 +416,30 @@ router.patch('/:id/status', async (req, res) => {
                 null, // No role to notify
                 existingBooking.User_ID // Notify the requester (or actor for cancellation)
             );
+
+            // Broadcast real-time UI update to all relevant users
+            // For approvals/rejections, notify both the requester AND staff
+            // For cancellations, notify staff
+            if (status === 'CANCELLED') {
+                await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', booking, ['LAB_HEAD', 'LAB_TECH']);
+            } else {
+                // Approved or Rejected - notify the faculty who made the booking
+                NotificationManager.send(existingBooking.User_ID, {
+                    type: notificationType,
+                    category: 'BOOKING_UPDATE',
+                    timestamp: new Date().toISOString(),
+                    booking: {
+                        id: booking.Booked_Room_ID,
+                        roomId: booking.Room_ID,
+                        status: booking.Status,
+                        startTime: booking.Start_Time,
+                        endTime: booking.End_Time
+                    }
+                });
+
+                // ALSO broadcast to LAB_HEAD/LAB_TECH so their calendars update too
+                await NotificationManager.broadcastBookingEvent(notificationType, booking, ['LAB_HEAD', 'LAB_TECH']);
+            }
         }
 
         res.json(booking);
@@ -415,10 +450,10 @@ router.patch('/:id/status', async (req, res) => {
             details: error.message
         });
     }
-});
+}));
 
 // Get available rooms for a time period
-router.get('/available', async (req, res) => {
+router.get('/available', authenticateToken, asyncHandler(async (req, res) => {
     try {
         const { startTime, endTime, capacity } = req.query;
 
@@ -450,6 +485,6 @@ router.get('/available', async (req, res) => {
             details: error.message
         });
     }
-});
+}));
 
 module.exports = router;

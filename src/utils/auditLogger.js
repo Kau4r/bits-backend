@@ -133,6 +133,9 @@ class AuditLogger {
             'COMPUTER_BORROWED': 'Computer Borrowed',
             'ITEM_RETURNED': 'Item Returned',
             'ITEM_OVERDUE': 'Item Overdue',
+            'BORROW_REQUESTED': 'New Borrow Request',
+            'BORROW_APPROVED': 'Borrow Request Approved',
+            'BORROW_REJECTED': 'Borrow Request Rejected',
 
             // Forms
             'FORM_SUBMITTED': 'New Form Submitted',

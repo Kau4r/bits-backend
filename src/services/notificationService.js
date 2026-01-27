@@ -168,10 +168,10 @@ class NotificationService {
           { User_ID: null, Is_Notification: true }, // System-wide notifications
           // Role-Based Shared Notifications
           ...(user.User_Role === 'LAB_HEAD' ? [{
-            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED'] }
+            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED', 'BORROW_REQUESTED'] }
           }] : []),
           ...(user.User_Role === 'LAB_TECH' ? [{
-            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'FORM_APPROVED', 'FORM_REJECTED'] }
+            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'FORM_APPROVED', 'FORM_REJECTED', 'BORROW_REQUESTED'] }
           }] : []),
         ]
       };

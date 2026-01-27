@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../src/lib/prisma');
+const { authenticateToken } = require('../src/middleware/auth');
+const { asyncHandler } = require('../src/middleware/errorHandler');
 const NotificationService = require('../src/services/notificationService');
 const AuditLogger = require('../src/utils/auditLogger');
 
 // Create Ticket
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, asyncHandler(async (req, res) => {
   try {
     const {
       Reported_By_ID,
@@ -77,10 +78,10 @@ router.post('/', async (req, res) => {
     console.error(error);
     res.status(500).json({ error: 'Failed to create ticket', details: error.message });
   }
-});
+}));
 
 // Get ticket count by status
-router.get('/count', async (req, res) => {
+router.get('/count', authenticateToken, asyncHandler(async (req, res) => {
   try {
     const { status } = req.query;
     const where = {};
@@ -92,10 +93,10 @@ router.get('/count', async (req, res) => {
     console.error('Error counting tickets:', error);
     res.status(500).json({ error: 'Failed to count tickets' });
   }
-});
+}));
 
 // Get all tickets (optionally filter by status)
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, asyncHandler(async (req, res) => {
   try {
     const { status, technicianId, excludeStatus } = req.query;
     const where = {};
@@ -128,10 +129,10 @@ router.get('/', async (req, res) => {
       meta: error
     });
   }
-});
+}));
 
 // Update ticket (status, priority, category)
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, asyncHandler(async (req, res) => {
   try {
     const { id } = req.params;
     const { Status, Priority, Category, Archived, Technician_ID } = req.body;
@@ -220,10 +221,10 @@ router.put('/:id', async (req, res) => {
     console.error(`Error updating ticket ${req.params.id}:`, error);
     res.status(500).json({ error: 'Failed to update ticket', details: error.message });
   }
-});
+}));
 
 // Get single ticket
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, asyncHandler(async (req, res) => {
   try {
     const ticket = await prisma.ticket.findUnique({
       where: { Ticket_ID: parseInt(req.params.id) },
@@ -244,6 +245,6 @@ router.get('/:id', async (req, res) => {
     console.error(`Error fetching ticket ${req.params.id}:`, error);
     res.status(500).json({ error: 'Failed to fetch ticket', details: error.message });
   }
-});
+}));
 
 module.exports = router;

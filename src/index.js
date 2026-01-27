@@ -1,95 +1,166 @@
-console.log('Starting server initialization...');
 require('dotenv').config();
-console.log('Dotenv loaded');
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 const WebSocket = require('ws');
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
+const path = require('path');
+
+const prisma = require('./lib/prisma');
 const NotificationManager = require('./services/notificationManager');
+const { login, logout, authenticateToken, JWT_SECRET } = require('./middleware/auth');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
-console.log('Initializing Express and Prisma...');
 const app = express();
-const prisma = new PrismaClient();
-const { login, logout, authenticateToken } = require('./middleware/auth');
 
-// Middleware
-// Middleware
-app.use((req, res, next) => {
-  console.log(`[API Request] ${req.method} ${req.path}`);
-  next();
+// ==================== SECURITY MIDDLEWARE ====================
+
+// Helmet: Set security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow cross-origin for uploaded files
+}));
+
+// Morgan: Request logging
+if (process.env.NODE_ENV === 'production') {
+  app.use(morgan('combined'));
+} else {
+  app.use(morgan('dev'));
+}
+
+// Rate limiting for general API
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 500, // 500 requests per window
+  message: {
+    success: false,
+    error: 'Too many requests, please try again later'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-app.use(cors()); // Reverting to default CORS to debug login
-app.use(express.json());
+// Strict rate limiting for authentication endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 login attempts per window
+  message: {
+    success: false,
+    error: 'Too many login attempts, please try again in 15 minutes'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Don't count successful logins
+});
 
-// Auth routes
-console.log('Registering routes...');
-app.post('/api/auth/login', login);
+// CORS Configuration
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:5173'];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.warn(`[CORS] Blocked request from origin: ${origin}`);
+      callback(null, true); // In development, allow all; in production, consider stricter
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Body parsing
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Apply general rate limiting
+app.use('/api/', generalLimiter);
+
+// ==================== ROUTES ====================
+
+// Health check (no rate limit)
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// Auth routes with stricter rate limiting
+app.post('/api/auth/login', authLimiter, login);
 app.post('/api/auth/logout', authenticateToken, logout);
+
+// API Routes
 app.use('/api/inventory', require('../routes/inventory'));
 app.use('/api/users', require('../routes/users'));
 app.use('/api/tickets', require('../routes/tickets'));
 app.use('/api/rooms', require('../routes/rooms'));
 app.use('/api/bookings', require('../routes/bookings'));
-app.use('/api/computers', require('../routes/computers'));
+
 app.use('/api/borrowing', require('../routes/borrowing'));
-console.log('Registering notifications route...');
 app.use('/api/notifications', require('../routes/notifications'));
 app.use('/api/forms', require('../routes/forms'));
 app.use('/api/upload', require('../routes/upload'));
-app.use('/uploads', express.static(require('path').join(__dirname, '../uploads')));
-console.log('Registering dashboard route...');
 app.use('/api/dashboard', require('../routes/dashboard'));
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
+// Static file serving for uploads
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
-});
+// ==================== ERROR HANDLING ====================
 
-// Create HTTP server from Express app
+// 404 handler for undefined routes
+app.use(notFoundHandler);
+
+// Global error handler
+app.use(errorHandler);
+
+// ==================== SERVER SETUP ====================
+
 const server = http.createServer(app);
 
 // Create WebSocket server attached to HTTP server
 const wss = new WebSocket.Server({ server, path: '/ws/notifications' });
 
 wss.on('connection', async (ws, req) => {
-  console.log('[WebSocket] New connection attempt...');
-
   // Extract token from query string
   const url = new URL(req.url, `http://${req.headers.host}`);
   const token = url.searchParams.get('token');
 
   if (!token) {
-    console.log('[WebSocket] No token provided, closing connection.');
     ws.close(4001, 'Authentication required');
     return;
   }
 
   try {
     // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const userId = decoded.userId;
 
-    // Verify user exists
+    // Verify user exists and is active
     const user = await prisma.user.findUnique({
       where: { User_ID: userId }
     });
 
     if (!user) {
-      console.log('[WebSocket] User not found, closing connection.');
       ws.close(4002, 'User not found');
       return;
     }
 
-    console.log(`[WebSocket] User ${userId} authenticated and connected.`);
+    if (user.Is_Active === false) {
+      ws.close(4003, 'Account is deactivated');
+      return;
+    }
+
+    console.log(`[WebSocket] User ${userId} connected`);
 
     // Add to NotificationManager
     NotificationManager.add(userId, ws);
@@ -103,26 +174,30 @@ wss.on('connection', async (ws, req) => {
       ws.isAlive = true;
     });
 
-    // Handle client messages (if needed for future bidirectional communication)
+    // Handle client messages
     ws.on('message', (message) => {
-      console.log(`[WebSocket] Received from user ${userId}:`, message.toString());
-      // Handle incoming messages if needed
+      try {
+        const data = JSON.parse(message.toString());
+        console.log(`[WebSocket] Message from user ${userId}:`, data.type);
+      } catch (e) {
+        // Ignore invalid JSON
+      }
     });
 
     // Handle disconnect
     ws.on('close', () => {
-      console.log(`[WebSocket] User ${userId} disconnected.`);
+      console.log(`[WebSocket] User ${userId} disconnected`);
       NotificationManager.remove(userId, ws);
     });
 
     ws.on('error', (error) => {
-      console.error(`[WebSocket] Error for user ${userId}:`, error);
+      console.error(`[WebSocket] Error for user ${userId}:`, error.message);
       NotificationManager.remove(userId, ws);
     });
 
   } catch (error) {
-    console.error('[WebSocket] Authentication failed:', error.message);
-    ws.close(4003, 'Invalid token');
+    console.error('[WebSocket] Auth failed:', error.message);
+    ws.close(4004, 'Invalid token');
   }
 });
 
@@ -141,10 +216,25 @@ wss.on('close', () => {
   clearInterval(interval);
 });
 
+// ==================== START SERVER ====================
+
 const PORT = process.env.PORT || 3000;
-console.log(`Attempting to listen on port ${PORT}...`);
+
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-  console.log(`WebSocket server available at ws://localhost:${PORT}/ws/notifications`);
+  console.log(`[Server] Running on port ${PORT}`);
+  console.log(`[Server] Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`[WebSocket] Available at ws://localhost:${PORT}/ws/notifications`);
 });
-console.log('Server setup complete, listener registered.');
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('[Server] SIGTERM received, shutting down gracefully...');
+  clearInterval(interval);
+  wss.close();
+  server.close(() => {
+    prisma.$disconnect();
+    process.exit(0);
+  });
+});
+
+module.exports = app;
