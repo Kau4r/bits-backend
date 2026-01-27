@@ -18,12 +18,19 @@ class NotificationService {
     timestamp = null,
     data = {}
   }) {
+    // Determine category based on type
+    const logType = this._getLogTypeFromNotificationType(type);
+    let category = 'NOTIFICATION';
+    if (logType === 'BOOKING') category = 'BOOKING_UPDATE';
+    if (logType === 'BORROWING') category = 'BORROWING_UPDATE';
+
     // Only send real-time notification if there's a userId
     if (userId) {
       console.log(`[NotificationService] Sending real-time via Manager to user: ${userId}`);
       NotificationManager.send(String(userId), {
         id: logId || Date.now(),
         type: type,
+        category: category,
         title: title || type.replace(/_/g, ' '),
         message: message,
         time: timestamp || new Date().toISOString(),
@@ -99,7 +106,13 @@ class NotificationService {
       'COMPUTER_USAGE': 'SYSTEM',
       'ITEM_BORROWED': 'BORROWING',
       'COMPUTER_BORROWED': 'BORROWING',
+      'BORROW_REQUESTED': 'BORROWING',
+      'BORROW_APPROVED': 'BORROWING',
+      'BORROW_REJECTED': 'BORROWING',
+      'ITEM_RETURNED': 'BORROWING',
       'ROOM_BOOKED': 'BOOKING',
+      'BOOKING_APPROVED': 'BOOKING',
+      'BOOKING_CANCELLED': 'BOOKING',
       'TICKET_CREATED': 'TICKET',
 
       // Issues/Reports
@@ -140,9 +153,13 @@ class NotificationService {
               User_ID: userId
             }
           },
-          // Borrow request approvals/rejections
+          // Borrow request approvals/rejections (filtered by target user)
           {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           }
         ]
       };
@@ -306,8 +323,13 @@ class NotificationService {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
             Booked_Room: { User_ID: userId }
           },
+          // Borrow request approvals/rejections (filtered by target user)
           {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           }
         ]
       };
@@ -386,12 +408,15 @@ class NotificationService {
         OR: [
           {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
-            Booked_Room: {
-              User_ID: userId
-            }
+            Booked_Room: { User_ID: userId }
           },
+          // Borrow request approvals/rejections (filtered by target user)
           {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           }
         ]
       };

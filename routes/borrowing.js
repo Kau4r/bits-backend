@@ -58,17 +58,52 @@ router.get('/', authenticateToken, asyncHandler(async (req, res) => {
 // POST /api/borrowing - Request to borrow items
 // ============================================
 router.post('/', authenticateToken, asyncHandler(async (req, res) => {
-    const { items, purpose, expectedReturnDate } = req.body;
+    const { itemType, purpose, borrowDate, expectedReturnDate, items } = req.body;
     const user = req.user;
     const now = new Date();
 
-    // Default return date: 2 hours from now
+    // Use requested borrow date or default to now
+    const startDate = borrowDate ? new Date(borrowDate) : now;
+
+    // Default return date: 2 hours from now/start date
     const retDate = expectedReturnDate
         ? new Date(expectedReturnDate)
-        : new Date(now.getTime() + 2 * 60 * 60 * 1000);
+        : new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
 
+    // Support both new (itemType) and legacy (items array) formats
+    if (itemType) {
+        // NEW: Faculty requests by item TYPE only
+        const borrowing = await prisma.borrow_Item.create({
+            data: {
+                Borrower_ID: user.User_ID,
+                Borrowee_ID: user.User_ID, // Will be updated when approved
+                Item_ID: null, // Will be assigned by Lab Tech during approval
+                Requested_Item_Type: itemType,
+                Purpose: purpose || '',
+                Borrow_Date: startDate,
+                Return_Date: retDate,
+                Status: 'PENDING'
+            }
+        });
+
+        // Log the request and notify Lab Techs/Heads
+        await AuditLogger.logBorrowing(
+            user.User_ID,
+            'BORROW_REQUESTED',
+            `${user.First_Name} ${user.Last_Name} requested to borrow a ${itemType}`,
+            ['LAB_TECH', 'LAB_HEAD']
+        );
+
+        return res.status(201).json({
+            success: true,
+            message: 'Borrow request submitted. Awaiting Lab Tech approval.',
+            borrowing
+        });
+    }
+
+    // LEGACY: Specific item(s) request (for backward compatibility)
     if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'Items array is required' });
+        return res.status(400).json({ error: 'Either itemType or items array is required' });
     }
 
     const borrowings = [];
@@ -100,7 +135,9 @@ router.post('/', authenticateToken, asyncHandler(async (req, res) => {
                     Borrower_ID: user.User_ID,
                     Borrowee_ID: user.User_ID, // Will be updated when approved
                     Item_ID: parseInt(itemId),
-                    Borrow_Date: now,
+                    Requested_Item_Type: item.Item_Type,
+                    Purpose: purpose || '',
+                    Borrow_Date: startDate,
                     Return_Date: retDate,
                     Status: 'PENDING' // Start as PENDING, not BORROWED
                 },
@@ -140,9 +177,10 @@ router.post('/', authenticateToken, asyncHandler(async (req, res) => {
 // ============================================
 router.patch('/:id/approve',
     authenticateToken,
-    authorize([ROLES.LAB_TECH, ROLES.LAB_HEAD, ROLES.ADMIN]),
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
     asyncHandler(async (req, res) => {
         const { id } = req.params;
+        const { assignedItemId } = req.body; // Lab Tech can assign specific item
         const approver = req.user;
 
         const borrowing = await prisma.borrow_Item.findUnique({
@@ -160,18 +198,58 @@ router.patch('/:id/approve',
             });
         }
 
+        // Determine the item ID to use
+        let itemId = borrowing.Item_ID;
+        let item = borrowing.Item;
+
+        // If no item assigned yet (faculty requested by type), require assignedItemId
+        if (!itemId) {
+            if (!assignedItemId) {
+                return res.status(400).json({
+                    error: 'Please select a specific item to assign to this request'
+                });
+            }
+            itemId = parseInt(assignedItemId);
+
+            // Fetch the assigned item
+            item = await prisma.item.findUnique({
+                where: { Item_ID: itemId }
+            });
+
+            if (!item) {
+                return res.status(404).json({ error: 'Assigned item not found' });
+            }
+
+            // Verify item matches requested type
+            if (borrowing.Requested_Item_Type && item.Item_Type !== borrowing.Requested_Item_Type) {
+                return res.status(400).json({
+                    error: `Item type mismatch. Requested: ${borrowing.Requested_Item_Type}, Provided: ${item.Item_Type}`
+                });
+            }
+        } else if (assignedItemId && assignedItemId !== borrowing.Item_ID) {
+            // Lab Tech wants to reassign to a different item
+            itemId = parseInt(assignedItemId);
+            item = await prisma.item.findUnique({
+                where: { Item_ID: itemId }
+            });
+            if (!item) {
+                return res.status(404).json({ error: 'Assigned item not found' });
+            }
+        }
+
         // Check if item is still available
-        if (borrowing.Item.Status !== 'AVAILABLE') {
+        if (item.Status !== 'AVAILABLE') {
             return res.status(409).json({
-                error: `Item ${borrowing.Item.Item_Code} is no longer available`
+                error: `Item ${item.Item_Code || item.Item_Type} is no longer available`
             });
         }
 
-        // Approve and mark as borrowed
+        // Approve and mark as borrowed, assign the item
         const updatedBorrowing = await prisma.borrow_Item.update({
             where: { Borrow_Item_ID: parseInt(id) },
             data: {
                 Status: 'BORROWED',
+                Item_ID: itemId,
                 Borrowee_ID: approver.User_ID // Lab Tech who approved
             },
             include: { Item: true, Borrower: true }
@@ -179,12 +257,12 @@ router.patch('/:id/approve',
 
         // Update item status
         await prisma.item.update({
-            where: { Item_ID: borrowing.Item_ID },
+            where: { Item_ID: itemId },
             data: { Status: 'BORROWED' }
         });
 
         // Log the approval
-        const itemName = borrowing.Item.Name || borrowing.Item.Item_Code;
+        const itemName = item.Name || item.Item_Type || item.Item_Code;
         await AuditLogger.logBorrowing(
             approver.User_ID,
             'BORROW_APPROVED',
@@ -201,7 +279,7 @@ router.patch('/:id/approve',
             message: `Your request to borrow ${itemName} has been approved!`,
             borrowing: {
                 id: borrowing.Borrow_Item_ID,
-                itemId: borrowing.Item_ID,
+                itemId: itemId,
                 status: 'BORROWED'
             }
         });
@@ -219,7 +297,7 @@ router.patch('/:id/approve',
 // ============================================
 router.patch('/:id/reject',
     authenticateToken,
-    authorize([ROLES.LAB_TECH, ROLES.LAB_HEAD, ROLES.ADMIN]),
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
     asyncHandler(async (req, res) => {
         const { id } = req.params;
         const { reason } = req.body;
@@ -340,7 +418,7 @@ router.patch('/:id/return', authenticateToken, asyncHandler(async (req, res) => 
 // ============================================
 router.get('/pending/count',
     authenticateToken,
-    authorize([ROLES.LAB_TECH, ROLES.LAB_HEAD, ROLES.ADMIN]),
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
     asyncHandler(async (req, res) => {
         const count = await prisma.borrow_Item.count({
             where: { Status: 'PENDING' }

@@ -213,19 +213,21 @@ model NotificationRead {
 }
 
 model Borrow_Item {
-  Borrow_Item_ID Int          @id @default(autoincrement())
-  Item_ID        Int
-  Borrow_Date    DateTime     @default(now())
-  Return_Date    DateTime?
-  Created_At     DateTime     @default(now())
-  Borrowee_ID    Int
-  Borrower_ID    Int
-  Room_ID        Int?
-  Status         BorrowStatus @default(PENDING)
-  Borrowee       User         @relation("BorroweeRelation", fields: [Borrowee_ID], references: [User_ID])
-  Borrower       User         @relation("BorrowerRelation", fields: [Borrower_ID], references: [User_ID])
-  Item           Item         @relation(fields: [Item_ID], references: [Item_ID])
-  Room           Room?        @relation(fields: [Room_ID], references: [Room_ID])
+  Borrow_Item_ID      Int          @id @default(autoincrement())
+  Item_ID             Int?
+  Requested_Item_Type String?      // Faculty requests by type, Lab Tech assigns specific item
+  Purpose             String?      // Purpose of borrowing
+  Borrow_Date         DateTime     @default(now())
+  Return_Date         DateTime?
+  Created_At          DateTime     @default(now())
+  Borrowee_ID         Int
+  Borrower_ID         Int
+  Room_ID             Int?
+  Status              BorrowStatus @default(PENDING)
+  Borrowee            User         @relation("BorroweeRelation", fields: [Borrowee_ID], references: [User_ID])
+  Borrower            User         @relation("BorrowerRelation", fields: [Borrower_ID], references: [User_ID])
+  Item                Item?        @relation(fields: [Item_ID], references: [Item_ID])
+  Room                Room?        @relation(fields: [Room_ID], references: [Room_ID])
 }
 
 

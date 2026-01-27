@@ -223,14 +223,16 @@ class AuditLogger {
     /**
      * Log borrowing event with optional notification
      */
-    static async logBorrowing(userId, action, details, notifyRole = null) {
+    static async logBorrowing(userId, action, details, notifyRole = null, notifyUserId = null) {
         return this.log({
             userId,
             action,
             logType: 'BORROWING',
-            isNotification: !!notifyRole,
+            isNotification: !!(notifyRole || notifyUserId),
             notifyRole,
-            details
+            notifyUserId,
+            details,
+            notificationData: notifyUserId ? { targetUserId: notifyUserId } : null
         });
     }
 
