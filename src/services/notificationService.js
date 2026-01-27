@@ -18,12 +18,19 @@ class NotificationService {
     timestamp = null,
     data = {}
   }) {
+    // Determine category based on type
+    const logType = this._getLogTypeFromNotificationType(type);
+    let category = 'NOTIFICATION';
+    if (logType === 'BOOKING') category = 'BOOKING_UPDATE';
+    if (logType === 'BORROWING') category = 'BORROWING_UPDATE';
+
     // Only send real-time notification if there's a userId
     if (userId) {
       console.log(`[NotificationService] Sending real-time via Manager to user: ${userId}`);
       NotificationManager.send(String(userId), {
         id: logId || Date.now(),
         type: type,
+        category: category,
         title: title || type.replace(/_/g, ' '),
         message: message,
         time: timestamp || new Date().toISOString(),
@@ -99,7 +106,13 @@ class NotificationService {
       'COMPUTER_USAGE': 'SYSTEM',
       'ITEM_BORROWED': 'BORROWING',
       'COMPUTER_BORROWED': 'BORROWING',
+      'BORROW_REQUESTED': 'BORROWING',
+      'BORROW_APPROVED': 'BORROWING',
+      'BORROW_REJECTED': 'BORROWING',
+      'ITEM_RETURNED': 'BORROWING',
       'ROOM_BOOKED': 'BOOKING',
+      'BOOKING_APPROVED': 'BOOKING',
+      'BOOKING_CANCELLED': 'BOOKING',
       'TICKET_CREATED': 'TICKET',
 
       // Issues/Reports
