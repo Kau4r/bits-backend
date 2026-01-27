@@ -6,6 +6,7 @@ const { authorize, ROLES } = require('../src/middleware/authorize');
 const { asyncHandler } = require('../src/middleware/errorHandler');
 const { validate, bookingSchemas } = require('../src/middleware/validate');
 const NotificationService = require('../src/services/notificationService');
+const NotificationManager = require('../src/services/notificationManager');
 const AuditLogger = require('../src/utils/auditLogger');
 
 // Create a new room booking
@@ -146,6 +147,9 @@ router.post('/', authenticateToken, validate(bookingSchemas.create), asyncHandle
         } catch (auditError) {
             console.error('[Bookings] AuditLogger.logBooking FAILED:', auditError);
         }
+
+        // Broadcast real-time UI update to LAB_HEAD and LAB_TECH
+        await NotificationManager.broadcastBookingEvent('BOOKING_CREATED', booking, ['LAB_HEAD', 'LAB_TECH']);
 
 
         res.status(201).json(booking);
@@ -412,6 +416,30 @@ router.patch('/:id/status', authenticateToken, validate(bookingSchemas.updateSta
                 null, // No role to notify
                 existingBooking.User_ID // Notify the requester (or actor for cancellation)
             );
+
+            // Broadcast real-time UI update to all relevant users
+            // For approvals/rejections, notify both the requester AND staff
+            // For cancellations, notify staff
+            if (status === 'CANCELLED') {
+                await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', booking, ['LAB_HEAD', 'LAB_TECH']);
+            } else {
+                // Approved or Rejected - notify the faculty who made the booking
+                NotificationManager.send(existingBooking.User_ID, {
+                    type: notificationType,
+                    category: 'BOOKING_UPDATE',
+                    timestamp: new Date().toISOString(),
+                    booking: {
+                        id: booking.Booked_Room_ID,
+                        roomId: booking.Room_ID,
+                        status: booking.Status,
+                        startTime: booking.Start_Time,
+                        endTime: booking.End_Time
+                    }
+                });
+
+                // ALSO broadcast to LAB_HEAD/LAB_TECH so their calendars update too
+                await NotificationManager.broadcastBookingEvent(notificationType, booking, ['LAB_HEAD', 'LAB_TECH']);
+            }
         }
 
         res.json(booking);

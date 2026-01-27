@@ -69,13 +69,76 @@ const NotificationManager = {
     // Broadcast to all connected clients (for system-wide alerts)
     broadcast(data) {
         const message = JSON.stringify(data);
+        let sentCount = 0;
         this.clients.forEach((sockets, userId) => {
-            sockets.forEach(ws => {
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(message);
+            sockets.forEach(client => {
+                try {
+                    if (client.write && typeof client.writableEnded !== 'undefined') {
+                        // SSE Response
+                        if (!client.writableEnded) {
+                            client.write(`data: ${message}\n\n`);
+                            sentCount++;
+                        }
+                    } else if (client.readyState === WebSocket.OPEN) {
+                        // WebSocket
+                        client.send(message);
+                        sentCount++;
+                    }
+                } catch (err) {
+                    console.error(`[NotificationManager] Error in broadcast:`, err.message);
                 }
             });
         });
+        console.log(`[NotificationManager] Broadcast sent to ${sentCount} clients`);
+    },
+
+    /**
+     * Broadcast booking-related events to trigger UI updates.
+     * @param {string} eventType - BOOKING_CREATED, BOOKING_CANCELLED, BOOKING_APPROVED, BOOKING_REJECTED
+     * @param {object} booking - Minimal booking data (Booked_Room_ID, Room_ID, Status, etc.)
+     * @param {string[]} targetRoles - Array of roles to notify (e.g., ['LAB_HEAD', 'LAB_TECH'])
+     */
+    async broadcastBookingEvent(eventType, booking, targetRoles = []) {
+        const prisma = require('../lib/prisma');
+
+        const payload = {
+            type: eventType,
+            category: 'BOOKING_UPDATE',
+            timestamp: new Date().toISOString(),
+            booking: {
+                id: booking.Booked_Room_ID,
+                roomId: booking.Room_ID,
+                status: booking.Status,
+                startTime: booking.Start_Time,
+                endTime: booking.End_Time,
+                purpose: booking.Purpose,
+                userId: booking.User_ID
+            }
+        };
+
+        console.log(`[NotificationManager] Broadcasting ${eventType} to roles: ${targetRoles.join(', ')}`);
+
+        // If no specific roles, broadcast to all
+        if (targetRoles.length === 0) {
+            this.broadcast(payload);
+            return;
+        }
+
+        // Find all users with the specified roles and send to them
+        try {
+            const users = await prisma.user.findMany({
+                where: { User_Role: { in: targetRoles } },
+                select: { User_ID: true }
+            });
+
+            users.forEach(user => {
+                this.send(user.User_ID, payload);
+            });
+
+            console.log(`[NotificationManager] Sent ${eventType} to ${users.length} users with roles: ${targetRoles.join(', ')}`);
+        } catch (err) {
+            console.error(`[NotificationManager] Error finding users for broadcast:`, err.message);
+        }
     }
 };
 
