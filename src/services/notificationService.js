@@ -153,9 +153,13 @@ class NotificationService {
               User_ID: userId
             }
           },
-          // Borrow request approvals/rejections
+          // Borrow request approvals/rejections (filtered by target user)
           {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           }
         ]
       };
@@ -319,8 +323,13 @@ class NotificationService {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
             Booked_Room: { User_ID: userId }
           },
+          // Borrow request approvals/rejections (filtered by target user)
           {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           }
         ]
       };
@@ -399,12 +408,15 @@ class NotificationService {
         OR: [
           {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
-            Booked_Room: {
-              User_ID: userId
-            }
+            Booked_Room: { User_ID: userId }
           },
+          // Borrow request approvals/rejections (filtered by target user)
           {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] }
+            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           }
         ]
       };
