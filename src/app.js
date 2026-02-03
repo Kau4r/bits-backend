@@ -11,6 +11,7 @@ const userRoutes = require('../routes/users');
 const roomRoutes = require('../routes/rooms');
 const inventoryRoutes = require('../routes/inventory');
 const notificationRoutes = require('../routes/notifications');
+const computerRoutes = require('../routes/computers');
 
 // Import WebSocket service
 const WebSocketService = require('./services/websocketService');
@@ -33,6 +34,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/rooms', roomRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/computers', computerRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

@@ -105,6 +105,7 @@ app.use('/api/users', require('../routes/users'));
 app.use('/api/tickets', require('../routes/tickets'));
 app.use('/api/rooms', require('../routes/rooms'));
 app.use('/api/bookings', require('../routes/bookings'));
+app.use('/api/computers', require('../routes/computers'));
 
 app.use('/api/borrowing', require('../routes/borrowing'));
 app.use('/api/notifications', require('../routes/notifications'));

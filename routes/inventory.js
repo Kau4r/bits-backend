@@ -48,6 +48,44 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get available items by type (for computer assembly)
+router.get('/available', async (req, res) => {
+  try {
+    const { type, status } = req.query;
+
+    const where = {
+      Status: status || 'AVAILABLE',
+      Computer: {
+        none: {} // Not assigned to any computer
+      }
+    };
+
+    if (type) {
+      where.Item_Type = type;
+    }
+
+    const items = await prisma.Item.findMany({
+      where,
+      select: {
+        Item_ID: true,
+        Item_Code: true,
+        Item_Type: true,
+        Brand: true,
+        Serial_Number: true,
+        Status: true,
+      },
+      orderBy: { Created_At: 'desc' }
+    });
+
+    res.json({ items });
+  } catch (error) {
+    console.error('Error fetching available items:', error);
+    res.status(500).json({
+      error: 'Failed to fetch available items',
+      details: error.message
+    });
+  }
+});
 
 // ===== GET: Item by Code =====
 router.get('/code/:itemCode', async (req, res) => {
