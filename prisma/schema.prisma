@@ -1,0 +1,415 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  User_ID                     Int                   @id @default(autoincrement())
+  First_Name                  String
+  Middle_Name                 String
+  Last_Name                   String
+  Email                       String                @unique
+  Password                    String
+  Created_At                  DateTime              @default(now())
+  Updated_At                  DateTime              @updatedAt
+  Is_Active                   Boolean               @default(true)
+  User_Role                   UserRole              @default(STUDENT)
+  Audit_Log                   Audit_Log[]
+  ApprovedBookings            Booked_Room[]         @relation("ScheduleApprover")
+  Booked_Room                 Booked_Room[]
+  LentItems                   Borrow_Item[]         @relation("BorroweeRelation")
+  BorrowedItems               Borrow_Item[]         @relation("BorrowerRelation")
+  Borrowing_Comp              Borrowing_Comp[]
+  Form_Form_Approver_IDToUser Form[]                @relation("Form_Approver_IDToUser")
+  Form_Form_Creator_IDToUser  Form[]                @relation("Form_Creator_IDToUser")
+  Item                        Item[]
+  NotificationReads           NotificationRead[]
+  Opened_Rooms                Room[]                @relation("RoomOpenedBy")
+  Created_Schedules           Schedule[]            @relation("ScheduleCreatedBy")
+  CreatedTickets              Ticket[]              @relation("Ticket_User")
+  AssignedTickets             Ticket[]              @relation("TicketTechnician")
+  ComputerHeartbeat           ComputerHeartbeat[]
+  CurrentComputers            Computer[]            @relation("CurrentUser")
+}
+
+model Item {
+  Item_ID       Int           @id @default(autoincrement())
+  User_ID       Int?
+  Item_Code     String        @unique
+  Item_Type     ItemType      @default(GENERAL)
+  Brand         String?
+  Serial_Number String?
+  Status        ItemStatus
+  Room_ID       Int?
+  Created_At    DateTime      @default(now())
+  Updated_At    DateTime      @updatedAt
+  ReplacedById  Int?          @unique
+  IsBorrowable  Boolean?
+  Borrow_Item   Borrow_Item[]
+  ReplacedBy    Item?         @relation("ItemReplacement", fields: [ReplacedById], references: [Item_ID])
+  Replaces      Item?         @relation("ItemReplacement")
+  Room          Room?         @relation(fields: [Room_ID], references: [Room_ID])
+  User          User?         @relation(fields: [User_ID], references: [User_ID])
+  Tickets       Ticket[]
+  Computer      Computer[]    @relation("ComputerItems")
+
+  @@index([Item_Code])
+  @@index([Status])
+  @@index([Room_ID])
+}
+
+model Ticket {
+  Ticket_ID      Int             @id @default(autoincrement())
+  Created_At     DateTime        @default(now())
+  Updated_At     DateTime        @updatedAt
+  Archived       Boolean         @default(false)
+  Category       TicketCategory?
+  Item_ID        Int?
+  Location       String?
+  Priority       TicketPriority?
+  Report_Problem String
+  Reported_By_ID Int
+  Room_ID        Int?
+  Technician_ID  Int?
+  Status         TicketStatus    @default(PENDING)
+  AuditLogs      Audit_Log[]     @relation("TicketAuditLogs")
+  Item           Item?           @relation(fields: [Item_ID], references: [Item_ID])
+  Reported_By    User            @relation("Ticket_User", fields: [Reported_By_ID], references: [User_ID])
+  Room           Room?           @relation(fields: [Room_ID], references: [Room_ID])
+  Technician     User?           @relation("TicketTechnician", fields: [Technician_ID], references: [User_ID])
+}
+
+model Form {
+  Form_ID     Int            @id @default(autoincrement())
+  Creator_ID  Int
+  Approver_ID Int?
+  Title       String?
+  Content     String?
+  Created_At  DateTime       @default(now())
+  Updated_At  DateTime       @updatedAt
+  Department  FormDepartment @default(REGISTRAR)
+  File_Name   String?
+  File_Type   String?
+  File_URL    String?
+  Form_Code   String         @unique
+  Form_Type   FormType
+  Is_Archived Boolean        @default(false)
+  Status      FormStatus     @default(PENDING)
+  Approver    User?          @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
+  Creator     User           @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
+  History     FormHistory[]
+}
+
+model FormHistory {
+  History_ID Int            @id @default(autoincrement())
+  Form_ID    Int
+  Department FormDepartment
+  Changed_At DateTime       @default(now())
+  Notes      String?
+  Form       Form           @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
+}
+
+model Room {
+  Room_ID          Int           @id @default(autoincrement())
+  Name             String
+  Room_Type        RoomType      @default(LAB)
+  Capacity         Int
+  Status           RoomStatus    @default(AVAILABLE)
+  Current_Use_Type ScheduleType?
+  Opened_By        Int?
+  Opened_At        DateTime?
+  Closed_At        DateTime?
+  Created_At       DateTime      @default(now())
+  Updated_At       DateTime      @updatedAt
+  Booked_Rooms     Booked_Room[]
+  Borrow_Items     Borrow_Item[]
+  Computer         Computer[]
+  Items            Item[]
+  Opened_By_User   User?         @relation("RoomOpenedBy", fields: [Opened_By], references: [User_ID])
+  Schedule         Schedule[]
+  Tickets          Ticket[]
+}
+
+model Schedule {
+  Schedule_ID     Int           @id @default(autoincrement())
+  Room_ID         Int
+  Schedule_Type   ScheduleType
+  Title           String
+  Start_Time      DateTime
+  End_Time        DateTime
+  Days            String        @default("1,2,3,4,5")
+  IsActive        Boolean       @default(true)
+  IsRecurring     Boolean       @default(true)
+  Created_By      Int
+  Created_At      DateTime      @default(now())
+  Updated_At      DateTime      @updatedAt
+  Booked_Rooms    Booked_Room[]
+  Created_By_User User          @relation("ScheduleCreatedBy", fields: [Created_By], references: [User_ID])
+  Room            Room          @relation(fields: [Room_ID], references: [Room_ID])
+
+  @@map("Schedule")
+}
+
+model Booked_Room {
+  Booked_Room_ID Int         @id @default(autoincrement())
+  Room_ID        Int
+  User_ID        Int
+  Start_Time     DateTime
+  End_Time       DateTime
+  Status         String      @default("PENDING")
+  Created_At     DateTime    @default(now())
+  Updated_At     DateTime    @updatedAt
+  Purpose        String?
+  Schedule_ID    Int?
+  Approved_By    Int?
+  Notes          String?
+  Audit_Log      Audit_Log[]
+  Approver       User?       @relation("ScheduleApprover", fields: [Approved_By], references: [User_ID])
+  Room           Room        @relation(fields: [Room_ID], references: [Room_ID])
+  Schedule       Schedule?   @relation(fields: [Schedule_ID], references: [Schedule_ID])
+  User           User        @relation(fields: [User_ID], references: [User_ID])
+
+  @@map("Booked_Room")
+}
+
+model Audit_Log {
+  Log_ID               Int                @id @default(autoincrement())
+  User_ID              Int?
+  Action               String
+  Timestamp            DateTime           @default(now())
+  Is_Notification      Boolean            @default(false)
+  Log_Type             LogType            @default(SYSTEM)
+  Notification_Read_At DateTime?
+  Ticket_ID            Int?
+  Notification_Data    Json?
+  Notification_Type    String?
+  Booked_Room_ID       Int?
+  Details              String?
+  Booked_Room          Booked_Room?       @relation(fields: [Booked_Room_ID], references: [Booked_Room_ID])
+  Ticket               Ticket?            @relation("TicketAuditLogs", fields: [Ticket_ID], references: [Ticket_ID])
+  User                 User?              @relation(fields: [User_ID], references: [User_ID])
+  NotificationReads    NotificationRead[]
+
+  @@index([Log_Type])
+  @@index([User_ID])
+  @@index([Ticket_ID])
+  @@index([Booked_Room_ID])
+  @@index([Is_Notification, User_ID, Notification_Read_At])
+  @@index([Action, Timestamp])
+  @@index([Notification_Type, Timestamp])
+}
+
+model NotificationRead {
+  Read_ID   Int       @id @default(autoincrement())
+  User_ID   Int
+  Log_ID    Int
+  Read_At   DateTime  @default(now())
+  Audit_Log Audit_Log @relation(fields: [Log_ID], references: [Log_ID])
+  User      User      @relation(fields: [User_ID], references: [User_ID])
+
+  @@unique([User_ID, Log_ID])
+}
+
+model Borrow_Item {
+  Borrow_Item_ID Int          @id @default(autoincrement())
+  Item_ID        Int
+  Borrow_Date    DateTime     @default(now())
+  Return_Date    DateTime?
+  Created_At     DateTime     @default(now())
+  Borrowee_ID    Int
+  Borrower_ID    Int
+  Room_ID        Int?
+  Status         BorrowStatus @default(PENDING)
+  Borrowee       User         @relation("BorroweeRelation", fields: [Borrowee_ID], references: [User_ID])
+  Borrower       User         @relation("BorrowerRelation", fields: [Borrower_ID], references: [User_ID])
+  Item           Item         @relation(fields: [Item_ID], references: [Item_ID])
+  Room           Room?        @relation(fields: [Room_ID], references: [Room_ID])
+}
+
+model Borrowing_Comp {
+  Borrowing_Comp_ID Int      @id @default(autoincrement())
+  User_ID           Int
+  Computer_ID       Int
+  Return_Date       DateTime
+  Status            String
+  Created_At        DateTime @default(now())
+  Updated_At        DateTime
+  Computer          Computer @relation(fields: [Computer_ID], references: [Computer_ID])
+  User              User     @relation(fields: [User_ID], references: [User_ID])
+}
+
+model Computer {
+  Computer_ID       Int                   @id @default(autoincrement())
+  Name              String
+  Created_At        DateTime              @default(now())
+  Updated_At        DateTime
+  Status            ComputerStatus        @default(AVAILABLE)
+  Room_ID           Int?
+  Mac_Address       String?               @unique
+  IP_Address        String?
+  Last_Seen         DateTime?
+  Is_Online         Boolean               @default(false)
+  Current_User_ID   Int?
+  Borrowing_Comp    Borrowing_Comp[]
+  Room              Room?                 @relation(fields: [Room_ID], references: [Room_ID])
+  Item              Item[]                @relation("ComputerItems")
+  ComputerHeartbeat ComputerHeartbeat[]
+  Current_User      User?                 @relation("CurrentUser", fields: [Current_User_ID], references: [User_ID])
+
+  @@index([Is_Online])
+  @@index([Last_Seen])
+  @@index([Mac_Address])
+}
+
+enum TicketStatus {
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum TicketPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TicketCategory {
+  HARDWARE
+  SOFTWARE
+  FACILITY
+  OTHER
+}
+
+enum FormType {
+  WRF
+  RIS
+}
+
+enum FormStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum FormDepartment {
+  REGISTRAR
+  FINANCE
+  DCISM
+  LABORATORY
+}
+
+enum RoomStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  RESERVED
+  CLOSED
+}
+
+enum ScheduleType {
+  CLASS
+  FACULTY_USE
+  STUDENT_USE
+  MAINTENANCE
+  SPECIAL_EVENT
+}
+
+enum RoomType {
+  CONSULTATION
+  LECTURE
+  LAB
+}
+
+enum LogType {
+  TICKET
+  SCHEDULE
+  BORROWING
+  SYSTEM
+  AUTH
+  BOOKING
+  FORM
+  ROOM
+  INVENTORY
+}
+
+enum BorrowStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  BORROWED
+  RETURNED
+  OVERDUE
+}
+
+enum UserRole {
+  LAB_HEAD
+  LAB_TECH
+  FACULTY
+  STUDENT
+  SECRETARY
+  ADMIN
+}
+
+enum ItemStatus {
+  AVAILABLE
+  BORROWED
+  DEFECTIVE
+  LOST
+  REPLACED
+}
+
+enum ItemType {
+  HDMI
+  VGA
+  ADAPTER
+  PROJECTOR
+  EXTENSION
+  MOUSE
+  KEYBOARD
+  MONITOR
+  GENERAL
+  OTHER
+}
+
+enum ComputerStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  DECOMMISSIONED
+}
+
+enum HeartbeatStatus {
+  ONLINE
+  IDLE
+  OFFLINE
+  WARNING
+}
+
+model ComputerHeartbeat {
+  Heartbeat_ID     Int              @id @default(autoincrement())
+  Computer_ID      Int
+  User_ID          Int?
+  Session_ID       String           @unique
+  Status           HeartbeatStatus  @default(ONLINE)
+  IP_Address       String?
+  Timestamp        DateTime         @default(now())
+  Interval_Used    Int
+  System_Info      Json?
+  Is_Active        Boolean          @default(true)
+  Session_Start    DateTime
+  Session_End      DateTime?
+  Last_Activity    DateTime         @updatedAt
+  Computer         Computer         @relation(fields: [Computer_ID], references: [Computer_ID], onDelete: Cascade)
+  User             User?            @relation(fields: [User_ID], references: [User_ID])
+
+  @@index([Status])
+  @@index([Session_ID])
+  @@index([Computer_ID])
+  @@index([User_ID])
+}
