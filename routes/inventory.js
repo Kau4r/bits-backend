@@ -26,7 +26,7 @@ router.get('/', async (req, res) => {
       where.Status = status;
     }
 
-    const items = await prisma.Item.findMany({
+    const items = await prisma.item.findMany({
       where,
       include: {
         User: true,
@@ -64,7 +64,7 @@ router.get('/available', async (req, res) => {
       where.Item_Type = type;
     }
 
-    const items = await prisma.Item.findMany({
+    const items = await prisma.item.findMany({
       where,
       select: {
         Item_ID: true,
@@ -91,7 +91,7 @@ router.get('/available', async (req, res) => {
 router.get('/code/:itemCode', async (req, res) => {
   const { itemCode } = req.params;
   try {
-    const item = await prisma.Item.findUnique({
+    const item = await prisma.item.findUnique({
       where: { Item_Code: itemCode },
       include: { Room: true },
     });
@@ -108,7 +108,7 @@ router.get('/code/:itemCode', async (req, res) => {
 // Get item by ID
 router.get('/:id', async (req, res) => {
   try {
-    const item = await prisma.Item.findUnique({
+    const item = await prisma.item.findUnique({
       where: { Item_ID: parseInt(req.params.id) },
       include: {
         User: {
@@ -167,7 +167,7 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     // Check if item code is unique
-    const existingItem = await prisma.Item.findFirst({
+    const existingItem = await prisma.item.findFirst({
       where: { Item_Code }
     });
 
@@ -209,7 +209,7 @@ router.post('/', authenticateToken, async (req, res) => {
       itemData.Room = { connect: { Room_ID: parseInt(Room_ID) } };
     }
 
-    const item = await prisma.Item.create({
+    const item = await prisma.item.create({
       data: itemData
     });
 
@@ -242,7 +242,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const updates = req.body;
 
     // Check if item exists
-    const existingItem = await prisma.Item.findUnique({
+    const existingItem = await prisma.item.findUnique({
       where: { Item_ID: itemId }
     });
 
@@ -251,7 +251,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     }
 
     // Update the item
-    const updatedItem = await prisma.Item.update({
+    const updatedItem = await prisma.item.update({
       where: { Item_ID: itemId },
       data: {
         ...updates,
@@ -294,7 +294,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const itemId = parseInt(req.params.id);
 
     // Check if item exists
-    const existingItem = await prisma.Item.findUnique({
+    const existingItem = await prisma.item.findUnique({
       where: { Item_ID: itemId }
     });
 
@@ -303,7 +303,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
 
     // Soft delete by updating status
-    const deletedItem = await prisma.Item.update({
+    const deletedItem = await prisma.item.update({
       where: { Item_ID: itemId },
       data: {
         Status: 'INACTIVE',
@@ -369,7 +369,7 @@ router.post('/bulk', authenticateToken, async (req, res) => {
 
     // Check if any serial numbers already exist in the database
     if (serialNumbers.length > 0) {
-      const existingItems = await prisma.Item.findMany({
+      const existingItems = await prisma.item.findMany({
         where: {
           Serial_Number: {
             in: serialNumbers
@@ -396,7 +396,7 @@ router.post('/bulk', authenticateToken, async (req, res) => {
     for (const itemType of itemTypes) {
       const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
 
-      const latestItem = await prisma.Item.findFirst({
+      const latestItem = await prisma.item.findFirst({
         where: {
           Item_Code: {
             startsWith: `${typePrefix}-${currentYear}-`
@@ -455,7 +455,7 @@ router.post('/bulk', authenticateToken, async (req, res) => {
     // Use transaction to create all items
     const createdItems = await prisma.$transaction(
       itemData.map(item =>
-        prisma.Item.create({ data: item })
+        prisma.item.create({ data: item })
       )
     );
 

@@ -373,6 +373,7 @@ enum ItemType {
   MOUSE
   KEYBOARD
   MONITOR
+  SYSTEM_UNIT
   GENERAL
   OTHER
 }
