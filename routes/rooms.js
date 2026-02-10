@@ -81,13 +81,19 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 
   const VALID_ROOM_TYPES = ['CONSULTATION', 'LECTURE', 'LAB'];
-  const { Name, Capacity, Room_Type } = req.body;
+  const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
+  const { Name, Capacity, Room_Type, Lab_Type } = req.body;
 
   const errors = [];
   if (!Name?.trim()) errors.push('Name is required');
   if (!Capacity || isNaN(Capacity) || Capacity <= 0) errors.push('Valid capacity is required');
   if (Room_Type && !VALID_ROOM_TYPES.includes(Room_Type)) {
     errors.push(`Room_Type must be one of: ${VALID_ROOM_TYPES.join(', ')}`);
+  }
+  if (Room_Type === 'LAB') {
+    if (!Lab_Type || !VALID_LAB_TYPES.includes(Lab_Type)) {
+      errors.push('Lab_Type is required for LAB rooms and must be WINDOWS or MAC');
+    }
   }
   if (errors.length > 0) return res.status(400).json({ error: 'Validation Error', details: errors });
 
@@ -101,8 +107,8 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     const newRoom = await prisma.Room.create({
-      data: { Name: Name.trim(), Capacity: parseInt(Capacity), Room_Type: Room_Type || 'LECTURE', Status: 'AVAILABLE' },
-      select: { Room_ID: true, Name: true, Capacity: true, Room_Type: true, Status: true, Created_At: true, Updated_At: true }
+      data: { Name: Name.trim(), Capacity: parseInt(Capacity), Room_Type: Room_Type || 'LECTURE', Lab_Type: Room_Type === 'LAB' ? Lab_Type : null, Status: 'AVAILABLE' },
+      select: { Room_ID: true, Name: true, Capacity: true, Room_Type: true, Lab_Type: true, Status: true, Created_At: true, Updated_At: true }
     });
 
     // Audit Log
@@ -129,7 +135,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
   if (isNaN(roomId) || roomId <= 0) return res.status(400).json({ error: 'Invalid room ID', details: 'Room ID must be a positive number' });
 
   const VALID_ROOM_TYPES = ['CONSULTATION', 'LECTURE', 'LAB'];
-  const { Name, Capacity, Room_Type, Status } = req.body;
+  const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
+  const { Name, Capacity, Room_Type, Status, Lab_Type } = req.body;
 
   const updateData = {};
   const errors = [];
@@ -149,10 +156,36 @@ router.put('/:id', authenticateToken, async (req, res) => {
   }
   if (Status !== undefined) updateData.Status = Status;
 
+  // Handle Lab_Type
+  if (Lab_Type !== undefined) {
+    if (Lab_Type !== null && !VALID_LAB_TYPES.includes(Lab_Type)) {
+      errors.push('Lab_Type must be WINDOWS, MAC, or null');
+    } else {
+      updateData.Lab_Type = Lab_Type;
+    }
+  }
+
   if (errors.length > 0) return res.status(400).json({ error: 'Validation Error', details: errors });
   if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'Validation Error', details: 'No valid fields provided for update' });
 
   try {
+    // Fetch existing room for merge-based validation
+    const existingRoom = await prisma.Room.findUnique({ where: { Room_ID: roomId } });
+    if (!existingRoom) return res.status(404).json({ error: 'Room not found' });
+
+    // Determine effective post-update state
+    const effectiveRoomType = updateData.Room_Type ?? existingRoom.Room_Type;
+
+    // If transitioning INTO LAB and no Lab_Type provided, require it
+    if (effectiveRoomType === 'LAB' && existingRoom.Room_Type !== 'LAB' && !updateData.Lab_Type && !existingRoom.Lab_Type) {
+      return res.status(400).json({ error: 'Validation Error', details: ['Lab_Type is required when changing Room_Type to LAB'] });
+    }
+
+    // If transitioning AWAY from LAB, clear Lab_Type
+    if (effectiveRoomType !== 'LAB') {
+      updateData.Lab_Type = null;
+    }
+
     const updatedRoom = await prisma.Room.update({ where: { Room_ID: roomId }, data: updateData });
 
     // Determine Action
