@@ -27,7 +27,6 @@ pids
 *.pid.lock
 
 # Prisma
-/prisma/migrations/
 /prisma/*.db
 /prisma/*.db-journal
 
