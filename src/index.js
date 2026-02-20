@@ -113,6 +113,7 @@ app.use('/api/forms', require('../routes/forms'));
 app.use('/api/upload', require('../routes/upload'));
 app.use('/api/dashboard', require('../routes/dashboard'));
 app.use('/api/heartbeat', require('../routes/heartbeat'));
+app.use('/api/reports', require('../routes/reports'));
 
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

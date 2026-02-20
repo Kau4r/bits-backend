@@ -34,6 +34,8 @@ model User {
   AssignedTickets             Ticket[]              @relation("TicketTechnician")
   ComputerHeartbeat           ComputerHeartbeat[]
   CurrentComputers            Computer[]            @relation("CurrentUser")
+  Weekly_Reports_Authored     Weekly_Report[]       @relation("ReportAuthor")
+  Weekly_Reports_Reviewed     Weekly_Report[]       @relation("ReportReviewer")
 }
 
 model Item {
@@ -342,6 +344,7 @@ enum LogType {
   FORM
   ROOM
   INVENTORY
+  REPORT
 }
 
 enum BorrowStatus {
@@ -398,6 +401,12 @@ enum HeartbeatStatus {
   WARNING
 }
 
+enum ReportStatus {
+  DRAFT
+  SUBMITTED
+  REVIEWED
+}
+
 model ComputerHeartbeat {
   Heartbeat_ID     Int              @id @default(autoincrement())
   Computer_ID      Int
@@ -419,4 +428,26 @@ model ComputerHeartbeat {
   @@index([Session_ID])
   @@index([Computer_ID])
   @@index([User_ID])
+}
+
+model Weekly_Report {
+  Report_ID       Int           @id @default(autoincrement())
+  User_ID         Int
+  Week_Start      DateTime
+  Week_End        DateTime
+  Tasks           Json
+  Issues_Reported Int           @default(0)
+  Notes           String?
+  Status          ReportStatus  @default(DRAFT)
+  Reviewed_By     Int?
+  Reviewed_At     DateTime?
+  Created_At      DateTime      @default(now())
+  Updated_At      DateTime      @updatedAt
+
+  User            User          @relation("ReportAuthor", fields: [User_ID], references: [User_ID])
+  Reviewer        User?         @relation("ReportReviewer", fields: [Reviewed_By], references: [User_ID])
+
+  @@unique([User_ID, Week_Start])
+  @@index([User_ID])
+  @@index([Status])
 }

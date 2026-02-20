@@ -156,7 +156,12 @@ class AuditLogger {
             // Rooms
             'ROOM_OPENED': 'Room Opened',
             'ROOM_CLOSED': 'Room Closed',
-            'ROOM_UPDATED': 'Room Updated'
+            'ROOM_UPDATED': 'Room Updated',
+
+            // Reports
+            'REPORT_SUBMITTED': 'Weekly Report Submitted',
+            'REPORT_REVIEWED': 'Weekly Report Reviewed',
+            'REPORT_UPDATED': 'Weekly Report Updated',
         };
         return titles[action] || action.replace(/_/g, ' ');
     }
@@ -273,6 +278,21 @@ class AuditLogger {
             action,
             logType: 'ROOM',
             isNotification: false,
+            details
+        });
+    }
+
+    /**
+     * Log report event with optional notification
+     */
+    static async logReport(userId, action, details, notifyRole = null, notifyUserId = null) {
+        return this.log({
+            userId,
+            action,
+            logType: 'REPORT',
+            isNotification: !!(notifyRole || notifyUserId),
+            notifyRole,
+            notifyUserId,
             details
         });
     }
