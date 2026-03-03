@@ -18,6 +18,19 @@ const app = express();
 
 // ==================== SECURITY MIDDLEWARE ====================
 
+async function testConnection() {
+  try {
+    const users = await prisma.user.findMany({ take: 1 });
+    console.log('DB connected, sample user:', users);
+  } catch (err) {
+    console.error('Prisma connection failed:', err);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+testConnection();
+
 // Helmet: Set security headers
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow cross-origin for uploaded files
