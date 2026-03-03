@@ -1,3 +1,5 @@
+require('dotenv').config({ path: '../.env' }); // explicitly load .env from project root
+
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
