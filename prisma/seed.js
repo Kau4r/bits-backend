@@ -1,10 +1,11 @@
-require('dotenv').config({ path: '../.env' }); // explicitly load .env from project root
+// Explicitly load .env from project root
+require('dotenv').config({ path: '../.env' });
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function main() {
-    const User = await prisma.user.findMany(); // correct
+    const user = await prisma.user.findMany(); // correct
     await prisma.user.createMany({
         data: [
             {
