@@ -34,27 +34,12 @@ const NotificationManager = {
             let sentCount = 0;
             sockets.forEach(client => {
                 try {
-                    // Check if it's an SSE Response object (has .write method and .writableEnded)
-                    if (client.write && typeof client.writableEnded !== 'undefined') {
-                        // SSE Response
-                        if (!client.writableEnded) {
-                            client.write(`data: ${message}\n\n`);
-                            sentCount++;
-                            console.log(`[NotificationManager] Sent via SSE`);
-                        } else {
-                            console.log(`[NotificationManager] SSE connection already ended`);
-                        }
-                    } else if (client.readyState !== undefined) {
-                        // WebSocket
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(message);
-                            sentCount++;
-                            console.log(`[NotificationManager] Sent via WebSocket`);
-                        } else {
-                            console.log(`[NotificationManager] WebSocket not open, state: ${client.readyState}`);
-                        }
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(message);
+                        sentCount++;
+                        console.log(`[NotificationManager] Sent via WebSocket`);
                     } else {
-                        console.log(`[NotificationManager] Unknown client type`);
+                        console.log(`[NotificationManager] WebSocket not open, state: ${client.readyState}`);
                     }
                 } catch (err) {
                     console.error(`[NotificationManager] Error sending to client:`, err.message);
@@ -73,14 +58,7 @@ const NotificationManager = {
         this.clients.forEach((sockets, userId) => {
             sockets.forEach(client => {
                 try {
-                    if (client.write && typeof client.writableEnded !== 'undefined') {
-                        // SSE Response
-                        if (!client.writableEnded) {
-                            client.write(`data: ${message}\n\n`);
-                            sentCount++;
-                        }
-                    } else if (client.readyState === WebSocket.OPEN) {
-                        // WebSocket
+                    if (client.readyState === WebSocket.OPEN) {
                         client.send(message);
                         sentCount++;
                     }
