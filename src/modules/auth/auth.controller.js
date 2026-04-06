@@ -1,34 +1,59 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const fs = require('fs');
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
-const SALT_ROUNDS = 12;
+const HTSHADOW_PATH = process.env.HTSHADOW_PATH || '/etc/example_htshadow';
+
+/**
+ * Verify password against the htshadow file
+ * @param {string} username - Username to look up
+ * @param {string} password - Plain text password to verify
+ * @returns {Promise<boolean>} Whether password matches
+ */
+const verifyHtshadowPassword = async (username, password) => {
+  try {
+    const data = fs.readFileSync(HTSHADOW_PATH, 'utf-8');
+    const line = data.split('\n').find(l => l.startsWith(username + ':'));
+    if (!line) return false;
+
+    const hash = line.split(':')[1].trim();
+    // Normalize $2y$ (PHP bcrypt) to $2b$ (Node bcrypt)
+    const normalized = hash.replace(/^\$2y\$/, '$2b$');
+    return bcrypt.compare(password, normalized);
+  } catch (err) {
+    console.error('[Auth] Error reading htshadow file:', err.message);
+    return false;
+  }
+};
 
 /**
  * Login endpoint handler
+ * Authenticates against htshadow file first, falls back to DB password
  */
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { username, password } = req.body;
 
-    if (!email || !password) {
+    if (!username || !password) {
       return res.status(400).json({
         success: false,
-        error: 'Email and password are required'
+        error: 'Username and password are required'
       });
     }
 
+    // Look up user by Username in DB
     const user = await prisma.user.findFirst({
-      where: { Email: email.toLowerCase().trim() }
+      where: { Username: username.trim() }
     });
 
     if (!user) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid email or password'
+        error: 'Invalid username or password'
       });
     }
 
@@ -40,37 +65,22 @@ const login = async (req, res) => {
       });
     }
 
-    // Password verification
-    // Support both bcrypt hashed passwords and legacy plain text (for migration)
-    let isPasswordValid = false;
+    // Step 1: Try to verify against htshadow file
+    let isPasswordValid = await verifyHtshadowPassword(username.trim(), password);
 
-    if (user.Password.startsWith('$2a$') || user.Password.startsWith('$2b$')) {
-      // Password is bcrypt hashed
-      isPasswordValid = await bcrypt.compare(password, user.Password);
-    } else {
-      // Legacy plain text password - compare and encourage migration
-      isPasswordValid = user.Password === password;
-
-      if (isPasswordValid) {
-        // Auto-hash the password on successful login with plain text
-        try {
-          const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
-          await prisma.user.update({
-            where: { User_ID: user.User_ID },
-            data: { Password: hashedPassword }
-          });
-          console.log(`[Auth] Migrated password to bcrypt for user ${user.User_ID}`);
-        } catch (hashErr) {
-          console.error('[Auth] Failed to migrate password:', hashErr.message);
-          // Continue with login even if migration fails
-        }
+    // Step 2: Fallback to DB password (for admin or users not in htshadow)
+    if (!isPasswordValid && user.Password) {
+      if (user.Password.startsWith('$2a$') || user.Password.startsWith('$2b$')) {
+        isPasswordValid = await bcrypt.compare(password, user.Password);
+      } else {
+        isPasswordValid = user.Password === password;
       }
     }
 
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid email or password'
+        error: 'Invalid username or password'
       });
     }
 
@@ -127,4 +137,62 @@ const logout = async (req, res) => {
   }
 };
 
-module.exports = { login, logout };
+/**
+ * Sync users from htshadow file into the database
+ * Creates DB records for usernames found in htshadow that don't already exist
+ */
+const syncHtshadowUsers = async (req, res) => {
+  try {
+    const data = fs.readFileSync(HTSHADOW_PATH, 'utf-8');
+    const lines = data.split('\n').filter(l => l.includes(':'));
+
+    const results = { created: [], skipped: [] };
+
+    for (const line of lines) {
+      const username = line.split(':')[0].trim();
+      if (!username) continue;
+
+      // Check if user with this username already exists
+      const existing = await prisma.user.findFirst({
+        where: { Username: username }
+      });
+
+      if (existing) {
+        results.skipped.push(username);
+        continue;
+      }
+
+      // Create a new user with default values
+      const newUser = await prisma.user.create({
+        data: {
+          Username: username,
+          First_Name: username,
+          Middle_Name: '',
+          Last_Name: '',
+          Email: `${username}@placeholder.local`,
+          Password: '',
+          User_Role: 'STUDENT',
+          Is_Active: true
+        }
+      });
+
+      results.created.push({ User_ID: newUser.User_ID, Username: username });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        message: `Synced htshadow: ${results.created.length} created, ${results.skipped.length} skipped`,
+        ...results
+      }
+    });
+  } catch (err) {
+    console.error('[Auth] Sync htshadow error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to sync htshadow users: ' + err.message
+    });
+  }
+};
+
+module.exports = { login, logout, syncHtshadowUsers };

@@ -154,16 +154,17 @@ const formSchemas = {
  */
 const authSchemas = {
     login: Joi.object({
-        email: Joi.string().email().required(),
+        username: Joi.string().min(1).required(),
         password: Joi.string().min(1).required()
     }),
 
     register: Joi.object({
+        Username: Joi.string().min(1).max(50),
         Email: Joi.string().email().required(),
-        Password: Joi.string().min(8).required(),
+        Password: Joi.string().min(8),
         First_Name: Joi.string().min(1).max(50).required(),
         Last_Name: Joi.string().min(1).max(50).required(),
-        User_Role: Joi.string().valid('ADMIN', 'LAB_HEAD', 'LAB_TECH', 'FACULTY', 'STUDENT').default('STUDENT')
+        User_Role: Joi.string().valid('ADMIN', 'LAB_HEAD', 'LAB_TECH', 'FACULTY', 'STUDENT', 'SECRETARY').default('STUDENT')
     })
 };
 

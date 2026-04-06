@@ -28,6 +28,7 @@ const getUsers = async (req, res) => {
       orderBy: { Last_Name: 'asc' },
       select: {
         User_ID: true,
+        Username: true,
         First_Name: true,
         Last_Name: true,
         Email: true,
@@ -52,16 +53,17 @@ const createUser = async (req, res) => {
       First_Name,
       Last_Name,
       Email,
-      Password,
+      Password = '',
+      Username,
       Middle_Name = '',
       Is_Active = true
     } = req.body;
 
     // Validate required fields
-    if (!User_Role || !First_Name || !Last_Name || !Email || !Password) {
+    if (!User_Role || !First_Name || !Last_Name || !Email) {
       return res.status(400).json({
         success: false,
-        error: 'User_Role, First_Name, Last_Name, Email, and Password are required'
+        error: 'User_Role, First_Name, Last_Name, and Email are required'
       });
     }
 
@@ -77,6 +79,19 @@ const createUser = async (req, res) => {
       });
     }
 
+    // Check if username already exists
+    if (Username) {
+      const existingUsername = await prisma.User.findFirst({
+        where: { Username }
+      });
+      if (existingUsername) {
+        return res.status(400).json({
+          success: false,
+          error: 'User with this username already exists'
+        });
+      }
+    }
+
     // Create the user
     const currentTime = new Date();
     const user = await prisma.User.create({
@@ -87,9 +102,10 @@ const createUser = async (req, res) => {
         Middle_Name,
         Email,
         Password,
+        Username: Username || null,
         Is_Active,
         Created_At: currentTime,
-        Updated_At: currentTime  // Set to current time for new users
+        Updated_At: currentTime
       }
     });
 
