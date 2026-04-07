@@ -3,30 +3,30 @@ const AuditService = require('../services/auditService');
 // Map of routes to their corresponding audit log actions
 const ROUTE_ACTIONS = {
   // Item management
-  'POST /api/items': 'ITEM_CREATE',
-  'PUT /api/items/': 'ITEM_UPDATE',
-  'DELETE /api/items/': 'ITEM_DELETE',
-  
+  'POST /items': 'ITEM_CREATE',
+  'PUT /items/': 'ITEM_UPDATE',
+  'DELETE /items/': 'ITEM_DELETE',
+
   // Borrowing system
-  'POST /api/borrow': 'BORROW_CREATE',
-  'PUT /api/borrow/': 'BORROW_UPDATE',
-  'DELETE /api/borrow/': 'BORROW_DELETE',
-  'POST /api/borrow/return/': 'BORROW_RETURN',
-  
+  'POST /borrow': 'BORROW_CREATE',
+  'PUT /borrow/': 'BORROW_UPDATE',
+  'DELETE /borrow/': 'BORROW_DELETE',
+  'POST /borrow/return/': 'BORROW_RETURN',
+
   // Room bookings
-  'POST /api/bookings': 'BOOKING_CREATE',
-  'PUT /api/bookings/': 'BOOKING_UPDATE',
-  'DELETE /api/bookings/': 'BOOKING_CANCEL',
-  
+  'POST /bookings': 'BOOKING_CREATE',
+  'PUT /bookings/': 'BOOKING_UPDATE',
+  'DELETE /bookings/': 'BOOKING_CANCEL',
+
   // Tickets
-  'POST /api/tickets': 'TICKET_CREATE',
-  'PUT /api/tickets/': 'TICKET_UPDATE',
-  'DELETE /api/tickets/': 'TICKET_DELETE',
+  'POST /tickets': 'TICKET_CREATE',
+  'PUT /tickets/': 'TICKET_UPDATE',
+  'DELETE /tickets/': 'TICKET_DELETE',
 };
 
 // Get the appropriate action for a request
 const getActionForRequest = (method, path) => {
-  const basePath = path.split('/').slice(0, 4).join('/');
+  const basePath = path.split('/').slice(0, 3).join('/');
   const key = `${method} ${basePath}`;
   return ROUTE_ACTIONS[key] || null;
 };

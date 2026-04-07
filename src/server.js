@@ -84,7 +84,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Apply general rate limiting
-app.use('/api/', generalLimiter);
+app.use('/', generalLimiter);
 
 // ==================== ROUTES ====================
 
@@ -101,23 +101,23 @@ app.get('/health', (req, res) => {
 });
 
 // Auth routes with stricter rate limiting
-app.use('/api/auth', authLimiter, require('./modules/auth/auth.routes'));
+app.use('/auth', authLimiter, require('./modules/auth/auth.routes'));
 
 // API Routes
-app.use('/api/inventory', require('./modules/inventory/inventory.routes'));
-app.use('/api/users', require('./modules/users/users.routes'));
-app.use('/api/tickets', require('./modules/tickets/tickets.routes'));
-app.use('/api/rooms', require('./modules/rooms/rooms.routes'));
-app.use('/api/bookings', require('./modules/bookings/bookings.routes'));
-app.use('/api/computers', require('./modules/computers/computers.routes'));
+app.use('/inventory', require('./modules/inventory/inventory.routes'));
+app.use('/users', require('./modules/users/users.routes'));
+app.use('/tickets', require('./modules/tickets/tickets.routes'));
+app.use('/rooms', require('./modules/rooms/rooms.routes'));
+app.use('/bookings', require('./modules/bookings/bookings.routes'));
+app.use('/computers', require('./modules/computers/computers.routes'));
 
-app.use('/api/borrowing', require('./modules/borrowing/borrowing.routes'));
-app.use('/api/notifications', require('./modules/notifications/notifications.routes'));
-app.use('/api/forms', require('./modules/forms/forms.routes'));
-app.use('/api/upload', require('./modules/upload/upload.routes'));
-app.use('/api/dashboard', require('./modules/dashboard/dashboard.routes'));
-app.use('/api/heartbeat', require('./modules/heartbeat/heartbeat.routes'));
-app.use('/api/reports', require('./modules/reports/reports.routes'));
+app.use('/borrowing', require('./modules/borrowing/borrowing.routes'));
+app.use('/notifications', require('./modules/notifications/notifications.routes'));
+app.use('/forms', require('./modules/forms/forms.routes'));
+app.use('/upload', require('./modules/upload/upload.routes'));
+app.use('/dashboard', require('./modules/dashboard/dashboard.routes'));
+app.use('/heartbeat', require('./modules/heartbeat/heartbeat.routes'));
+app.use('/reports', require('./modules/reports/reports.routes'));
 
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

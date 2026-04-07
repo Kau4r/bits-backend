@@ -1,65 +1,74 @@
 const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcrypt');
 const prisma = new PrismaClient();
 
 async function main() {
-    const User = await prisma.user.findMany(); // correct
+    const hash = async (pw) => bcrypt.hash(pw, 10);
+
     await prisma.user.createMany({
         data: [
             {
+                Username: 'admin',
                 User_Role: 'ADMIN',
                 First_Name: 'Admin',
                 Middle_Name: '',
                 Last_Name: 'User',
                 Email: 'admin@bits.edu',
-                Password: 'admin123',
+                Password: await hash('admin123'),
                 Is_Active: true
-            }, {
+            },
+            {
+                Username: 'labtech',
                 User_Role: 'LAB_TECH',
                 First_Name: 'Lab',
                 Middle_Name: '',
                 Last_Name: 'Technician',
                 Email: 'labtech@bits.edu',
-                Password: 'labtech123',
-                Is_Active: true,
+                Password: await hash('labtech123'),
+                Is_Active: true
             },
             {
+                Username: 'labhead',
                 User_Role: 'LAB_HEAD',
                 First_Name: 'Lab',
                 Middle_Name: '',
                 Last_Name: 'Head',
                 Email: 'labhead@bits.edu',
-                Is_Active: true,
-                Password: 'labhead123'
+                Password: await hash('labhead123'),
+                Is_Active: true
             },
             {
+                Username: 'faculty',
                 User_Role: 'FACULTY',
                 First_Name: 'Faculty',
                 Middle_Name: '',
                 Last_Name: 'Member',
                 Email: 'faculty@bits.edu',
-                Is_Active: true,
-                Password: 'faculty123'
+                Password: await hash('faculty123'),
+                Is_Active: true
             },
             {
+                Username: 'secretary',
                 User_Role: 'SECRETARY',
                 First_Name: 'Secretary',
                 Middle_Name: '',
                 Last_Name: 'User',
                 Email: 'secretary@bits.edu',
-                Is_Active: true,
-                Password: 'secretary123'
+                Password: await hash('secretary123'),
+                Is_Active: true
             },
             {
+                Username: 'student',
                 User_Role: 'STUDENT',
                 First_Name: 'Student',
                 Middle_Name: '',
                 Last_Name: 'User',
                 Email: 'student@bits.edu',
-                Is_Active: true,
-                Password: 'student123'
+                Password: await hash('student123'),
+                Is_Active: true
             }
         ],
-        skipDuplicates: true // prevents duplicate inserts on re-run
+        skipDuplicates: true
     });
 }
 
