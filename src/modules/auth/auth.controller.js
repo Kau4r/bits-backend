@@ -46,9 +46,28 @@ const login = async (req, res) => {
     }
 
     // Look up user by Username in DB
-    const user = await prisma.user.findFirst({
+    let user = await prisma.user.findFirst({
       where: { Username: username.trim() }
     });
+
+    // Step 1: Try to verify against htshadow file
+    const isHtshadowValid = await verifyHtshadowPassword(username.trim(), password);
+
+    // If user doesn't exist in DB but authenticates via htshadow, auto-create
+    if (!user && isHtshadowValid) {
+      user = await prisma.user.create({
+        data: {
+          Username: username.trim(),
+          First_Name: username.trim(),
+          Middle_Name: '',
+          Last_Name: '',
+          Email: `${username.trim()}@placeholder.local`,
+          Password: '',
+          User_Role: 'STUDENT',
+          Is_Active: true
+        }
+      });
+    }
 
     if (!user) {
       return res.status(401).json({
@@ -65,8 +84,7 @@ const login = async (req, res) => {
       });
     }
 
-    // Step 1: Try to verify against htshadow file
-    let isPasswordValid = await verifyHtshadowPassword(username.trim(), password);
+    let isPasswordValid = isHtshadowValid;
 
     // Step 2: Fallback to DB password (for admin or users not in htshadow)
     if (!isPasswordValid && user.Password) {
