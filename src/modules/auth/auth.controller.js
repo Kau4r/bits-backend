@@ -6,7 +6,7 @@ const AuditLogger = require('../../utils/auditLogger');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
-const HTSHADOW_PATH = process.env.HTSHADOW_PATH || '/etc/example_htshadow';
+const HTSHADOW_PATH = process.env.HTSHADOW_PATH || '/etc/htshadow';
 
 /**
  * Verify password against the htshadow file
