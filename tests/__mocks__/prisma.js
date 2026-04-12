@@ -73,12 +73,25 @@ const mockPrisma = {
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    count: jest.fn(),
+  },
+  Form: {
+    findUnique: jest.fn(),
+    findMany: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
+    count: jest.fn(),
+  },
+  FormHistory: {
+    create: jest.fn(),
   },
   borrow_Item: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    count: jest.fn(),
   },
   audit_Log: {
     findFirst: jest.fn(),

@@ -95,7 +95,7 @@ const getDashboardMetrics = async (req, res) => {
             const pendingForms = await prisma.form.count({
                 where: {
                     Status: 'PENDING',
-                    Department: 'LABORATORY'
+                    Is_Archived: false
                 }
             });
 

@@ -1,12 +1,22 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
 
-// Helper to determine notification roles based on department
-const getNotifyRoles = (department) => {
-    if (department === 'LABORATORY') return ['LAB_TECH', 'LAB_HEAD'];
-    // User requested LAB_HEAD for Registrar forms instead of ADMIN
-    if (department === 'REGISTRAR') return ['LAB_HEAD'];
-    return ['ADMIN'];
+const VALID_FORM_DEPARTMENTS = [
+    'REQUESTOR',
+    'DEPARTMENT_HEAD',
+    'DEAN_OFFICE',
+    'TNS',
+    'PURCHASING',
+    'PPFO',
+    'COMPLETED'
+];
+
+const normalizeDepartment = (department = 'REQUESTOR') => String(department).toUpperCase();
+const isValidDepartment = (department) => VALID_FORM_DEPARTMENTS.includes(department);
+
+// Workflow form events should notify the lab operations roles.
+const getNotifyRoles = () => {
+    return ['LAB_TECH', 'LAB_HEAD'];
 };
 
 // Generate form code (e.g., WRF-2026-001)
@@ -43,7 +53,11 @@ const getForms = async (req, res) => {
         }
 
         if (department && department !== 'All') {
-            where.Department = department;
+            const departmentEnum = normalizeDepartment(department);
+            if (!isValidDepartment(departmentEnum)) {
+                return res.status(400).json({ success: false, error: 'Invalid department' });
+            }
+            where.Department = departmentEnum;
         }
 
         if (archived !== undefined) {
@@ -147,38 +161,46 @@ const createForm = async (req, res) => {
             fileName,
             fileUrl,
             fileType,
-            department = 'REGISTRAR'
+            department = 'REQUESTOR',
+            requesterName,
+            remarks
         } = req.body;
 
         const userId = creatorId || req.user.User_ID;
+        const formTypeEnum = String(formType || '').toUpperCase();
 
         if (!userId || !formType) {
             return res.status(400).json({ success: false, error: 'User ID and Form Type are required' });
         }
 
         // Validate form type
-        if (!['WRF', 'RIS'].includes(formType)) {
+        if (!['WRF', 'RIS'].includes(formTypeEnum)) {
             return res.status(400).json({ success: false, error: 'Invalid form type. Must be WRF or RIS' });
         }
 
-        // Generate form code
-        const formCode = await generateFormCode(formType);
+        // Convert and validate department before Prisma sees it, so invalid enum values return 400.
+        const departmentEnum = normalizeDepartment(department);
+        if (!isValidDepartment(departmentEnum)) {
+            return res.status(400).json({ success: false, error: 'Invalid department' });
+        }
 
-        // Convert department to uppercase to match enum
-        const departmentEnum = department.toUpperCase();
+        // Generate form code
+        const formCode = await generateFormCode(formTypeEnum);
 
         // Create form first
         const form = await prisma.Form.create({
             data: {
                 Form_Code: formCode,
                 Creator_ID: parseInt(userId),
-                Form_Type: formType,
+                Form_Type: formTypeEnum,
                 Title: title || null,
                 Content: content || null,
                 Department: departmentEnum,
                 File_Name: fileName || null,
                 File_URL: fileUrl || null,
-                File_Type: fileType || null
+                File_Type: fileType || null,
+                Requester_Name: requesterName || null,
+                Remarks: remarks || null
             },
             include: {
                 Creator: true
@@ -195,7 +217,7 @@ const createForm = async (req, res) => {
         });
 
         // Audit Log
-        const notifyRole = getNotifyRoles(departmentEnum);
+        const notifyRole = getNotifyRoles();
 
         await AuditLogger.logForm(
             userId,
@@ -229,7 +251,7 @@ const updateForm = async (req, res) => {
     }
 
     try {
-        const { status, approverId, title, content } = req.body;
+        const { status, approverId, title, content, requesterName, remarks } = req.body;
 
         const updateData = {};
         let action = 'FORM_UPDATED';
@@ -260,6 +282,14 @@ const updateForm = async (req, res) => {
             updateData.Content = content;
         }
 
+        if (requesterName !== undefined) {
+            updateData.Requester_Name = requesterName || null;
+        }
+
+        if (remarks !== undefined) {
+            updateData.Remarks = remarks || null;
+        }
+
         const form = await prisma.Form.update({
             where: { Form_ID: formId },
             data: updateData,
@@ -269,10 +299,7 @@ const updateForm = async (req, res) => {
         // Notify Creator if status changes to Approved, Rejected, Pending, or In Review
         const notifyUserId = ['APPROVED', 'REJECTED', 'PENDING', 'IN_REVIEW'].includes(status) ? form.Creator_ID : null;
 
-        // Notify LAB_TECH & LAB_HEAD for Laboratory forms; LAB_HEAD for Registrar (replacing ADMIN)
-        const notifyAuditRole = form.Department === 'LABORATORY'
-            ? ['LAB_TECH', 'LAB_HEAD']
-            : (form.Department === 'REGISTRAR' ? ['LAB_HEAD'] : null);
+        const notifyAuditRole = getNotifyRoles();
 
         await AuditLogger.logForm(
             req.user.User_ID,
@@ -310,7 +337,7 @@ const archiveForm = async (req, res) => {
             req.user.User_ID,
             'FORM_ARCHIVED',
             `Archived form ${form.Form_Code}`,
-            getNotifyRoles(form.Department)
+            getNotifyRoles()
         );
 
         res.json({ success: true, data: form });
@@ -335,8 +362,10 @@ const transferForm = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Department is required' });
         }
 
+        const departmentEnum = normalizeDepartment(department);
+
         // Validate department
-        if (!['REGISTRAR', 'FINANCE', 'DCISM', 'LABORATORY'].includes(department)) {
+        if (!isValidDepartment(departmentEnum)) {
             return res.status(400).json({ success: false, error: 'Invalid department' });
         }
 
@@ -344,11 +373,11 @@ const transferForm = async (req, res) => {
         const form = await prisma.Form.update({
             where: { Form_ID: formId },
             data: {
-                Department: department,
+                Department: departmentEnum,
                 History: {
                     create: {
-                        Department: department,
-                        Notes: notes || `Transferred to ${department}`
+                        Department: departmentEnum,
+                        Notes: notes || `Transferred to ${departmentEnum}`
                     }
                 }
             },
@@ -370,8 +399,8 @@ const transferForm = async (req, res) => {
         await AuditLogger.logForm(
             req.user.User_ID,
             'FORM_TRANSFERRED',
-            `Transferred form ${form.Form_Code} to ${department}`,
-            ['LAB_TECH', 'LAB_HEAD']
+            `Transferred form ${form.Form_Code} to ${departmentEnum}`,
+            getNotifyRoles()
         );
 
         res.json({ success: true, data: form });

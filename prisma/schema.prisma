@@ -95,10 +95,12 @@ model Form {
   Content     String?
   Created_At  DateTime       @default(now())
   Updated_At  DateTime       @updatedAt
-  Department  FormDepartment @default(REGISTRAR)
+  Department  FormDepartment @default(REQUESTOR)
   File_Name   String?
   File_Type   String?
   File_URL    String?
+  Requester_Name String?
+  Remarks     String?
   Form_Code   String         @unique
   Form_Type   FormType
   Is_Archived Boolean        @default(false)
@@ -305,10 +307,13 @@ enum FormStatus {
 }
 
 enum FormDepartment {
-  REGISTRAR
-  FINANCE
-  DCISM
-  LABORATORY
+  REQUESTOR
+  DEPARTMENT_HEAD
+  DEAN_OFFICE
+  TNS
+  PURCHASING
+  PPFO
+  COMPLETED
 }
 
 enum RoomStatus {

@@ -4,6 +4,16 @@
 const Joi = require('joi');
 const { AppError } = require('./errorHandler');
 
+const workflowFormDepartments = [
+    'REQUESTOR',
+    'DEPARTMENT_HEAD',
+    'DEAN_OFFICE',
+    'TNS',
+    'PURCHASING',
+    'PPFO',
+    'COMPLETED'
+];
+
 // ==================== SCHEMAS ====================
 
 /**
@@ -127,24 +137,28 @@ const inventorySchemas = {
 const formSchemas = {
     create: Joi.object({
         creatorId: Joi.number().integer().positive(),
-        formType: Joi.string().valid('WRF', 'JO', 'ICL', 'PPE', 'MRIS', 'TRANSFER').required(),
-        title: Joi.string().min(1).max(200).required(),
+        formType: Joi.string().valid('WRF', 'RIS').required(),
+        title: Joi.string().min(1).max(200).allow('', null),
         content: Joi.string().allow('', null),
         fileName: Joi.string().max(255).allow('', null),
         fileUrl: Joi.string().uri().allow('', null),
         fileType: Joi.string().max(50).allow('', null),
-        department: Joi.string().valid('REGISTRAR', 'ADMIN', 'IT', 'HR', 'FINANCE').default('REGISTRAR')
+        department: Joi.string().valid(...workflowFormDepartments).default('REQUESTOR'),
+        requesterName: Joi.string().max(200).allow('', null),
+        remarks: Joi.string().max(1000).allow('', null)
     }),
 
     update: Joi.object({
-        status: Joi.string().valid('PENDING', 'IN_PROGRESS', 'APPROVED', 'REJECTED', 'ARCHIVED'),
+        status: Joi.string().valid('PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'ARCHIVED'),
         approverId: Joi.number().integer().positive(),
         title: Joi.string().min(1).max(200),
-        content: Joi.string().allow('', null)
+        content: Joi.string().allow('', null),
+        requesterName: Joi.string().max(200).allow('', null),
+        remarks: Joi.string().max(1000).allow('', null)
     }).min(1),
 
     transfer: Joi.object({
-        targetDepartment: Joi.string().valid('REGISTRAR', 'ADMIN', 'IT', 'HR', 'FINANCE').required(),
+        department: Joi.string().valid(...workflowFormDepartments).required(),
         notes: Joi.string().max(500).allow('', null)
     })
 };
