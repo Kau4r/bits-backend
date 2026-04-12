@@ -69,20 +69,42 @@ async function main() {
     for (const seedUser of seedUsers) {
         const { PlainPassword, ...userData } = seedUser;
         const hashedPassword = await bcrypt.hash(PlainPassword, 10);
+        const [existingByUsername, existingByEmail] = await Promise.all([
+            prisma.user.findUnique({
+                where: { Username: userData.Username },
+                select: { User_ID: true }
+            }),
+            prisma.user.findUnique({
+                where: { Email: userData.Email },
+                select: { User_ID: true }
+            })
+        ]);
 
-        await prisma.user.upsert({
-            where: {
-                Username: userData.Username
-            },
-            update: {
-                ...userData,
-                Password: hashedPassword
-            },
-            create: {
-                ...userData,
-                Password: hashedPassword
-            }
-        });
+        if (
+            existingByUsername &&
+            existingByEmail &&
+            existingByUsername.User_ID !== existingByEmail.User_ID
+        ) {
+            throw new Error(
+                `Cannot seed ${userData.Username}: username and email belong to different users`
+            );
+        }
+
+        const existingUser = existingByUsername || existingByEmail;
+        const data = {
+            ...userData,
+            Password: hashedPassword
+        };
+
+        if (existingUser) {
+            await prisma.user.update({
+                where: { User_ID: existingUser.User_ID },
+                data
+            });
+            continue;
+        }
+
+        await prisma.user.create({ data });
     }
 }
 
