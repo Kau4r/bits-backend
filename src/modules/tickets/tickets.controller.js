@@ -123,20 +123,50 @@ const getTickets = async (req, res) => {
   }
 };
 
-// Update ticket (status, priority, category)
+// Update ticket details/status/assignment
 const updateTicket = async (req, res) => {
   try {
     const { id } = req.params;
-    const { Status, Priority, Category, Archived, Technician_ID } = req.body;
-    const requestedTechnicianId = Technician_ID === undefined
-      ? undefined
-      : Technician_ID === null
-        ? null
-        : parseInt(Technician_ID);
+    const {
+      Status,
+      Priority,
+      Category,
+      Archived,
+      Technician_ID,
+      Report_Problem,
+      Location,
+      Item_ID,
+      Room_ID,
+    } = req.body;
+
+    const parseOptionalId = (value) => {
+      if (value === undefined) return undefined;
+      if (value === null || value === '') return null;
+      const parsed = parseInt(value, 10);
+      return Number.isNaN(parsed) || parsed <= 0 ? NaN : parsed;
+    };
+
+    const requestedTechnicianId = parseOptionalId(Technician_ID);
+    const requestedItemId = parseOptionalId(Item_ID);
+    const requestedRoomId = parseOptionalId(Room_ID);
 
     if (Number.isNaN(requestedTechnicianId) ||
-      (typeof requestedTechnicianId === 'number' && requestedTechnicianId <= 0)) {
-      return res.status(400).json({ success: false, error: 'Invalid Technician_ID' });
+      Number.isNaN(requestedItemId) ||
+      Number.isNaN(requestedRoomId)) {
+      return res.status(400).json({ success: false, error: 'Invalid ticket update data' });
+    }
+
+    const normalizedReportProblem = Report_Problem === undefined
+      ? undefined
+      : String(Report_Problem).trim();
+    const normalizedLocation = Location === undefined
+      ? undefined
+      : Location === null
+        ? null
+        : String(Location).trim() || null;
+
+    if (normalizedReportProblem !== undefined && !normalizedReportProblem) {
+      return res.status(400).json({ success: false, error: 'Report_Problem cannot be empty' });
     }
 
     // Validate status if provided
@@ -156,6 +186,16 @@ const updateTicket = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Ticket not found' });
     }
 
+    // Validate Room_ID if provided
+    if (requestedRoomId) {
+      const roomExists = await prisma.room.findUnique({
+        where: { Room_ID: requestedRoomId }
+      });
+      if (!roomExists) {
+        return res.status(400).json({ success: false, error: 'Invalid Room_ID: Room does not exist' });
+      }
+    }
+
     const nextTechnicianId = requestedTechnicianId === undefined
       ? existingTicket.Technician_ID
       : requestedTechnicianId;
@@ -164,9 +204,21 @@ const updateTicket = async (req, res) => {
     const hasStatusUpdate = Status !== undefined && Status !== existingTicket.Status;
     const hasPriorityUpdate = Priority !== undefined && Priority !== existingTicket.Priority;
     const hasCategoryUpdate = Category !== undefined && Category !== existingTicket.Category;
+    const hasReportProblemUpdate = normalizedReportProblem !== undefined &&
+      normalizedReportProblem !== existingTicket.Report_Problem;
+    const hasLocationUpdate = normalizedLocation !== undefined &&
+      normalizedLocation !== (existingTicket.Location ?? null);
+    const hasItemUpdate = requestedItemId !== undefined &&
+      requestedItemId !== (existingTicket.Item_ID ?? null);
+    const hasRoomUpdate = requestedRoomId !== undefined &&
+      requestedRoomId !== (existingTicket.Room_ID ?? null);
     const requiresAssignedTechnician = (hasStatusUpdate && !isUnassignReset) ||
       hasPriorityUpdate ||
-      hasCategoryUpdate;
+      hasCategoryUpdate ||
+      hasReportProblemUpdate ||
+      hasLocationUpdate ||
+      hasItemUpdate ||
+      hasRoomUpdate;
 
     if (requiresAssignedTechnician && !nextTechnicianId) {
       return res.status(400).json({
@@ -175,19 +227,32 @@ const updateTicket = async (req, res) => {
       });
     }
 
-    // Validate target technician is active
-    if (requestedTechnicianId) {
+    const validateLabTechAssignment = async (technicianId) => {
       const targetTech = await prisma.user.findUnique({
-        where: { User_ID: requestedTechnicianId }
+        where: { User_ID: technicianId }
       });
       if (!targetTech) {
-        return res.status(400).json({ success: false, error: 'Technician not found' });
+        return { error: 'Technician not found' };
       }
       if (targetTech.User_Role !== 'LAB_TECH') {
-        return res.status(400).json({ success: false, error: 'Ticket must be assigned to a Lab Tech' });
+        return { error: 'Ticket must be assigned to a Lab Tech' };
       }
       if (!targetTech.Is_Active) {
-        return res.status(400).json({ success: false, error: 'Cannot assign to inactive technician' });
+        return { error: 'Cannot assign to inactive technician' };
+      }
+      return { technician: targetTech };
+    };
+
+    // Validate target/current technician is an active Lab Tech before assignment or edits.
+    if (requestedTechnicianId) {
+      const validation = await validateLabTechAssignment(requestedTechnicianId);
+      if (validation.error) {
+        return res.status(400).json({ success: false, error: validation.error });
+      }
+    } else if (requiresAssignedTechnician && nextTechnicianId) {
+      const validation = await validateLabTechAssignment(nextTechnicianId);
+      if (validation.error) {
+        return res.status(400).json({ success: false, error: validation.error });
       }
     }
 
@@ -199,6 +264,10 @@ const updateTicket = async (req, res) => {
         Category,
         Archived,
         Technician_ID: requestedTechnicianId,
+        Report_Problem: normalizedReportProblem,
+        Location: normalizedLocation,
+        Item_ID: requestedItemId,
+        Room_ID: requestedRoomId,
       },
       include: {
         Reported_By: true,
@@ -241,7 +310,11 @@ const updateTicket = async (req, res) => {
     // Only notify Staff of generic updates if no specific notification was sent AND actual meaningful changes occurred
     const hasOtherChanges = (Status && Status !== existingTicket.Status) ||
       (Priority && Priority !== existingTicket.Priority) ||
-      (Category && Category !== existingTicket.Category);
+      (Category && Category !== existingTicket.Category) ||
+      hasReportProblemUpdate ||
+      hasLocationUpdate ||
+      hasItemUpdate ||
+      hasRoomUpdate;
 
     if (!notificationSent && hasOtherChanges) {
       await AuditLogger.logTicket(

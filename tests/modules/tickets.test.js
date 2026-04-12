@@ -49,11 +49,12 @@ describe('Ticket Routes', () => {
         Status: 'PENDING',
         Priority: 'LOW',
         Category: 'SOFTWARE',
+        Report_Problem: 'Printer issue',
       });
 
       const res = await request(app)
         .put('/tickets/1')
-        .send({ Status: 'IN_PROGRESS' });
+        .send({ Status: 'IN_PROGRESS', Report_Problem: 'Updated printer issue' });
 
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('Assign the ticket to a Lab Tech');
@@ -68,6 +69,7 @@ describe('Ticket Routes', () => {
         Status: 'PENDING',
         Priority: 'LOW',
         Category: 'SOFTWARE',
+        Report_Problem: 'Printer issue',
       };
       const updatedTicket = {
         ...existingTicket,
@@ -115,6 +117,7 @@ describe('Ticket Routes', () => {
         Status: 'PENDING',
         Priority: 'LOW',
         Category: 'SOFTWARE',
+        Report_Problem: 'Printer issue',
       });
       prisma.user.findUnique.mockResolvedValue({
         User_ID: 4,
@@ -129,6 +132,55 @@ describe('Ticket Routes', () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toContain('Lab Tech');
       expect(prisma.ticket.update).not.toHaveBeenCalled();
+    });
+
+    it('allows detail updates after the ticket is assigned to an active Lab Tech', async () => {
+      const existingTicket = {
+        Ticket_ID: 1,
+        Reported_By_ID: 2,
+        Technician_ID: 3,
+        Status: 'IN_PROGRESS',
+        Priority: 'LOW',
+        Category: 'SOFTWARE',
+        Report_Problem: 'Printer issue',
+        Location: 'Lab 1',
+        Item_ID: null,
+        Room_ID: null,
+      };
+      const updatedTicket = {
+        ...existingTicket,
+        Priority: 'HIGH',
+        Report_Problem: 'Printer issue with error code',
+        Location: 'Lab 2',
+      };
+
+      prisma.ticket.findUnique.mockResolvedValue(existingTicket);
+      prisma.user.findUnique.mockResolvedValue({
+        User_ID: 3,
+        User_Role: 'LAB_TECH',
+        Is_Active: true,
+      });
+      prisma.ticket.update.mockResolvedValue(updatedTicket);
+
+      const res = await request(app)
+        .put('/tickets/1')
+        .send({
+          Priority: 'HIGH',
+          Report_Problem: '  Printer issue with error code  ',
+          Location: 'Lab 2',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toEqual(updatedTicket);
+      expect(prisma.ticket.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            Priority: 'HIGH',
+            Report_Problem: 'Printer issue with error code',
+            Location: 'Lab 2',
+          }),
+        })
+      );
     });
   });
 });
