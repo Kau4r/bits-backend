@@ -128,6 +128,16 @@ const updateTicket = async (req, res) => {
   try {
     const { id } = req.params;
     const { Status, Priority, Category, Archived, Technician_ID } = req.body;
+    const requestedTechnicianId = Technician_ID === undefined
+      ? undefined
+      : Technician_ID === null
+        ? null
+        : parseInt(Technician_ID);
+
+    if (Number.isNaN(requestedTechnicianId) ||
+      (typeof requestedTechnicianId === 'number' && requestedTechnicianId <= 0)) {
+      return res.status(400).json({ success: false, error: 'Invalid Technician_ID' });
+    }
 
     // Validate status if provided
     const validStatuses = ['PENDING', 'IN_PROGRESS', 'RESOLVED'];
@@ -146,12 +156,37 @@ const updateTicket = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Ticket not found' });
     }
 
-    // Validate target technician is active
-    if (Technician_ID && Technician_ID !== null) {
-      const targetTech = await prisma.user.findUnique({
-        where: { User_ID: parseInt(Technician_ID) }
+    const nextTechnicianId = requestedTechnicianId === undefined
+      ? existingTicket.Technician_ID
+      : requestedTechnicianId;
+    const isUnassigningTicket = requestedTechnicianId === null;
+    const isUnassignReset = isUnassigningTicket && Status === 'PENDING';
+    const hasStatusUpdate = Status !== undefined && Status !== existingTicket.Status;
+    const hasPriorityUpdate = Priority !== undefined && Priority !== existingTicket.Priority;
+    const hasCategoryUpdate = Category !== undefined && Category !== existingTicket.Category;
+    const requiresAssignedTechnician = (hasStatusUpdate && !isUnassignReset) ||
+      hasPriorityUpdate ||
+      hasCategoryUpdate;
+
+    if (requiresAssignedTechnician && !nextTechnicianId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Assign the ticket to a Lab Tech before updating details or status'
       });
-      if (targetTech && !targetTech.Is_Active) {
+    }
+
+    // Validate target technician is active
+    if (requestedTechnicianId) {
+      const targetTech = await prisma.user.findUnique({
+        where: { User_ID: requestedTechnicianId }
+      });
+      if (!targetTech) {
+        return res.status(400).json({ success: false, error: 'Technician not found' });
+      }
+      if (targetTech.User_Role !== 'LAB_TECH') {
+        return res.status(400).json({ success: false, error: 'Ticket must be assigned to a Lab Tech' });
+      }
+      if (!targetTech.Is_Active) {
         return res.status(400).json({ success: false, error: 'Cannot assign to inactive technician' });
       }
     }
@@ -163,7 +198,7 @@ const updateTicket = async (req, res) => {
         Priority,
         Category,
         Archived,
-        Technician_ID: Technician_ID === null ? null : (Technician_ID !== undefined ? parseInt(Technician_ID) : undefined),
+        Technician_ID: requestedTechnicianId,
       },
       include: {
         Reported_By: true,
@@ -175,7 +210,7 @@ const updateTicket = async (req, res) => {
 
     // Check for technician assignment
     let notificationSent = false;
-    const newTechId = Technician_ID ? parseInt(Technician_ID) : null;
+    const newTechId = requestedTechnicianId || null;
 
     // Check if technician changed (handling newly assigned or re-assigned)
     if (newTechId && newTechId !== existingTicket.Technician_ID) {
