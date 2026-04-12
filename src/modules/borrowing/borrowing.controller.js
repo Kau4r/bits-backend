@@ -309,7 +309,10 @@ const rejectBorrowing = async (req, res) => {
     });
 
     // Log the rejection
-    const itemName = borrowing.Item.Name || borrowing.Item.Item_Code;
+    const itemName = borrowing.Item?.Name
+        || borrowing.Item?.Item_Code
+        || borrowing.Requested_Item_Type
+        || 'requested item';
     await AuditLogger.logBorrowing(
         approver.User_ID,
         'BORROW_REJECTED',
