@@ -154,9 +154,10 @@ const formSchemas = {
  */
 const authSchemas = {
     login: Joi.object({
-        username: Joi.string().min(1).required(),
+        username: Joi.string().min(1),
+        email: Joi.string().email(),
         password: Joi.string().min(1).required()
-    }),
+    }).or('username', 'email'),
 
     register: Joi.object({
         Username: Joi.string().min(1).max(50),

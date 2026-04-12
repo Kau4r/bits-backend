@@ -32,36 +32,47 @@ const verifyHtshadowPassword = async (username, password) => {
 
 /**
  * Login endpoint handler
- * Authenticates against htshadow file first, falls back to DB password
+ * Authenticates by username or email against htshadow first, then DB password
  */
 const login = async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, email, password } = req.body;
+    const identifier = (username || email)?.trim();
 
-    if (!username || !password) {
+    if (!identifier || !password) {
       return res.status(400).json({
         success: false,
-        error: 'Username and password are required'
+        error: 'Username/email and password are required'
       });
     }
 
-    // Look up user by Username in DB
+    // Look up user by username or email. The request field stays `username`
+    // to avoid changing the frontend/backend API contract.
     let user = await prisma.user.findFirst({
-      where: { Username: username.trim() }
+      where: {
+        OR: [
+          { Username: identifier },
+          { Email: identifier }
+        ]
+      }
     });
 
     // Step 1: Try to verify against htshadow file
-    const isHtshadowValid = await verifyHtshadowPassword(username.trim(), password);
+    const isEmailIdentifier = identifier.includes('@');
+    const htshadowUsername = user?.Username || (isEmailIdentifier ? null : identifier);
+    const isHtshadowValid = htshadowUsername
+      ? await verifyHtshadowPassword(htshadowUsername, password)
+      : false;
 
     // If user doesn't exist in DB but authenticates via htshadow, auto-create
     if (!user && isHtshadowValid) {
       user = await prisma.user.create({
         data: {
-          Username: username.trim(),
-          First_Name: username.trim(),
+          Username: identifier,
+          First_Name: identifier,
           Middle_Name: '',
           Last_Name: '',
-          Email: `${username.trim()}@placeholder.local`,
+          Email: `${identifier}@placeholder.local`,
           Password: '',
           User_Role: 'STUDENT',
           Is_Active: true
@@ -72,7 +83,7 @@ const login = async (req, res) => {
     if (!user) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid username or password'
+        error: 'Invalid username/email or password'
       });
     }
 
@@ -98,7 +109,7 @@ const login = async (req, res) => {
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid username or password'
+        error: 'Invalid username/email or password'
       });
     }
 

@@ -49,7 +49,7 @@ describe('Auth Routes', () => {
     jest.clearAllMocks();
   });
 
-  describe('POST /api/auth/login', () => {
+  describe('POST /auth/login', () => {
     it('should login with valid credentials (bcrypt password)', async () => {
       const hashedPassword = await bcrypt.hash('correct-password', 10);
       const mockUser = {
@@ -64,8 +64,8 @@ describe('Auth Routes', () => {
       prisma.user.findFirst.mockResolvedValue(mockUser);
 
       const res = await request(app)
-        .post('/api/auth/login')
-        .send({ email: 'test@example.com', password: 'correct-password' });
+        .post('/auth/login')
+        .send({ username: 'test@example.com', password: 'correct-password' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -88,7 +88,7 @@ describe('Auth Routes', () => {
       prisma.user.update.mockResolvedValue(mockUser); // For password migration
 
       const res = await request(app)
-        .post('/api/auth/login')
+        .post('/auth/login')
         .send({ email: 'legacy@example.com', password: 'plain-text-pass' });
 
       expect(res.status).toBe(200);
@@ -107,7 +107,7 @@ describe('Auth Routes', () => {
       prisma.user.findFirst.mockResolvedValue(mockUser);
 
       const res = await request(app)
-        .post('/api/auth/login')
+        .post('/auth/login')
         .send({ email: 'test@example.com', password: 'wrong-password' });
 
       expect(res.status).toBe(401);
@@ -119,7 +119,7 @@ describe('Auth Routes', () => {
       prisma.user.findFirst.mockResolvedValue(null);
 
       const res = await request(app)
-        .post('/api/auth/login')
+        .post('/auth/login')
         .send({ email: 'nobody@example.com', password: 'password' });
 
       expect(res.status).toBe(401);
@@ -136,7 +136,7 @@ describe('Auth Routes', () => {
       });
 
       const res = await request(app)
-        .post('/api/auth/login')
+        .post('/auth/login')
         .send({ email: 'inactive@example.com', password: 'password' });
 
       expect(res.status).toBe(401);
@@ -144,9 +144,9 @@ describe('Auth Routes', () => {
       expect(res.body.error).toContain('deactivated');
     });
 
-    it('should reject missing email', async () => {
+    it('should reject missing username/email', async () => {
       const res = await request(app)
-        .post('/api/auth/login')
+        .post('/auth/login')
         .send({ password: 'password' });
 
       expect(res.status).toBe(400);
@@ -155,7 +155,7 @@ describe('Auth Routes', () => {
 
     it('should reject missing password', async () => {
       const res = await request(app)
-        .post('/api/auth/login')
+        .post('/auth/login')
         .send({ email: 'test@example.com' });
 
       expect(res.status).toBe(400);
@@ -164,7 +164,7 @@ describe('Auth Routes', () => {
 
     it('should reject empty body', async () => {
       const res = await request(app)
-        .post('/api/auth/login')
+        .post('/auth/login')
         .send({});
 
       expect(res.status).toBe(400);
@@ -172,10 +172,10 @@ describe('Auth Routes', () => {
     });
   });
 
-  describe('POST /api/auth/logout', () => {
+  describe('POST /auth/logout', () => {
     it('should logout successfully', async () => {
       const res = await request(app)
-        .post('/api/auth/logout');
+        .post('/auth/logout');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
