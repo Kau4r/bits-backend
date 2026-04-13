@@ -1,5 +1,7 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
+const NotificationManager = require('../../services/notificationManager');
+const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
 
 // Get all rooms
 const getRooms = async (req, res) => {
@@ -12,6 +14,8 @@ const getRooms = async (req, res) => {
           select: {
             Schedule_ID: true,
             Days: true,
+            Title: true,
+            Schedule_Type: true,
             Start_Time: true,
             End_Time: true,
             Created_At: true,
@@ -43,6 +47,8 @@ const getRoomById = async (req, res) => {
           select: {
             Schedule_ID: true,
             Days: true,
+            Title: true,
+            Schedule_Type: true,
             Start_Time: true,
             End_Time: true,
             Created_At: true,
@@ -267,27 +273,22 @@ const setStudentAvailability = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Only LAB rooms can be opened for student usage' });
     }
 
-    // Check for overlapping schedules
-    const conflictingSchedule = room.Schedule.find(schedule => {
-      const scheduleStart = new Date(schedule.Start_Time);
-      const scheduleEnd = new Date(schedule.End_Time);
-      // Check if time ranges overlap
-      return (requestedStart < scheduleEnd && requestedEnd > scheduleStart);
-    });
+    // Check for overlapping recurring class schedules
+    const conflictingSchedule = findScheduleConflict(room.Schedule, requestedStart, requestedEnd);
 
     if (conflictingSchedule) {
-      const formatTime = (d) => new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       return res.status(409).json({
         success: false,
-        error: `Time conflict with existing schedule from ${formatTime(conflictingSchedule.Start_Time)} to ${formatTime(conflictingSchedule.End_Time)}`
+        error: `Time conflict with existing schedule from ${formatScheduleTime(conflictingSchedule.Start_Time)} to ${formatScheduleTime(conflictingSchedule.End_Time)}`
       });
     }
 
-    // Check for overlapping bookings
-    const conflictingBooking = await prisma.Booked_Room.findFirst({
+    // Approved bookings are firm conflicts. Pending bookings are lower priority
+    // than the computer-use queue and will be rejected below if they overlap.
+    const conflictingApprovedBooking = await prisma.Booked_Room.findFirst({
       where: {
         Room_ID: roomId,
-        Status: { in: ['APPROVED', 'PENDING'] },
+        Status: 'APPROVED',
         Start_Time: { lt: requestedEnd },
         End_Time: { gt: requestedStart }
       },
@@ -296,33 +297,108 @@ const setStudentAvailability = async (req, res) => {
       }
     });
 
-    if (conflictingBooking) {
+    if (conflictingApprovedBooking) {
       const formatTime = (d) => new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
       return res.status(409).json({
         success: false,
-        error: `Time conflict with existing ${conflictingBooking.Status.toLowerCase()} booking from ${formatTime(conflictingBooking.Start_Time)} to ${formatTime(conflictingBooking.End_Time)}`
+        error: `Time conflict with existing approved booking from ${formatTime(conflictingApprovedBooking.Start_Time)} to ${formatTime(conflictingApprovedBooking.End_Time)}`
       });
     }
+
+    const conflictingPendingBookings = await prisma.Booked_Room.findMany({
+      where: {
+        Room_ID: roomId,
+        Status: 'PENDING',
+        Start_Time: { lt: requestedEnd },
+        End_Time: { gt: requestedStart }
+      },
+      include: {
+        Room: true,
+        User: { select: { User_ID: true, First_Name: true, Last_Name: true, Email: true } }
+      }
+    });
 
     // Format time display for notification message
     const formatTime = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     const formatDate = (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
-    // Create 'APPROVED' booking to persist the availability
-    const booking = await prisma.Booked_Room.create({
-      data: {
-        User_ID: req.user.User_ID,
-        Room_ID: roomId,
-        Start_Time: requestedStart,
-        End_Time: requestedEnd,
-        Status: 'APPROVED',
-        Purpose: 'Student Usage',
-        Notes: notes || 'Opened for student usage by Lab Head/Tech',
-        Approved_By: req.user.User_ID,
-        Created_At: new Date(),
-        Updated_At: new Date()
-      }
+    const autoRejectNote = `Automatically rejected because ${room.Name} was opened for computer use queue from ${formatTime(requestedStart)} to ${formatTime(requestedEnd)} on ${formatDate(requestedStart)}.`;
+
+    const { booking, rejectedBookings } = await prisma.$transaction(async (tx) => {
+      const rejectedBookings = await Promise.all(conflictingPendingBookings.map((pendingBooking) =>
+        tx.Booked_Room.update({
+          where: { Booked_Room_ID: pendingBooking.Booked_Room_ID },
+          data: {
+            Status: 'REJECTED',
+            Notes: pendingBooking.Notes
+              ? `${pendingBooking.Notes}\n${autoRejectNote}`
+              : autoRejectNote,
+            Updated_At: new Date()
+          },
+          include: {
+            Room: true,
+            User: { select: { User_ID: true, First_Name: true, Last_Name: true, Email: true } },
+            Approver: {
+              select: {
+                User_ID: true,
+                First_Name: true,
+                Last_Name: true,
+                User_Role: true
+              }
+            }
+          }
+        })
+      ));
+
+      // Create 'APPROVED' booking to persist the availability
+      const booking = await tx.Booked_Room.create({
+        data: {
+          User_ID: req.user.User_ID,
+          Room_ID: roomId,
+          Start_Time: requestedStart,
+          End_Time: requestedEnd,
+          Status: 'APPROVED',
+          Purpose: 'Student Usage',
+          Notes: notes || 'Opened for student usage by Lab Head/Tech',
+          Approved_By: req.user.User_ID,
+          Created_At: new Date(),
+          Updated_At: new Date()
+        }
+      });
+
+      return { booking, rejectedBookings };
     });
+
+    for (const rejectedBooking of rejectedBookings) {
+      const rejectMessage = `Your booking for ${room.Name} was rejected because the room was opened for computer use queue.`;
+
+      await AuditLogger.logBooking(
+        req.user.User_ID,
+        'BOOKING_REJECTED',
+        rejectedBooking.Booked_Room_ID,
+        rejectMessage,
+        null,
+        rejectedBooking.User_ID
+      );
+
+      NotificationManager.send(rejectedBooking.User_ID, {
+        type: 'BOOKING_REJECTED',
+        category: 'BOOKING_UPDATE',
+        timestamp: new Date().toISOString(),
+        message: rejectMessage,
+        booking: {
+          id: rejectedBooking.Booked_Room_ID,
+          roomId: rejectedBooking.Room_ID,
+          status: rejectedBooking.Status,
+          startTime: rejectedBooking.Start_Time,
+          endTime: rejectedBooking.End_Time
+        }
+      });
+    }
+
+    if (rejectedBookings.length > 0) {
+      await NotificationManager.broadcastBookingEvent('BOOKING_REJECTED', rejectedBookings[0], ['LAB_HEAD', 'LAB_TECH']);
+    }
 
     const message = `${room.Name} is now available for student use from ${formatTime(requestedStart)} to ${formatTime(requestedEnd)} on ${formatDate(requestedStart)}`;
 
@@ -357,7 +433,13 @@ const setStudentAvailability = async (req, res) => {
         startTime: requestedStart.toISOString(),
         endTime: requestedEnd.toISOString(),
         auditLogId: auditLog?.Log_ID,
-        bookingId: booking.Booked_Room_ID
+        bookingId: booking.Booked_Room_ID,
+        rejectedBookings: rejectedBookings.map((rejectedBooking) => ({
+          id: rejectedBooking.Booked_Room_ID,
+          userId: rejectedBooking.User_ID,
+          startTime: rejectedBooking.Start_Time,
+          endTime: rejectedBooking.End_Time
+        }))
       }
     });
   } catch (error) {

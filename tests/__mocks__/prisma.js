@@ -38,6 +38,11 @@ const mockPrisma = {
     create: jest.fn(),
     update: jest.fn(),
   },
+  Schedule: {
+    findMany: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+  },
   ticket: {
     findUnique: jest.fn(),
     findMany: jest.fn(),

@@ -204,7 +204,8 @@ class AuditLogger {
             notifyRole,
             notifyUserId,
             bookedRoomId,
-            details
+            details,
+            notificationData: notifyUserId ? { targetUserId: notifyUserId } : null
         });
     }
 

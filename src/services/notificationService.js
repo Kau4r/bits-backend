@@ -111,6 +111,7 @@ class NotificationService {
       'ITEM_RETURNED': 'BORROWING',
       'ROOM_BOOKED': 'BOOKING',
       'BOOKING_APPROVED': 'BOOKING',
+      'BOOKING_REJECTED': 'BOOKING',
       'BOOKING_CANCELLED': 'BOOKING',
       'TICKET_CREATED': 'TICKET',
 
@@ -150,6 +151,13 @@ class NotificationService {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
             Booked_Room: {
               User_ID: userId
+            }
+          },
+          {
+            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
             }
           },
           // Borrow request approvals/rejections (filtered by target user)
@@ -243,7 +251,8 @@ class NotificationService {
             User_ID: userId
           },
           select: {
-            Read_At: true
+            Read_At: true,
+            Archived_At: true
           }
         }
       }
@@ -262,6 +271,7 @@ class NotificationService {
         ...n,
         // If we found a read record for this user, use its timestamp, otherwise null
         Notification_Read_At: readRecord ? readRecord.Read_At : null,
+        Notification_Archived_At: readRecord ? readRecord.Archived_At : null,
         // Remove the helper relation from the final output if desirable, 
         // though keeping it doesn't hurt much.
         NotificationReads: undefined
@@ -298,6 +308,41 @@ class NotificationService {
     }
   }
 
+  static async archive(notificationId, userId) {
+    const now = new Date();
+    return await prisma.NotificationRead.upsert({
+      where: {
+        User_ID_Log_ID: {
+          User_ID: userId,
+          Log_ID: notificationId
+        }
+      },
+      update: {
+        Archived_At: now
+      },
+      create: {
+        User_ID: userId,
+        Log_ID: notificationId,
+        Read_At: now,
+        Archived_At: now
+      }
+    });
+  }
+
+  static async restore(notificationId, userId) {
+    return await prisma.NotificationRead.update({
+      where: {
+        User_ID_Log_ID: {
+          User_ID: userId,
+          Log_ID: notificationId
+        }
+      },
+      data: {
+        Archived_At: null
+      }
+    });
+  }
+
   // Mark all notifications as read for a user
   static async markAllAsRead(userId) {
     // 1. Get all unread notifications for this user (reusing getUserNotifications logic partly)
@@ -321,6 +366,13 @@ class NotificationService {
           {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
             Booked_Room: { User_ID: userId }
+          },
+          {
+            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           },
           // Borrow request approvals/rejections (filtered by target user)
           {
@@ -408,6 +460,13 @@ class NotificationService {
           {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
             Booked_Room: { User_ID: userId }
+          },
+          {
+            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
+            Notification_Data: {
+              path: ['targetUserId'],
+              equals: userId
+            }
           },
           // Borrow request approvals/rejections (filtered by target user)
           {

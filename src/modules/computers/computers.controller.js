@@ -72,10 +72,15 @@ const createComputer = async (req, res) => {
                 if (item.itemId) {
                     // Link existing item to this computer
                     itemsToConnect.push({ Item_ID: item.itemId });
-                    // Update item status to IN_USE
+                    // Keep inventory status valid; the computer relation already removes it
+                    // from the available component picker.
                     await prisma.item.update({
                         where: { Item_ID: item.itemId },
-                        data: { Status: 'IN_USE' }
+                        data: {
+                            Room_ID: roomId || null,
+                            IsBorrowable: false,
+                            Updated_At: new Date()
+                        }
                     });
                 } else if (item.brand || item.serialNumber) {
                     // Create new item (legacy support - deprecated)
@@ -85,7 +90,7 @@ const createComputer = async (req, res) => {
                         Item_Type: item.itemType,
                         Brand: item.brand || null,
                         Serial_Number: item.serialNumber || null,
-                        Status: 'IN_USE',
+                        Status: 'AVAILABLE',
                         Room_ID: roomId || null,
                         IsBorrowable: false,
                     });
@@ -177,10 +182,12 @@ const updateComputer = async (req, res) => {
                             Item_Type: item.itemType,
                             Brand: item.brand || null,
                             Serial_Number: item.serialNumber || null,
-                            Status: 'IN_USE',
-                            Computer_ID: computerId,
+                            Status: 'AVAILABLE',
                             Room_ID: computer.Room_ID || null,
                             IsBorrowable: false,
+                            Computer: {
+                                connect: { Computer_ID: computerId }
+                            }
                         }
                     });
                 }

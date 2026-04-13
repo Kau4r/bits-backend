@@ -7,6 +7,8 @@ const {
   getUnreadCount,
   markAsRead,
   markAllAsRead,
+  archiveNotification,
+  restoreNotification,
   getNotificationById
 } = require('./notifications.controller');
 
@@ -21,6 +23,11 @@ router.patch('/:id/read', authenticateToken, asyncHandler(markAsRead));
 
 // Mark all notifications as read
 router.post('/mark-all-read', authenticateToken, asyncHandler(markAllAsRead));
+router.patch('/read-all', authenticateToken, asyncHandler(markAllAsRead));
+
+// Archive / restore notification
+router.patch('/:id/archive', authenticateToken, asyncHandler(archiveNotification));
+router.patch('/:id/restore', authenticateToken, asyncHandler(restoreNotification));
 
 // Get notification by ID
 router.get('/:id', authenticateToken, asyncHandler(getNotificationById));

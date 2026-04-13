@@ -29,6 +29,33 @@ const upload = multer({
     }
 });
 
+const getUploadDir = () => path.join(__dirname, '../../../uploads');
+
+const sanitizeDownloadName = (value) => {
+    if (!value || typeof value !== 'string') return null;
+    return path.basename(value.replace(/[\r\n"]/g, '').trim()) || null;
+};
+
+// GET /api/upload/files/:filename - Serve uploaded form files through the API proxy
+router.get('/files/:filename', (req, res) => {
+    const storedFilename = path.basename(req.params.filename || '');
+    if (!storedFilename) {
+        return res.status(400).json({ success: false, error: 'Filename is required' });
+    }
+
+    const filePath = path.join(getUploadDir(), storedFilename);
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ success: false, error: 'File not found' });
+    }
+
+    if (req.query.download === '1') {
+        const downloadName = sanitizeDownloadName(req.query.name) || storedFilename;
+        return res.download(filePath, downloadName);
+    }
+
+    return res.sendFile(filePath);
+});
+
 // POST /api/upload - Upload a single file
 router.post('/', authenticateToken, upload.single('file'), (req, res) => {
     try {
@@ -36,8 +63,7 @@ router.post('/', authenticateToken, upload.single('file'), (req, res) => {
             return res.status(400).json({ success: false, error: 'No file uploaded' });
         }
 
-        // Return the file URL (relative to server root, to be served statically)
-        const fileUrl = `/uploads/${req.file.filename}`;
+        const fileUrl = `/upload/files/${req.file.filename}`;
 
         res.json({
             success: true,

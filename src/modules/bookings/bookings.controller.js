@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const NotificationService = require('../../services/notificationService');
 const NotificationManager = require('../../services/notificationManager');
 const AuditLogger = require('../../utils/auditLogger');
+const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
 
 // Create a new room booking
 const createBooking = async (req, res) => {
@@ -20,16 +21,12 @@ const createBooking = async (req, res) => {
             });
         }
 
-        // Get room with active schedules
+        // Get room with active recurring schedules
         const room = await prisma.room.findUnique({
             where: { Room_ID: parseInt(Room_ID) },
             include: {
                 Schedule: {
-                    where: {
-                        IsActive: true,
-                        Start_Time: { lte: new Date(End_Time) },
-                        End_Time: { gte: new Date(Start_Time) }
-                    }
+                    where: { IsActive: true }
                 }
             }
         });
@@ -46,21 +43,12 @@ const createBooking = async (req, res) => {
             });
         }
 
-        // Check for any schedule conflicts
-        const hasConflict = room.Schedule.some(schedule => {
-            const scheduleStart = new Date(schedule.Start_Time);
-            const scheduleEnd = new Date(schedule.End_Time);
-            const bookingStart = new Date(Start_Time);
-            const bookingEnd = new Date(End_Time);
-
-            // Check if booking time overlaps with any schedule
-            return (bookingStart < scheduleEnd && bookingEnd > scheduleStart);
-        });
-
-        if (hasConflict) {
+        // Check for any recurring class schedule conflicts
+        const conflictingSchedule = findScheduleConflict(room.Schedule, Start_Time, End_Time);
+        if (conflictingSchedule) {
             return res.status(409).json({
                 success: false, error: 'Time conflict with existing schedule',
-                details: 'The requested time conflicts with an existing schedule'
+                details: `The requested time conflicts with ${conflictingSchedule.Title} from ${formatScheduleTime(conflictingSchedule.Start_Time)} to ${formatScheduleTime(conflictingSchedule.End_Time)}`
             });
         }
 
@@ -231,6 +219,18 @@ const updateBooking = async (req, res) => {
         const newEnd = updateData.End_Time || existingBooking.End_Time;
         const newRoom = updateData.Room_ID || existingBooking.Room_ID;
 
+        const activeSchedules = await prisma.Schedule.findMany({
+            where: { Room_ID: newRoom, IsActive: true }
+        });
+        const conflictingSchedule = findScheduleConflict(activeSchedules, newStart, newEnd);
+        if (conflictingSchedule) {
+            return res.status(409).json({
+                success: false,
+                error: 'Time conflict with existing schedule',
+                details: `The requested time conflicts with ${conflictingSchedule.Title} from ${formatScheduleTime(conflictingSchedule.Start_Time)} to ${formatScheduleTime(conflictingSchedule.End_Time)}`
+            });
+        }
+
         const conflictingBooking = await prisma.Booked_Room.findFirst({
             where: {
                 Room_ID: newRoom,
@@ -354,6 +354,20 @@ const updateBookingStatus = async (req, res) => {
             ...(notes && { Notes: notes })
         };
 
+        if (status === 'APPROVED') {
+            const activeSchedules = await prisma.Schedule.findMany({
+                where: { Room_ID: existingBooking.Room_ID, IsActive: true }
+            });
+            const conflictingSchedule = findScheduleConflict(activeSchedules, existingBooking.Start_Time, existingBooking.End_Time);
+            if (conflictingSchedule) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'Time conflict with existing schedule',
+                    details: `This booking conflicts with ${conflictingSchedule.Title} from ${formatScheduleTime(conflictingSchedule.Start_Time)} to ${formatScheduleTime(conflictingSchedule.End_Time)}`
+                });
+            }
+        }
+
         const booking = await prisma.Booked_Room.update({
             where: { Booked_Room_ID: parseInt(id) },
             data: updateData,
@@ -443,8 +457,8 @@ const getAvailableRooms = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Start time and end time are required' });
         }
 
-        // Find all rooms that have no conflicting bookings
-        const availableRooms = await prisma.$queryRaw`
+        // Find all rooms that have no conflicting approved bookings
+        const roomsWithoutBookingConflicts = await prisma.$queryRaw`
             SELECT r.*
             FROM "Room" r
             WHERE r."Capacity" >= COALESCE(${parseInt(capacity) || 1}, 1)
@@ -458,6 +472,25 @@ const getAvailableRooms = async (req, res) => {
             )
             ORDER BY r."Capacity" ASC
         `;
+
+        if (roomsWithoutBookingConflicts.length === 0) {
+            return res.json({ success: true, data: [] });
+        }
+
+        const schedules = await prisma.Schedule.findMany({
+            where: {
+                IsActive: true,
+                Room_ID: { in: roomsWithoutBookingConflicts.map(room => room.Room_ID) }
+            }
+        });
+        const schedulesByRoom = schedules.reduce((acc, schedule) => {
+            if (!acc.has(schedule.Room_ID)) acc.set(schedule.Room_ID, []);
+            acc.get(schedule.Room_ID).push(schedule);
+            return acc;
+        }, new Map());
+        const availableRooms = roomsWithoutBookingConflicts.filter(room =>
+            !findScheduleConflict(schedulesByRoom.get(room.Room_ID) || [], startTime, endTime)
+        );
 
         res.json({ success: true, data: availableRooms });
     } catch (error) {

@@ -21,7 +21,7 @@ router.get('/', asyncHandler(getItems));
 router.get('/available', asyncHandler(getAvailableItems));
 
 // Get item by code
-router.get('/code/:itemCode', asyncHandler(getItemByCode));
+router.get('/code/:itemCode', authenticateToken, authorize('LAB_HEAD', 'LAB_TECH'), asyncHandler(getItemByCode));
 
 // Get item by ID
 router.get('/:id', asyncHandler(getItemById));

@@ -1,6 +1,17 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
 
+const normalizeItemType = (value = 'GENERAL') => {
+  if (typeof value !== 'string') return null;
+
+  const normalized = value.trim().replace(/[\s-]+/g, '_').toUpperCase();
+  if (!normalized || normalized.length > 50 || !/^[A-Z0-9_]+$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+};
+
 // Helper function to check user role (kept for backward compatibility)
 const checkUserRole = async (userId, allowedRoles) => {
   return { authorized: true };
@@ -156,10 +167,9 @@ const createItem = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Item with this code already exists' });
     }
 
-    // Validate Item_Type against available enums (must match Prisma schema)
-    const validItemTypes = ['HDMI', 'VGA', 'ADAPTER', 'PROJECTOR', 'EXTENSION', 'MOUSE', 'KEYBOARD', 'MONITOR', 'GENERAL', 'OTHER'];
-    if (!validItemTypes.includes(Item_Type)) {
-      return res.status(400).json({ success: false, error: `Invalid Item_Type. Must be one of: ${validItemTypes.join(', ')}` });
+    const normalizedItemType = normalizeItemType(Item_Type);
+    if (!normalizedItemType) {
+      return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
     }
 
     // Create the item
@@ -167,7 +177,7 @@ const createItem = async (req, res) => {
     const itemData = {
       User: { connect: { User_ID: parseInt(creatorId) } },
       Item_Code,
-      Item_Type,
+      Item_Type: normalizedItemType,
       Brand: Brand || null,
       Serial_Number: Serial_Number || null,
       Status,
@@ -196,7 +206,7 @@ const createItem = async (req, res) => {
     await AuditLogger.log(
       req.user.User_ID,
       'ITEM_CREATED',
-      `Created item ${Item_Code} (${Item_Type})`
+      `Created item ${Item_Code} (${normalizedItemType})`
     );
 
     res.status(201).json({ success: true, data: item });
@@ -212,6 +222,13 @@ const updateItem = async (req, res) => {
 
     const itemId = parseInt(req.params.id);
     const updates = req.body;
+    if (updates.Item_Type !== undefined) {
+      const normalizedItemType = normalizeItemType(updates.Item_Type);
+      if (!normalizedItemType) {
+        return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
+      }
+      updates.Item_Type = normalizedItemType;
+    }
 
     // Check if item exists
     const existingItem = await prisma.item.findUnique({
@@ -299,7 +316,12 @@ const bulkCreateItems = async (req, res) => {
     const prefix = 'ITM';
 
     // First, get all unique item types and serial numbers in this batch
-    const itemTypes = [...new Set(items.map(item => item.Item_Type || 'GENERAL'))];
+    const invalidItem = items.find(item => !normalizeItemType(item.Item_Type || 'GENERAL'));
+    if (invalidItem) {
+      return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
+    }
+
+    const itemTypes = [...new Set(items.map(item => normalizeItemType(item.Item_Type || 'GENERAL')))];
     const serialNumbers = items.map(item => item.Serial_Number).filter(Boolean);
 
     // Check for duplicate serial numbers in the current batch
@@ -363,7 +385,7 @@ const bulkCreateItems = async (req, res) => {
 
     // Prepare item data with generated codes
     const itemData = items.map(item => {
-      const itemType = item.Item_Type || 'GENERAL';
+      const itemType = normalizeItemType(item.Item_Type || 'GENERAL');
       const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
 
       // Initialize counter for this item type if not exists

@@ -44,7 +44,7 @@ model Item {
   Item_ID       Int           @id @default(autoincrement())
   User_ID       Int?
   Item_Code     String        @unique
-  Item_Type     ItemType      @default(GENERAL)
+  Item_Type     String        @default("GENERAL")
   Brand         String?
   Serial_Number String?
   Status        ItemStatus
@@ -211,12 +211,13 @@ model Audit_Log {
 }
 
 model NotificationRead {
-  Read_ID   Int       @id @default(autoincrement())
-  User_ID   Int
-  Log_ID    Int
-  Read_At   DateTime  @default(now())
-  Audit_Log Audit_Log @relation(fields: [Log_ID], references: [Log_ID])
-  User      User      @relation(fields: [User_ID], references: [User_ID])
+  Read_ID     Int       @id @default(autoincrement())
+  User_ID     Int
+  Log_ID      Int
+  Read_At     DateTime  @default(now())
+  Archived_At DateTime?
+  Audit_Log   Audit_Log @relation(fields: [Log_ID], references: [Log_ID])
+  User        User      @relation(fields: [User_ID], references: [User_ID])
 
   @@unique([User_ID, Log_ID])
 }
@@ -380,20 +381,6 @@ enum ItemStatus {
   DEFECTIVE
   LOST
   REPLACED
-}
-
-enum ItemType {
-  HDMI
-  VGA
-  ADAPTER
-  PROJECTOR
-  EXTENSION
-  MOUSE
-  KEYBOARD
-  MONITOR
-  SYSTEM_UNIT
-  GENERAL
-  OTHER
 }
 
 enum ComputerStatus {

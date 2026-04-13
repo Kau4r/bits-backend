@@ -98,10 +98,10 @@ const inventorySchemas = {
     create: Joi.object({
         User_ID: Joi.number().integer().positive(),
         Item_Code: Joi.string().max(50).allow('', null),
-        Item_Type: Joi.string().valid('GENERAL', 'COMPUTER', 'EQUIPMENT', 'FURNITURE', 'CONSUMABLE').required(),
+        Item_Type: Joi.string().trim().min(1).max(50).pattern(/^[A-Za-z0-9 _-]+$/).required(),
         Brand: Joi.string().max(100).allow('', null),
         Serial_Number: Joi.string().max(100).allow('', null),
-        Status: Joi.string().valid('AVAILABLE', 'IN_USE', 'MAINTENANCE', 'RETIRED').default('AVAILABLE'),
+        Status: Joi.string().valid('AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED').default('AVAILABLE'),
         Room_ID: Joi.number().integer().positive().allow(null),
         Item_Name: Joi.string().max(200).allow('', null),
         Description: Joi.string().max(500).allow('', null)
@@ -109,10 +109,10 @@ const inventorySchemas = {
 
     update: Joi.object({
         Item_Code: Joi.string().max(50),
-        Item_Type: Joi.string().valid('GENERAL', 'COMPUTER', 'EQUIPMENT', 'FURNITURE', 'CONSUMABLE'),
+        Item_Type: Joi.string().trim().min(1).max(50).pattern(/^[A-Za-z0-9 _-]+$/),
         Brand: Joi.string().max(100).allow('', null),
         Serial_Number: Joi.string().max(100).allow('', null),
-        Status: Joi.string().valid('AVAILABLE', 'IN_USE', 'MAINTENANCE', 'RETIRED'),
+        Status: Joi.string().valid('AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED'),
         Room_ID: Joi.number().integer().positive().allow(null),
         Item_Name: Joi.string().max(200).allow('', null),
         Description: Joi.string().max(500).allow('', null)
@@ -120,10 +120,10 @@ const inventorySchemas = {
 
     bulk: Joi.object({
         items: Joi.array().items(Joi.object({
-            Item_Type: Joi.string().valid('GENERAL', 'COMPUTER', 'EQUIPMENT', 'FURNITURE', 'CONSUMABLE').required(),
+            Item_Type: Joi.string().trim().min(1).max(50).pattern(/^[A-Za-z0-9 _-]+$/).required(),
             Brand: Joi.string().max(100).allow('', null),
             Serial_Number: Joi.string().max(100).allow('', null),
-            Status: Joi.string().valid('AVAILABLE', 'IN_USE', 'MAINTENANCE', 'RETIRED').default('AVAILABLE'),
+            Status: Joi.string().valid('AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED').default('AVAILABLE'),
             Room_ID: Joi.number().integer().positive().allow(null),
             Item_Name: Joi.string().max(200).allow('', null)
         })).min(1).required(),

@@ -74,16 +74,50 @@ const markAsRead = async (req, res) => {
 // Mark all notifications as read
 const markAllAsRead = async (req, res) => {
   try {
-    await NotificationService.markAllAsRead(req.user.User_ID);
+    const result = await NotificationService.markAllAsRead(req.user.User_ID);
     res.json({
       success: true,
-      data: { message: 'All notifications marked as read' },
+      data: { message: 'All notifications marked as read', count: result?.count || 0 },
     });
   } catch (error) {
     console.error('Error marking all notifications as read:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to mark all notifications as read',
+    });
+  }
+};
+
+const archiveNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await NotificationService.archive(parseInt(id), req.user.User_ID);
+    res.json({
+      success: true,
+      data: { message: 'Notification archived' },
+    });
+  } catch (error) {
+    console.error('Error archiving notification:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to archive notification',
+    });
+  }
+};
+
+const restoreNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await NotificationService.restore(parseInt(id), req.user.User_ID);
+    res.json({
+      success: true,
+      data: { message: 'Notification restored' },
+    });
+  } catch (error) {
+    console.error('Error restoring notification:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to restore notification',
     });
   }
 };
@@ -139,5 +173,7 @@ module.exports = {
   getUnreadCount,
   markAsRead,
   markAllAsRead,
+  archiveNotification,
+  restoreNotification,
   getNotificationById
 };

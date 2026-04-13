@@ -114,6 +114,7 @@ app.use('/computers', require('./modules/computers/computers.routes'));
 app.use('/borrowing', require('./modules/borrowing/borrowing.routes'));
 app.use('/notifications', require('./modules/notifications/notifications.routes'));
 app.use('/forms', require('./modules/forms/forms.routes'));
+app.use('/schedules', require('./modules/schedules/schedules.routes'));
 app.use('/upload', require('./modules/upload/upload.routes'));
 app.use('/dashboard', require('./modules/dashboard/dashboard.routes'));
 app.use('/heartbeat', require('./modules/heartbeat/heartbeat.routes'));
