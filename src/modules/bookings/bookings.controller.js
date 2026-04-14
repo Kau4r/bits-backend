@@ -82,7 +82,13 @@ const createBooking = async (req, res) => {
                 }
             });
         }
+        const requestingUser = await prisma.user.findUnique({
+            where: { User_ID: parseInt(User_ID) },
+            select: { User_Role: true }
+        });
 
+        const isLabHead = requestingUser?.User_Role?.toUpperCase() === 'LAB_HEAD';
+        const bookingStatus = isLabHead ? 'APPROVED' : 'PENDING';
         // Create the booking with PENDING status
         const booking = await prisma.Booked_Room.create({
             data: {
@@ -90,7 +96,8 @@ const createBooking = async (req, res) => {
                 Room_ID: parseInt(Room_ID),
                 Start_Time: new Date(Start_Time),
                 End_Time: new Date(End_Time),
-                Status: 'PENDING',
+                Status: bookingStatus,
+                Approved_By: isLabHead ? parseInt(User_ID) : null,
                 Purpose: Purpose || '',
                 Created_At: new Date()
             },
