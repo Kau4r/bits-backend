@@ -6,6 +6,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const {
   getRooms,
   getRoomById,
+  getOpenedLabs,
   createRoom,
   updateRoom,
   deleteRoom,
@@ -13,6 +14,7 @@ const {
 } = require('./rooms.controller');
 
 router.get('/', asyncHandler(getRooms));
+router.get('/opened-labs', authenticateToken, authorize('STUDENT', 'LAB_HEAD', 'LAB_TECH', 'ADMIN'), asyncHandler(getOpenedLabs));
 router.get('/:id', asyncHandler(getRoomById));
 router.post('/', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(createRoom));
 router.put('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(updateRoom));

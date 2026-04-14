@@ -71,6 +71,71 @@ const getRoomById = async (req, res) => {
   }
 };
 
+// Get lab rooms currently or next opened for student usage.
+const getOpenedLabs = async (req, res) => {
+  try {
+    const now = new Date();
+
+    const rooms = await prisma.Room.findMany({
+      where: {
+        Room_Type: 'LAB',
+        Status: { notIn: ['MAINTENANCE', 'CLOSED'] },
+        Booked_Rooms: {
+          some: {
+            Status: 'APPROVED',
+            Purpose: 'Student Usage',
+            End_Time: { gt: now }
+          }
+        }
+      },
+      include: {
+        Booked_Rooms: {
+          where: {
+            Status: 'APPROVED',
+            Purpose: 'Student Usage',
+            End_Time: { gt: now }
+          },
+          include: {
+            User: {
+              select: {
+                User_ID: true,
+                First_Name: true,
+                Last_Name: true
+              }
+            }
+          },
+          orderBy: {
+            Start_Time: 'asc'
+          }
+        }
+      },
+      orderBy: {
+        Name: 'asc'
+      }
+    });
+
+    const openedLabs = rooms
+      .map(room => {
+        const nextBooking = room.Booked_Rooms[0];
+        return {
+          ...room,
+          Opened_At: nextBooking?.Created_At || nextBooking?.Start_Time || null,
+          Opened_By_User: nextBooking?.User || null
+        };
+      })
+      .sort((a, b) => {
+        const aStart = a.Booked_Rooms[0]?.Start_Time ? new Date(a.Booked_Rooms[0].Start_Time).getTime() : 0;
+        const bStart = b.Booked_Rooms[0]?.Start_Time ? new Date(b.Booked_Rooms[0].Start_Time).getTime() : 0;
+        return aStart - bStart;
+      });
+
+    res.json({ success: true, data: openedLabs });
+  } catch (error) {
+    console.error('Error fetching opened labs:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch opened laboratories' });
+  }
+};
+
 // Create room
 const createRoom = async (req, res) => {
 
@@ -451,6 +516,7 @@ const setStudentAvailability = async (req, res) => {
 module.exports = {
   getRooms,
   getRoomById,
+  getOpenedLabs,
   createRoom,
   updateRoom,
   deleteRoom,
