@@ -251,7 +251,7 @@ const updateForm = async (req, res) => {
     }
 
     try {
-        const { status, approverId, title, content, requesterName, remarks } = req.body;
+        const { status, approverId, title, content, requesterName, remarks, fileName, fileUrl, fileType } = req.body;
 
         const updateData = {};
         let action = 'FORM_UPDATED';
@@ -288,6 +288,18 @@ const updateForm = async (req, res) => {
 
         if (remarks !== undefined) {
             updateData.Remarks = remarks || null;
+        }
+
+        if (fileName !== undefined) {
+            updateData.File_Name = fileName || null;
+        }
+
+        if (fileUrl !== undefined) {
+            updateData.File_URL = fileUrl || null;
+        }
+
+        if (fileType !== undefined) {
+            updateData.File_Type = fileType || null;
         }
 
         const form = await prisma.Form.update({
