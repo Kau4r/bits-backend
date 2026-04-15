@@ -1,5 +1,27 @@
 const prisma = require('../../lib/prisma');
 
+const VALID_COMPUTER_STATUSES = ['AVAILABLE', 'IN_USE', 'MAINTENANCE', 'DECOMMISSIONED'];
+
+const buildComputerInclude = () => ({
+    Room: {
+        select: {
+            Room_ID: true,
+            Name: true,
+            Room_Type: true,
+        }
+    },
+    Item: {
+        select: {
+            Item_ID: true,
+            Item_Code: true,
+            Item_Type: true,
+            Brand: true,
+            Serial_Number: true,
+            Status: true,
+        }
+    }
+});
+
 // GET /api/computers - Fetch all computers (optionally filtered by roomId)
 const getComputers = async (req, res) => {
     try {
@@ -50,40 +72,87 @@ const createComputer = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Computer name is required' });
         }
 
-        // Create computer with items
-        const computer = await prisma.computer.create({
-            data: {
-                Name: name.trim(),
-                Room_ID: roomId || null,
-                Status: status || 'AVAILABLE',
-            },
-            include: {
-                Room: true,
-                Item: true,
-            }
-        });
+        const normalizedStatus = status || 'AVAILABLE';
+        if (!VALID_COMPUTER_STATUSES.includes(normalizedStatus)) {
+            return res.status(400).json({ success: false, error: 'Invalid computer status' });
+        }
 
-        // Link or create items
-        if (items && items.length > 0) {
+        const parsedRoomId = roomId === undefined || roomId === null || roomId === ''
+            ? null
+            : parseInt(roomId, 10);
+
+        if (parsedRoomId !== null && Number.isNaN(parsedRoomId)) {
+            return res.status(400).json({ success: false, error: 'Invalid room ID' });
+        }
+
+        const incomingItems = Array.isArray(items) ? items : [];
+        const itemIds = incomingItems
+            .filter(item => item?.itemId)
+            .map(item => parseInt(item.itemId, 10));
+
+        if (itemIds.some(Number.isNaN)) {
+            return res.status(400).json({ success: false, error: 'Invalid item selected' });
+        }
+
+        if (new Set(itemIds).size !== itemIds.length) {
+            return res.status(400).json({ success: false, error: 'Duplicate component selected' });
+        }
+
+        const updatedComputer = await prisma.$transaction(async (tx) => {
+            if (parsedRoomId !== null) {
+                const room = await tx.room.findUnique({ where: { Room_ID: parsedRoomId } });
+                if (!room) {
+                    const error = new Error('Room not found');
+                    error.statusCode = 404;
+                    throw error;
+                }
+            }
+
             const itemsToConnect = [];
             const itemsToCreate = [];
 
-            for (const item of items) {
-                if (item.itemId) {
-                    // Link existing item to this computer
-                    itemsToConnect.push({ Item_ID: item.itemId });
-                    // Keep inventory status valid; the computer relation already removes it
-                    // from the available component picker.
-                    await prisma.item.update({
-                        where: { Item_ID: item.itemId },
-                        data: {
-                            Room_ID: roomId || null,
-                            IsBorrowable: false,
-                            Updated_At: new Date()
-                        }
-                    });
-                } else if (item.brand || item.serialNumber) {
-                    // Create new item (legacy support - deprecated)
+            if (itemIds.length > 0) {
+                const foundItems = await tx.item.findMany({
+                    where: { Item_ID: { in: itemIds } },
+                    include: {
+                        Computer: { select: { Computer_ID: true, Name: true } }
+                    }
+                });
+
+                if (foundItems.length !== itemIds.length) {
+                    const error = new Error('One or more selected components no longer exist');
+                    error.statusCode = 400;
+                    throw error;
+                }
+
+                for (const requestedItem of incomingItems.filter(item => item?.itemId)) {
+                    const itemId = parseInt(requestedItem.itemId, 10);
+                    const foundItem = foundItems.find(item => item.Item_ID === itemId);
+
+                    if (foundItem.Status !== 'AVAILABLE') {
+                        const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is not available`);
+                        error.statusCode = 400;
+                        throw error;
+                    }
+
+                    if (foundItem.Computer.length > 0) {
+                        const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is already assigned to ${foundItem.Computer[0].Name}`);
+                        error.statusCode = 400;
+                        throw error;
+                    }
+
+                    if (requestedItem.itemType && foundItem.Item_Type !== requestedItem.itemType) {
+                        const error = new Error(`${foundItem.Item_Code} is not a ${requestedItem.itemType.replace('_', ' ').toLowerCase()}`);
+                        error.statusCode = 400;
+                        throw error;
+                    }
+
+                    itemsToConnect.push({ Item_ID: itemId });
+                }
+            }
+
+            for (const item of incomingItems) {
+                if (!item.itemId && (item.brand || item.serialNumber)) {
                     const itemCode = `${item.itemType}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
                     itemsToCreate.push({
                         Item_Code: itemCode,
@@ -91,54 +160,47 @@ const createComputer = async (req, res) => {
                         Brand: item.brand || null,
                         Serial_Number: item.serialNumber || null,
                         Status: 'AVAILABLE',
-                        Room_ID: roomId || null,
+                        Room_ID: parsedRoomId,
                         IsBorrowable: false,
                     });
                 }
             }
 
-            // Connect existing items and create new ones in a single update
-            if (itemsToConnect.length > 0 || itemsToCreate.length > 0) {
-                await prisma.computer.update({
-                    where: { Computer_ID: computer.Computer_ID },
+            const computer = await tx.computer.create({
+                data: {
+                    Name: name.trim(),
+                    Room_ID: parsedRoomId,
+                    Status: normalizedStatus,
+                    Updated_At: new Date(),
+                    Item: {
+                        ...(itemsToConnect.length > 0 && { connect: itemsToConnect }),
+                        ...(itemsToCreate.length > 0 && { create: itemsToCreate })
+                    }
+                },
+                include: buildComputerInclude()
+            });
+
+            if (itemIds.length > 0) {
+                await tx.item.updateMany({
+                    where: { Item_ID: { in: itemIds } },
                     data: {
-                        Item: {
-                            ...(itemsToConnect.length > 0 && { connect: itemsToConnect }),
-                            ...(itemsToCreate.length > 0 && { create: itemsToCreate })
-                        }
+                        Room_ID: parsedRoomId,
+                        IsBorrowable: false
                     }
                 });
             }
-        }
 
-        // Fetch updated computer with items
-        const updatedComputer = await prisma.computer.findUnique({
-            where: { Computer_ID: computer.Computer_ID },
-            include: {
-                Room: {
-                    select: {
-                        Room_ID: true,
-                        Name: true,
-                        Room_Type: true,
-                    }
-                },
-                Item: {
-                    select: {
-                        Item_ID: true,
-                        Item_Code: true,
-                        Item_Type: true,
-                        Brand: true,
-                        Serial_Number: true,
-                        Status: true,
-                    }
-                }
-            }
+            return computer;
         });
 
         res.status(201).json({ success: true, data: updatedComputer });
     } catch (error) {
+        const statusCode = error.statusCode || 500;
         console.error('Error creating computer:', error);
-        res.status(500).json({ success: false, error: 'Failed to create computer' });
+        res.status(statusCode).json({
+            success: false,
+            error: statusCode === 500 ? 'Failed to create computer' : error.message
+        });
     }
 };
 
@@ -153,6 +215,7 @@ const updateComputer = async (req, res) => {
         if (name !== undefined) updateData.Name = name.trim();
         if (roomId !== undefined) updateData.Room_ID = roomId;
         if (status !== undefined) updateData.Status = status;
+        updateData.Updated_At = new Date();
 
         const computer = await prisma.computer.update({
             where: { Computer_ID: computerId },

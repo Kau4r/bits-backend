@@ -17,6 +17,7 @@ const app = express();
 
 // Trust proxy (required behind reverse proxy for rate limiting)
 app.set('trust proxy', 1);
+app.set('etag', false);
 
 // ==================== SECURITY MIDDLEWARE ====================
 
@@ -82,6 +83,16 @@ app.use(cors({
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Dynamic API responses should not be browser-cached. Several frontend flows
+// immediately refetch after mutations, and a 304 response leaves Axios without
+// usable JSON data.
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
 
 // Apply general rate limiting
 app.use('/', generalLimiter);
