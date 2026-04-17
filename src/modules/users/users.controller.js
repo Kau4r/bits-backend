@@ -1,4 +1,5 @@
 const prisma = require('../../lib/prisma');
+const { normalizeRole } = require('../../middleware/authorize');
 
 // Get current authenticated user
 const getCurrentUser = async (req, res) => {
@@ -14,13 +15,31 @@ const getCurrentUser = async (req, res) => {
 const getUsers = async (req, res) => {
   try {
     const { active, role } = req.query;
+    const requesterRole = normalizeRole(req.user?.User_Role);
 
     const where = {};
+
+    if (requesterRole === 'ADMIN') {
+      if (role) {
+        const requestedRole = normalizeRole(role);
+        if (!requestedRole) {
+          return res.status(400).json({ success: false, error: 'Invalid role filter' });
+        }
+        where.User_Role = requestedRole;
+      }
+    } else if (requesterRole === 'LAB_HEAD') {
+      const requestedRole = normalizeRole(role);
+      if (role && requestedRole !== 'LAB_TECH') {
+        return res.status(403).json({ success: false, error: 'Lab Heads can only list Lab Tech users' });
+      }
+      where.User_Role = 'LAB_TECH';
+      where.Is_Active = true;
+    } else {
+      return res.status(403).json({ success: false, error: 'You do not have permission to list users' });
+    }
+
     if (active === 'true') {
       where.Is_Active = true;
-    }
-    if (role) {
-      where.User_Role = role;
     }
 
     const users = await prisma.user.findMany({
@@ -232,6 +251,11 @@ const deleteUser = async (req, res) => {
 const getUserHistory = async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
+    const requesterRole = normalizeRole(req.user?.User_Role);
+
+    if (requesterRole !== 'ADMIN' && req.user?.User_ID !== userId) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to view this user history' });
+    }
 
     // Get user to verify they exist
     const user = await prisma.User.findUnique({

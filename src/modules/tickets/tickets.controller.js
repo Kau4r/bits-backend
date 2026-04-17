@@ -1,5 +1,6 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
+const { normalizeRole } = require('../../middleware/authorize');
 
 const VALID_STATUSES = ['PENDING', 'IN_PROGRESS', 'RESOLVED'];
 const VALID_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH'];
@@ -98,7 +99,7 @@ const validateLabTechAssignment = async (technicianId) => {
   if (!targetTech) {
     return { error: 'Technician not found' };
   }
-  if (targetTech.User_Role !== 'LAB_TECH') {
+  if (normalizeRole(targetTech.User_Role) !== 'LAB_TECH') {
     return { error: 'Ticket must be assigned to a Lab Tech' };
   }
   if (!targetTech.Is_Active) {
@@ -112,11 +113,23 @@ const sendValidationError = (res, error) => {
   return res.status(400).json({ success: false, error });
 };
 
+const isTicketManagerRole = (role) => ['ADMIN', 'LAB_HEAD', 'LAB_TECH'].includes(normalizeRole(role));
+
+const canAccessTicket = (user, ticket) => {
+  if (!user) return false;
+  if (isTicketManagerRole(user.User_Role)) return true;
+  return ticket.Reported_By_ID === user.User_ID || ticket.Technician_ID === user.User_ID;
+};
+
 // Create Ticket
 const createTicket = async (req, res) => {
   try {
     const reporterResult = parseRequiredId(req.body.Reported_By_ID ?? req.user?.User_ID, 'Reported_By_ID');
     if (reporterResult.error) return sendValidationError(res, reporterResult.error);
+
+    if (req.user && !isTicketManagerRole(req.user.User_Role) && reporterResult.value !== req.user.User_ID) {
+      return res.status(403).json({ success: false, error: 'You can only create tickets for your own account' });
+    }
 
     const problemResult = normalizeRequiredText(req.body.Report_Problem, 'Report_Problem');
     if (problemResult.error) return sendValidationError(res, problemResult.error);
@@ -173,7 +186,7 @@ const createTicket = async (req, res) => {
 const getTicketCount = async (req, res) => {
   try {
     const { status } = req.query;
-    const where = {};
+    const where = { Archived: false };
 
     if (status) {
       const statusResult = normalizeOptionalEnum(status, 'status', VALID_STATUSES);
@@ -406,6 +419,10 @@ const getTicketById = async (req, res) => {
 
     if (!ticket) {
       return res.status(404).json({ success: false, error: 'Ticket not found' });
+    }
+
+    if (!canAccessTicket(req.user, ticket)) {
+      return res.status(403).json({ success: false, error: 'You do not have permission to view this ticket' });
     }
 
     res.json({ success: true, data: ticket });
