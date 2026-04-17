@@ -366,6 +366,7 @@ const updateForm = async (req, res) => {
                 return res.status(400).json({ success: false, error: 'Invalid status' });
             }
             updateData.Status = status;
+            updateData.Is_Archived = status === 'ARCHIVED';
 
             if (status === 'APPROVED') action = 'FORM_APPROVED';
             if (status === 'REJECTED') action = 'FORM_REJECTED';

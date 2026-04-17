@@ -258,6 +258,32 @@ describe('Form Routes', () => {
     });
   });
 
+  describe('PATCH /forms/:id', () => {
+    it('archives a form when status is changed to ARCHIVED', async () => {
+      prisma.Form.update.mockResolvedValue(createdForm({
+        Status: 'ARCHIVED',
+        Is_Archived: true,
+      }));
+
+      const res = await request(app)
+        .patch('/forms/1')
+        .send({ status: 'ARCHIVED' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.Status).toBe('ARCHIVED');
+      expect(res.body.data.Is_Archived).toBe(true);
+      expect(prisma.Form.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { Form_ID: 1 },
+          data: expect.objectContaining({
+            Status: 'ARCHIVED',
+            Is_Archived: true,
+          }),
+        })
+      );
+    });
+  });
+
   describe('POST /forms/:id/attachments', () => {
     it('adds a proof attachment to the current form department', async () => {
       const existingForm = createdForm({
