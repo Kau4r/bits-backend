@@ -112,7 +112,8 @@ const getComputers = async (req, res) => {
 // POST /api/computers - Create a new computer
 const createComputer = async (req, res) => {
     try {
-        const { name, roomId, status, items } = req.body;
+        const { name, roomId, status, items, isTeacher } = req.body;
+        const teacherFlag = Boolean(isTeacher);
 
         if (!name || !name.trim()) {
             return res.status(400).json({ success: false, error: 'Computer name is required' });
@@ -217,6 +218,7 @@ const createComputer = async (req, res) => {
                     Name: name.trim(),
                     Room_ID: parsedRoomId,
                     Status: normalizedStatus,
+                    Is_Teacher: teacherFlag,
                     Updated_At: new Date(),
                     Item: {
                         ...(itemsToConnect.length > 0 && { connect: itemsToConnect }),
@@ -233,6 +235,17 @@ const createComputer = async (req, res) => {
                         Room_ID: parsedRoomId,
                         IsBorrowable: false
                     }
+                });
+            }
+
+            if (teacherFlag && parsedRoomId !== null) {
+                await tx.computer.updateMany({
+                    where: {
+                        Room_ID: parsedRoomId,
+                        Computer_ID: { not: computer.Computer_ID },
+                        Is_Teacher: true,
+                    },
+                    data: { Is_Teacher: false },
                 });
             }
 
@@ -254,7 +267,7 @@ const createComputer = async (req, res) => {
 const updateComputer = async (req, res) => {
     try {
         const computerId = parseInt(req.params.id, 10);
-        const { name, roomId, status, items } = req.body;
+        const { name, roomId, status, items, isTeacher } = req.body;
 
         if (Number.isNaN(computerId)) {
             return res.status(400).json({ success: false, error: 'Invalid computer ID' });
@@ -287,6 +300,10 @@ const updateComputer = async (req, res) => {
             updateData.Status = status;
         }
 
+        if (isTeacher !== undefined) {
+            updateData.Is_Teacher = Boolean(isTeacher);
+        }
+
         updateData.Updated_At = new Date();
 
         const updatedComputer = await prisma.$transaction(async (tx) => {
@@ -314,6 +331,17 @@ const updateComputer = async (req, res) => {
                 where: { Computer_ID: computerId },
                 data: updateData,
             });
+
+            if (updateData.Is_Teacher === true && computer.Room_ID !== null) {
+                await tx.computer.updateMany({
+                    where: {
+                        Room_ID: computer.Room_ID,
+                        Computer_ID: { not: computer.Computer_ID },
+                        Is_Teacher: true,
+                    },
+                    data: { Is_Teacher: false },
+                });
+            }
 
             if (roomId !== undefined && existingComputer.Item.length > 0) {
                 await tx.item.updateMany({

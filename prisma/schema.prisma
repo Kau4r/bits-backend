@@ -283,6 +283,7 @@ model Computer {
   IP_Address        String?
   Last_Seen         DateTime?
   Is_Online         Boolean               @default(false)
+  Is_Teacher        Boolean               @default(false)
   Current_User_ID   Int?
   Borrowing_Comp    Borrowing_Comp[]
   Room              Room?                 @relation(fields: [Room_ID], references: [Room_ID])
@@ -293,6 +294,7 @@ model Computer {
   @@index([Is_Online])
   @@index([Last_Seen])
   @@index([Mac_Address])
+  @@index([Room_ID, Is_Teacher])
 }
 
 enum TicketStatus {
