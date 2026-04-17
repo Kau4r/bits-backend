@@ -151,14 +151,23 @@ describe('Form Routes', () => {
   });
 
   describe('POST /forms/:id/transfer', () => {
-    it('transfers a WRF form to PPFO and writes a history row', async () => {
+    it('transfers a WRF form to PPFO after Department Head has been visited', async () => {
+      const existingForm = createdForm({
+        Department: 'DEPARTMENT_HEAD',
+        History: [
+          { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Send to Department Head' },
+        ],
+      });
       const form = createdForm({
         Department: 'PPFO',
         History: [
           { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Send to Department Head' },
           { Department: 'PPFO', Notes: 'Send to PPFO' },
         ],
       });
+      prisma.Form.findUnique.mockResolvedValue(existingForm);
       prisma.Form.update.mockResolvedValue(form);
 
       const res = await request(app)
@@ -181,6 +190,40 @@ describe('Form Routes', () => {
           },
         })
       );
+    });
+
+    it('rejects a skipped WRF transfer when the previous workflow step has not been visited', async () => {
+      prisma.Form.findUnique.mockResolvedValue(createdForm({
+        Department: 'REQUESTOR',
+        History: [{ Department: 'REQUESTOR', Notes: 'Form created' }],
+      }));
+
+      const res = await request(app)
+        .post('/forms/1/transfer')
+        .send({ department: 'PPFO', notes: 'Skip Department Head' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Cannot transfer to PPFO before visiting DEPARTMENT_HEAD');
+      expect(prisma.Form.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a department that does not belong to the form type workflow', async () => {
+      prisma.Form.findUnique.mockResolvedValue(createdForm({
+        Form_Type: 'WRF',
+        Department: 'DEPARTMENT_HEAD',
+        History: [
+          { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Send to Department Head' },
+        ],
+      }));
+
+      const res = await request(app)
+        .post('/forms/1/transfer')
+        .send({ department: 'PURCHASING' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid department for WRF form');
+      expect(prisma.Form.update).not.toHaveBeenCalled();
     });
 
     it('rejects a legacy LABORATORY department with 400 instead of calling Prisma', async () => {

@@ -11,8 +11,57 @@ const VALID_FORM_DEPARTMENTS = [
     'COMPLETED'
 ];
 
+const FORM_DEPARTMENT_WORKFLOWS = {
+    WRF: ['REQUESTOR', 'DEPARTMENT_HEAD', 'PPFO', 'COMPLETED'],
+    RIS: ['REQUESTOR', 'DEPARTMENT_HEAD', 'DEAN_OFFICE', 'TNS', 'PURCHASING', 'COMPLETED']
+};
+
 const normalizeDepartment = (department = 'REQUESTOR') => String(department).toUpperCase();
 const isValidDepartment = (department) => VALID_FORM_DEPARTMENTS.includes(department);
+const getWorkflowForFormType = (formType) => FORM_DEPARTMENT_WORKFLOWS[String(formType || '').toUpperCase()] || [];
+
+const getTransferGate = (form, targetDepartment) => {
+    const workflow = getWorkflowForFormType(form.Form_Type);
+
+    if (!workflow.includes(targetDepartment)) {
+        return {
+            allowed: false,
+            error: `Invalid department for ${form.Form_Type} form`
+        };
+    }
+
+    const visitedDepartments = new Set(
+        (form.History || [])
+            .map(history => normalizeDepartment(history.Department))
+            .filter(department => workflow.includes(department))
+    );
+
+    const currentDepartment = normalizeDepartment(form.Department);
+    if (workflow.includes(currentDepartment)) {
+        visitedDepartments.add(currentDepartment);
+    }
+
+    if (targetDepartment === currentDepartment) {
+        return { allowed: true, noChange: true };
+    }
+
+    if (visitedDepartments.has(targetDepartment)) {
+        return { allowed: true };
+    }
+
+    const nextRequiredDepartment = workflow.find(department => !visitedDepartments.has(department));
+
+    if (targetDepartment === nextRequiredDepartment) {
+        return { allowed: true };
+    }
+
+    return {
+        allowed: false,
+        error: nextRequiredDepartment
+            ? `Cannot transfer to ${targetDepartment} before visiting ${nextRequiredDepartment}`
+            : `Cannot transfer to ${targetDepartment}`
+    };
+};
 
 // Workflow form events should notify the lab operations roles.
 const getNotifyRoles = () => {
@@ -379,6 +428,36 @@ const transferForm = async (req, res) => {
         // Validate department
         if (!isValidDepartment(departmentEnum)) {
             return res.status(400).json({ success: false, error: 'Invalid department' });
+        }
+
+        const existingForm = await prisma.Form.findUnique({
+            where: { Form_ID: formId },
+            include: {
+                Creator: {
+                    select: {
+                        User_ID: true,
+                        First_Name: true,
+                        Last_Name: true,
+                        Email: true
+                    }
+                },
+                History: {
+                    orderBy: { Changed_At: 'asc' }
+                }
+            }
+        });
+
+        if (!existingForm) {
+            return res.status(404).json({ success: false, error: 'Form not found' });
+        }
+
+        const transferGate = getTransferGate(existingForm, departmentEnum);
+        if (!transferGate.allowed) {
+            return res.status(400).json({ success: false, error: transferGate.error });
+        }
+
+        if (transferGate.noChange) {
+            return res.json({ success: true, data: existingForm });
         }
 
         // Update form and add history entry
