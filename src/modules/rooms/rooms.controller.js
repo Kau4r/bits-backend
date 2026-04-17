@@ -3,6 +3,20 @@ const AuditLogger = require('../../utils/auditLogger');
 const NotificationManager = require('../../services/notificationManager');
 const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
 
+const roomNameCollator = new Intl.Collator('en', {
+  numeric: true,
+  sensitivity: 'base',
+  ignorePunctuation: true,
+});
+
+const sortRoomsForDisplay = (rooms) => {
+  return [...rooms].sort((a, b) => {
+    const nameCompare = roomNameCollator.compare((a.Name || '').trim(), (b.Name || '').trim());
+    if (nameCompare !== 0) return nameCompare;
+    return (a.Room_ID || 0) - (b.Room_ID || 0);
+  });
+};
+
 // Get all rooms
 const getRooms = async (req, res) => {
   try {
@@ -25,7 +39,7 @@ const getRooms = async (req, res) => {
       }
     });
 
-    res.json({ success: true, data: rooms });
+    res.json({ success: true, data: sortRoomsForDisplay(rooms) });
   } catch (error) {
     console.error('Error fetching rooms:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch rooms' });

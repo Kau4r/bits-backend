@@ -28,6 +28,34 @@ jest.mock('../../src/services/notificationManager', () => ({
 const NotificationManager = require('../../src/services/notificationManager');
 const { app } = require('../app');
 
+describe('Room Routes', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('GET /rooms', () => {
+    it('returns rooms in natural display order instead of insertion order', async () => {
+      prisma.Room.findMany.mockResolvedValue([
+        { Room_ID: 4, Name: 'LB 10', Room_Type: 'LAB', Schedule: [] },
+        { Room_ID: 2, Name: 'LB 2', Room_Type: 'LAB', Schedule: [] },
+        { Room_ID: 1, Name: 'Auditorium', Room_Type: 'LECTURE', Schedule: [] },
+        { Room_ID: 3, Name: 'LB 1', Room_Type: 'LAB', Schedule: [] },
+      ]);
+
+      const res = await request(app).get('/rooms');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.map(room => room.Name)).toEqual([
+        'Auditorium',
+        'LB 1',
+        'LB 2',
+        'LB 10',
+      ]);
+    });
+  });
+});
+
 describe('Room Queue Availability', () => {
   beforeEach(() => {
     jest.clearAllMocks();
