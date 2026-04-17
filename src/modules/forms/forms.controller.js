@@ -20,6 +20,72 @@ const normalizeDepartment = (department = 'REQUESTOR') => String(department).toU
 const isValidDepartment = (department) => VALID_FORM_DEPARTMENTS.includes(department);
 const getWorkflowForFormType = (formType) => FORM_DEPARTMENT_WORKFLOWS[String(formType || '').toUpperCase()] || [];
 
+const userSelect = {
+    User_ID: true,
+    First_Name: true,
+    Last_Name: true,
+    Email: true
+};
+
+const formInclude = {
+    Creator: {
+        select: userSelect
+    },
+    Approver: {
+        select: userSelect
+    },
+    History: {
+        orderBy: { Changed_At: 'asc' }
+    },
+    Attachments: {
+        orderBy: { Uploaded_At: 'asc' },
+        include: {
+            Uploader: {
+                select: userSelect
+            }
+        }
+    }
+};
+
+const normalizeAttachmentInput = (attachment, fallbackDepartment, fallbackUploaderId) => {
+    const fileName = String(attachment?.fileName || attachment?.File_Name || '').trim();
+    const fileUrl = String(attachment?.fileUrl || attachment?.File_URL || '').trim();
+    const department = normalizeDepartment(attachment?.department || attachment?.Department || fallbackDepartment);
+
+    if (!fileName || !fileUrl) {
+        return { error: 'Attachment file name and URL are required' };
+    }
+
+    if (!isValidDepartment(department)) {
+        return { error: 'Invalid attachment department' };
+    }
+
+    return {
+        data: {
+            Department: department,
+            File_Name: fileName,
+            File_URL: fileUrl,
+            File_Type: attachment?.fileType || attachment?.File_Type || null,
+            Uploaded_By: attachment?.uploadedBy ? parseInt(attachment.uploadedBy) : fallbackUploaderId,
+            Notes: attachment?.notes || attachment?.Notes || null
+        }
+    };
+};
+
+const buildAttachmentCreateData = (attachments, fallbackDepartment, fallbackUploaderId) => {
+    const normalizedAttachments = [];
+
+    for (const attachment of attachments) {
+        const normalized = normalizeAttachmentInput(attachment, fallbackDepartment, fallbackUploaderId);
+        if (normalized.error) {
+            return { error: normalized.error };
+        }
+        normalizedAttachments.push(normalized.data);
+    }
+
+    return { data: normalizedAttachments };
+};
+
 const getTransferGate = (form, targetDepartment) => {
     const workflow = getWorkflowForFormType(form.Form_Type);
 
@@ -123,27 +189,7 @@ const getForms = async (req, res) => {
 
         const forms = await prisma.Form.findMany({
             where,
-            include: {
-                Creator: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                Approver: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                History: {
-                    orderBy: { Changed_At: 'asc' }
-                }
-            },
+            include: formInclude,
             orderBy: { Created_At: 'desc' }
         });
 
@@ -165,27 +211,7 @@ const getFormById = async (req, res) => {
     try {
         const form = await prisma.Form.findUnique({
             where: { Form_ID: formId },
-            include: {
-                Creator: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                Approver: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                History: {
-                    orderBy: { Changed_At: 'asc' }
-                }
-            }
+            include: formInclude
         });
 
         if (!form) {
@@ -210,6 +236,7 @@ const createForm = async (req, res) => {
             fileName,
             fileUrl,
             fileType,
+            attachments = [],
             department = 'REQUESTOR',
             requesterName,
             remarks
@@ -233,6 +260,32 @@ const createForm = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Invalid department' });
         }
 
+        const attachmentInputs = Array.isArray(attachments) ? [...attachments] : [];
+        if (fileName && fileUrl) {
+            attachmentInputs.unshift({
+                fileName,
+                fileUrl,
+                fileType,
+                department: departmentEnum,
+                notes: 'Initial form attachment'
+            });
+        }
+
+        const seenAttachmentKeys = new Set();
+        const dedupedAttachmentInputs = attachmentInputs.filter((attachment) => {
+            const key = `${attachment?.fileName || attachment?.File_Name || ''}|${attachment?.fileUrl || attachment?.File_URL || ''}`;
+            if (seenAttachmentKeys.has(key)) return false;
+            seenAttachmentKeys.add(key);
+            return true;
+        });
+
+        const attachmentCreate = buildAttachmentCreateData(dedupedAttachmentInputs, departmentEnum, parseInt(userId));
+        if (attachmentCreate.error) {
+            return res.status(400).json({ success: false, error: attachmentCreate.error });
+        }
+
+        const primaryAttachment = attachmentCreate.data[0];
+
         // Generate form code
         const formCode = await generateFormCode(formTypeEnum);
 
@@ -245,11 +298,16 @@ const createForm = async (req, res) => {
                 Title: title || null,
                 Content: content || null,
                 Department: departmentEnum,
-                File_Name: fileName || null,
-                File_URL: fileUrl || null,
-                File_Type: fileType || null,
+                File_Name: primaryAttachment?.File_Name || fileName || null,
+                File_URL: primaryAttachment?.File_URL || fileUrl || null,
+                File_Type: primaryAttachment?.File_Type || fileType || null,
                 Requester_Name: requesterName || null,
-                Remarks: remarks || null
+                Remarks: remarks || null,
+                ...(attachmentCreate.data.length > 0 ? {
+                    Attachments: {
+                        create: attachmentCreate.data
+                    }
+                } : {})
             },
             include: {
                 Creator: true
@@ -278,10 +336,7 @@ const createForm = async (req, res) => {
         // Fetch the form again with history included
         const formWithHistory = await prisma.Form.findUnique({
             where: { Form_ID: form.Form_ID },
-            include: {
-                Creator: true,
-                History: true
-            }
+            include: formInclude
         });
 
         res.status(201).json({ success: true, data: formWithHistory });
@@ -354,7 +409,7 @@ const updateForm = async (req, res) => {
         const form = await prisma.Form.update({
             where: { Form_ID: formId },
             data: updateData,
-            include: { Creator: true }
+            include: formInclude
         });
 
         // Notify Creator if status changes to Approved, Rejected, Pending, or In Review
@@ -432,19 +487,7 @@ const transferForm = async (req, res) => {
 
         const existingForm = await prisma.Form.findUnique({
             where: { Form_ID: formId },
-            include: {
-                Creator: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                History: {
-                    orderBy: { Changed_At: 'asc' }
-                }
-            }
+            include: formInclude
         });
 
         if (!existingForm) {
@@ -472,19 +515,7 @@ const transferForm = async (req, res) => {
                     }
                 }
             },
-            include: {
-                Creator: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                History: {
-                    orderBy: { Changed_At: 'asc' }
-                }
-            }
+            include: formInclude
         });
 
         await AuditLogger.logForm(
@@ -498,6 +529,84 @@ const transferForm = async (req, res) => {
     } catch (error) {
         console.error('Error transferring form:', error);
         res.status(500).json({ success: false, error: 'Failed to transfer form' });
+    }
+};
+
+// POST /api/forms/:id/attachments - Add one or more proof/supporting files
+const addFormAttachments = async (req, res) => {
+    const formId = parseInt(req.params.id);
+
+    if (isNaN(formId)) {
+        return res.status(400).json({ success: false, error: 'Invalid form ID' });
+    }
+
+    try {
+        const existingForm = await prisma.Form.findUnique({
+            where: { Form_ID: formId },
+            include: formInclude
+        });
+
+        if (!existingForm) {
+            return res.status(404).json({ success: false, error: 'Form not found' });
+        }
+
+        const attachmentInputs = Array.isArray(req.body.attachments)
+            ? req.body.attachments
+            : [req.body];
+
+        if (attachmentInputs.length === 0) {
+            return res.status(400).json({ success: false, error: 'At least one attachment is required' });
+        }
+
+        const attachmentCreate = buildAttachmentCreateData(
+            attachmentInputs,
+            existingForm.Department,
+            req.user.User_ID
+        );
+
+        if (attachmentCreate.error) {
+            return res.status(400).json({ success: false, error: attachmentCreate.error });
+        }
+
+        const workflow = getWorkflowForFormType(existingForm.Form_Type);
+        const invalidDepartment = attachmentCreate.data.find(attachment => !workflow.includes(attachment.Department));
+        if (invalidDepartment) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid attachment department for ${existingForm.Form_Type} form`
+            });
+        }
+
+        const firstAttachment = attachmentCreate.data[0];
+        const shouldSetLegacyFile = !existingForm.File_URL && firstAttachment;
+
+        const form = await prisma.Form.update({
+            where: { Form_ID: formId },
+            data: {
+                ...(shouldSetLegacyFile ? {
+                    File_Name: firstAttachment.File_Name,
+                    File_URL: firstAttachment.File_URL,
+                    File_Type: firstAttachment.File_Type
+                } : {}),
+                Attachments: {
+                    create: attachmentCreate.data
+                }
+            },
+            include: formInclude
+        });
+
+        await AuditLogger.logForm(
+            req.user.User_ID,
+            'FORM_ATTACHMENT_ADDED',
+            `Added ${attachmentCreate.data.length} attachment(s) to form ${form.Form_Code}`,
+            getNotifyRoles(),
+            form.Creator_ID
+        );
+
+        res.status(201).json({ success: true, data: form });
+    } catch (error) {
+        console.error('Error adding form attachment:', error);
+        res.status(500).json({ success: false, error: 'Failed to add form attachment' });
     }
 };
 
@@ -528,5 +637,6 @@ module.exports = {
     updateForm,
     archiveForm,
     transferForm,
+    addFormAttachments,
     deleteForm
 };

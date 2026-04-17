@@ -10,6 +10,7 @@ const {
     updateForm,
     archiveForm,
     transferForm,
+    addFormAttachments,
     deleteForm
 } = require('./forms.controller');
 
@@ -19,6 +20,7 @@ router.post('/', authenticateToken, asyncHandler(createForm));
 router.patch('/:id', authenticateToken, asyncHandler(updateForm));
 router.patch('/:id/archive', authenticateToken, asyncHandler(archiveForm));
 router.post('/:id/transfer', authenticateToken, asyncHandler(transferForm));
+router.post('/:id/attachments', authenticateToken, asyncHandler(addFormAttachments));
 router.delete('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(deleteForm));
 
 module.exports = router;

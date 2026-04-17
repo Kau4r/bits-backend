@@ -45,6 +45,17 @@ const createdForm = (overrides = {}) => ({
   Requester_Name: 'Juan Dela Cruz',
   Remarks: 'Need replacement keyboard',
   History: [{ Department: 'REQUESTOR', Notes: 'Form created' }],
+  Attachments: [{
+    Attachment_ID: 1,
+    Form_ID: 1,
+    Department: 'REQUESTOR',
+    File_Name: 'wrf.pdf',
+    File_URL: 'https://example.test/uploads/wrf.pdf',
+    File_Type: 'application/pdf',
+    Uploaded_By: 9999,
+    Uploaded_At: new Date().toISOString(),
+    Notes: 'Initial form attachment',
+  }],
   ...overrides,
 });
 
@@ -97,6 +108,16 @@ describe('Form Routes', () => {
             File_Type: 'application/pdf',
             Requester_Name: 'Juan Dela Cruz',
             Remarks: 'Need replacement keyboard',
+            Attachments: {
+              create: [{
+                Department: 'REQUESTOR',
+                File_Name: 'wrf.pdf',
+                File_URL: 'https://example.test/uploads/wrf.pdf',
+                File_Type: 'application/pdf',
+                Uploaded_By: 9999,
+                Notes: 'Initial form attachment',
+              }],
+            },
           }),
         })
       );
@@ -234,6 +255,74 @@ describe('Form Routes', () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Invalid department');
       expect(prisma.Form.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /forms/:id/attachments', () => {
+    it('adds a proof attachment to the current form department', async () => {
+      const existingForm = createdForm({
+        Department: 'PPFO',
+        History: [
+          { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Send to Department Head' },
+          { Department: 'PPFO', Notes: 'Send to PPFO' },
+        ],
+      });
+      const updatedForm = createdForm({
+        Department: 'PPFO',
+        Attachments: [
+          ...existingForm.Attachments,
+          {
+            Attachment_ID: 2,
+            Form_ID: 1,
+            Department: 'PPFO',
+            File_Name: 'ppfo-proof.pdf',
+            File_URL: 'https://example.test/uploads/ppfo-proof.pdf',
+            File_Type: 'application/pdf',
+            Uploaded_By: 9999,
+            Uploaded_At: new Date().toISOString(),
+            Notes: 'Proof from PPFO',
+          },
+        ],
+      });
+      prisma.Form.findUnique.mockResolvedValue(existingForm);
+      prisma.Form.update.mockResolvedValue(updatedForm);
+
+      const res = await request(app)
+        .post('/forms/1/attachments')
+        .send({
+          fileName: 'ppfo-proof.pdf',
+          fileUrl: 'https://example.test/uploads/ppfo-proof.pdf',
+          fileType: 'application/pdf',
+          notes: 'Proof from PPFO',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.Attachments).toHaveLength(2);
+      expect(prisma.Form.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { Form_ID: 1 },
+          data: {
+            Attachments: {
+              create: [{
+                Department: 'PPFO',
+                File_Name: 'ppfo-proof.pdf',
+                File_URL: 'https://example.test/uploads/ppfo-proof.pdf',
+                File_Type: 'application/pdf',
+                Uploaded_By: 9999,
+                Notes: 'Proof from PPFO',
+              }],
+            },
+          },
+        })
+      );
+      expect(AuditLogger.logForm).toHaveBeenCalledWith(
+        9999,
+        'FORM_ATTACHMENT_ADDED',
+        `Added 1 attachment(s) to form WRF-${year}-001`,
+        ['LAB_TECH', 'LAB_HEAD'],
+        9999
+      );
     });
   });
 

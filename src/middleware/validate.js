@@ -139,6 +139,14 @@ const inventorySchemas = {
  * Form validation schemas
  */
 const formSchemas = {
+    attachment: Joi.object({
+        fileName: Joi.string().max(255).required(),
+        fileUrl: Joi.string().uri().required(),
+        fileType: Joi.string().max(50).allow('', null),
+        department: Joi.string().valid(...workflowFormDepartments),
+        notes: Joi.string().max(500).allow('', null)
+    }),
+
     create: Joi.object({
         creatorId: Joi.number().integer().positive(),
         formType: Joi.string().valid('WRF', 'RIS').required(),
@@ -147,6 +155,13 @@ const formSchemas = {
         fileName: Joi.string().max(255).allow('', null),
         fileUrl: Joi.string().uri().allow('', null),
         fileType: Joi.string().max(50).allow('', null),
+        attachments: Joi.array().items(Joi.object({
+            fileName: Joi.string().max(255).required(),
+            fileUrl: Joi.string().uri().required(),
+            fileType: Joi.string().max(50).allow('', null),
+            department: Joi.string().valid(...workflowFormDepartments),
+            notes: Joi.string().max(500).allow('', null)
+        })),
         department: Joi.string().valid(...workflowFormDepartments).default('REQUESTOR'),
         requesterName: Joi.string().max(200).allow('', null),
         remarks: Joi.string().max(1000).allow('', null)

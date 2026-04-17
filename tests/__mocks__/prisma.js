@@ -91,6 +91,10 @@ const mockPrisma = {
   FormHistory: {
     create: jest.fn(),
   },
+  FormAttachment: {
+    create: jest.fn(),
+    findMany: jest.fn(),
+  },
   borrow_Item: {
     findUnique: jest.fn(),
     findMany: jest.fn(),

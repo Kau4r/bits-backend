@@ -28,6 +28,7 @@ model User {
   Borrowing_Comp              Borrowing_Comp[]
   Form_Form_Approver_IDToUser Form[]                @relation("Form_Approver_IDToUser")
   Form_Form_Creator_IDToUser  Form[]                @relation("Form_Creator_IDToUser")
+  Form_Attachments_Uploaded   FormAttachment[]      @relation("FormAttachmentUploader")
   Item                        Item[]
   NotificationReads           NotificationRead[]
   Opened_Rooms                Room[]                @relation("RoomOpenedBy")
@@ -108,6 +109,7 @@ model Form {
   Approver    User?          @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
   Creator     User           @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
   History     FormHistory[]
+  Attachments FormAttachment[]
 }
 
 model FormHistory {
@@ -117,6 +119,24 @@ model FormHistory {
   Changed_At DateTime       @default(now())
   Notes      String?
   Form       Form           @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
+}
+
+model FormAttachment {
+  Attachment_ID Int            @id @default(autoincrement())
+  Form_ID       Int
+  Department    FormDepartment
+  File_Name     String
+  File_Type     String?
+  File_URL      String
+  Uploaded_By   Int?
+  Uploaded_At   DateTime       @default(now())
+  Notes         String?
+  Form          Form           @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
+  Uploader      User?          @relation("FormAttachmentUploader", fields: [Uploaded_By], references: [User_ID], onDelete: SetNull)
+
+  @@index([Form_ID])
+  @@index([Department])
+  @@index([Uploaded_By])
 }
 
 model Room {
