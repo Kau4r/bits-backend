@@ -49,21 +49,25 @@ const bookingSchemas = {
 const ticketSchemas = {
     create: Joi.object({
         Reported_By_ID: Joi.number().integer().positive().required(),
-        Report_Problem: Joi.string().min(5).max(1000).required(),
+        Report_Problem: Joi.string().trim().min(1).max(1000).required(),
         Location: Joi.string().max(200).allow('', null),
         Item_ID: Joi.number().integer().positive().allow(null),
         Room_ID: Joi.number().integer().positive().allow(null),
         Status: Joi.string().valid('PENDING', 'IN_PROGRESS', 'RESOLVED').default('PENDING'),
-        Priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'URGENT').allow(null),
-        Category: Joi.string().max(100).allow('', null)
+        Priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH').allow('', null),
+        Category: Joi.string().valid('HARDWARE', 'SOFTWARE', 'FACILITY', 'OTHER').allow('', null)
     }),
 
     update: Joi.object({
         Status: Joi.string().valid('PENDING', 'IN_PROGRESS', 'RESOLVED'),
-        Priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH', 'URGENT'),
-        Category: Joi.string().max(100).allow('', null),
+        Priority: Joi.string().valid('LOW', 'MEDIUM', 'HIGH').allow('', null),
+        Category: Joi.string().valid('HARDWARE', 'SOFTWARE', 'FACILITY', 'OTHER').allow('', null),
         Archived: Joi.boolean(),
-        Technician_ID: Joi.number().integer().positive().allow(null)
+        Technician_ID: Joi.number().integer().positive().allow(null),
+        Report_Problem: Joi.string().trim().min(1).max(1000),
+        Location: Joi.string().max(200).allow('', null),
+        Item_ID: Joi.number().integer().positive().allow(null),
+        Room_ID: Joi.number().integer().positive().allow(null)
     }).min(1)
 };
 
