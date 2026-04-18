@@ -77,14 +77,14 @@ const ticketSchemas = {
 const roomSchemas = {
     create: Joi.object({
         Name: Joi.string().min(1).max(100).required(),
-        Room_Type: Joi.string().valid('LAB', 'CLASSROOM', 'OFFICE', 'STORAGE').required(),
+        Room_Type: Joi.string().valid('CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB').required(),
         Capacity: Joi.number().integer().positive().allow(null),
         Status: Joi.string().valid('AVAILABLE', 'OCCUPIED', 'MAINTENANCE', 'CLOSED').default('AVAILABLE')
     }),
 
     update: Joi.object({
         Name: Joi.string().min(1).max(100),
-        Room_Type: Joi.string().valid('LAB', 'CLASSROOM', 'OFFICE', 'STORAGE'),
+        Room_Type: Joi.string().valid('CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB'),
         Capacity: Joi.number().integer().positive().allow(null),
         Status: Joi.string().valid('AVAILABLE', 'OCCUPIED', 'MAINTENANCE', 'CLOSED')
     }).min(1),

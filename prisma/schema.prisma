@@ -359,6 +359,7 @@ enum RoomType {
   CONSULTATION
   LECTURE
   LAB
+  CONFERENCE
 }
 
 enum LabType {

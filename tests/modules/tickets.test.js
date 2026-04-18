@@ -300,6 +300,7 @@ describe('Ticket Routes', () => {
         Reported_By_ID: 2,
         Technician_ID: 3,
         Status: 'RESOLVED',
+        Archived: true,
         Report_Problem: 'Printer issue',
       });
 
@@ -310,7 +311,7 @@ describe('Ticket Routes', () => {
       expect(res.status).toBe(200);
       expect(prisma.ticket.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ Status: 'RESOLVED' }),
+          data: expect.objectContaining({ Status: 'RESOLVED', Archived: true }),
         })
       );
     });

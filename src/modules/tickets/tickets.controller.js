@@ -151,6 +151,7 @@ const createTicket = async (req, res) => {
     const itemError = await validateItem(itemResult.value);
     if (itemError) return sendValidationError(res, itemError);
 
+    const ticketStatus = statusResult.value || 'PENDING';
     const ticket = await prisma.ticket.create({
       data: {
         Reported_By_ID: reporterResult.value,
@@ -158,7 +159,8 @@ const createTicket = async (req, res) => {
         ...(locationResult.provided ? { Location: locationResult.value } : {}),
         ...(itemResult.provided ? { Item_ID: itemResult.value } : {}),
         ...(roomResult.provided ? { Room_ID: roomResult.value } : {}),
-        Status: statusResult.value || 'PENDING',
+        Status: ticketStatus,
+        Archived: ticketStatus === 'RESOLVED',
         ...(priorityResult.provided ? { Priority: priorityResult.value } : {}),
         ...(categoryResult.provided ? { Category: categoryResult.value } : {}),
       },
@@ -301,6 +303,7 @@ const updateTicket = async (req, res) => {
     const hasItemUpdate = itemResult.provided && itemResult.value !== (existingTicket.Item_ID ?? null);
     const hasRoomUpdate = roomResult.provided && roomResult.value !== (existingTicket.Room_ID ?? null);
     const isUnassignReset = isUnassigningTicket && nextStatus === 'PENDING';
+    const isResolvingTicket = nextStatus === 'RESOLVED' && existingTicket.Status !== 'RESOLVED';
 
     const requiresAssignedTechnician = (hasStatusUpdate && !isUnassignReset) ||
       hasPriorityUpdate ||
@@ -327,6 +330,7 @@ const updateTicket = async (req, res) => {
     if (priorityResult.provided) updateData.Priority = priorityResult.value;
     if (categoryResult.provided) updateData.Category = categoryResult.value;
     if (archiveResult.provided) updateData.Archived = archiveResult.value;
+    if (isResolvingTicket) updateData.Archived = true;
     if (technicianResult.provided) updateData.Technician_ID = requestedTechnicianId;
     if (problemResult.provided) updateData.Report_Problem = problemResult.value;
     if (locationResult.provided) updateData.Location = locationResult.value;
@@ -357,7 +361,7 @@ const updateTicket = async (req, res) => {
       notificationSent = true;
     }
 
-    if (updateData.Status === 'RESOLVED' && existingTicket.Status !== 'RESOLVED') {
+    if (isResolvingTicket) {
       await AuditLogger.logTicket(
         req.user ? req.user.User_ID : existingTicket.Technician_ID || existingTicket.Reported_By_ID,
         'TICKET_RESOLVED',

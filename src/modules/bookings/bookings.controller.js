@@ -4,6 +4,49 @@ const NotificationManager = require('../../services/notificationManager');
 const AuditLogger = require('../../utils/auditLogger');
 const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
 
+const normalizeRole = (role = '') => String(role).toUpperCase();
+
+const isConferenceRoom = (room) => {
+    const roomType = String(room?.Room_Type || '').toUpperCase();
+    const roomName = String(room?.Name || '').toUpperCase();
+    return roomType === 'CONFERENCE' || roomName.includes('CONFERENCE');
+};
+
+const isSecretaryConferenceBooking = (user, room) => (
+    normalizeRole(user?.User_Role) === 'SECRETARY' && isConferenceRoom(room)
+);
+
+const formatBookingTime = (date) => (
+    new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+);
+
+const notifyRejectedBooking = async (actorId, rejectedBooking, reason) => {
+    const message = `Your booking for ${rejectedBooking.Room.Name} was rejected. Reason: ${reason}`;
+
+    await AuditLogger.logBooking(
+        actorId,
+        'BOOKING_REJECTED',
+        rejectedBooking.Booked_Room_ID,
+        message,
+        null,
+        rejectedBooking.User_ID
+    );
+
+    NotificationManager.send(rejectedBooking.User_ID, {
+        type: 'BOOKING_REJECTED',
+        category: 'BOOKING_UPDATE',
+        timestamp: new Date().toISOString(),
+        message,
+        booking: {
+            id: rejectedBooking.Booked_Room_ID,
+            roomId: rejectedBooking.Room_ID,
+            status: rejectedBooking.Status,
+            startTime: rejectedBooking.Start_Time,
+            endTime: rejectedBooking.End_Time
+        }
+    });
+};
+
 // Create a new room booking
 const createBooking = async (req, res) => {
     try {
@@ -13,8 +56,11 @@ const createBooking = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing required fields' });
         }
 
+        const requestedStart = new Date(Start_Time);
+        const requestedEnd = new Date(End_Time);
+
         // Block bookings on Sundays
-        if (new Date(Start_Time).getDay() === 0) {
+        if (requestedStart.getDay() === 0) {
             return res.status(400).json({
                 error: 'Bookings are not allowed on Sundays',
                 details: 'Please select a different day of the week.'
@@ -35,6 +81,17 @@ const createBooking = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Room not found' });
         }
 
+        const requestingUser = await prisma.user.findUnique({
+            where: { User_ID: parseInt(User_ID) },
+            select: { User_Role: true }
+        });
+
+        if (!requestingUser) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        const secretaryConferencePriority = isSecretaryConferenceBooking(requestingUser, room);
+
         // Check if room is available for booking
         if (room.Status !== 'AVAILABLE') {
             return res.status(403).json({
@@ -44,7 +101,7 @@ const createBooking = async (req, res) => {
         }
 
         // Check for any recurring class schedule conflicts
-        const conflictingSchedule = findScheduleConflict(room.Schedule, Start_Time, End_Time);
+        const conflictingSchedule = findScheduleConflict(room.Schedule, requestedStart, requestedEnd);
         if (conflictingSchedule) {
             return res.status(409).json({
                 success: false, error: 'Time conflict with existing schedule',
@@ -52,84 +109,184 @@ const createBooking = async (req, res) => {
             });
         }
 
-        // Check for conflicting bookings (both APPROVED and PENDING)
-        const conflictingBooking = await prisma.Booked_Room.findFirst({
+        const conflictingApprovedBooking = await prisma.Booked_Room.findFirst({
             where: {
                 Room_ID: parseInt(Room_ID),
-                Status: { in: ['APPROVED', 'PENDING'] },
-                Start_Time: { lt: new Date(End_Time) },
-                End_Time: { gt: new Date(Start_Time) }
+                Status: 'APPROVED',
+                Start_Time: { lt: requestedEnd },
+                End_Time: { gt: requestedStart }
             },
             include: {
                 User: { select: { First_Name: true, Last_Name: true } }
             }
         });
 
-        if (conflictingBooking) {
-            const statusMsg = conflictingBooking.Status === 'PENDING'
-                ? 'A pending booking already exists for this time slot'
-                : 'Room is already booked for the selected time';
+        if (conflictingApprovedBooking) {
             return res.status(409).json({
-                success: false, error: statusMsg,
+                success: false,
+                error: 'Room is already booked for the selected time',
                 conflictingBooking: {
-                    id: conflictingBooking.Booked_Room_ID,
-                    status: conflictingBooking.Status,
-                    startTime: conflictingBooking.Start_Time,
-                    endTime: conflictingBooking.End_Time,
-                    bookedBy: conflictingBooking.User
-                        ? `${conflictingBooking.User.First_Name} ${conflictingBooking.User.Last_Name}`
+                    id: conflictingApprovedBooking.Booked_Room_ID,
+                    status: conflictingApprovedBooking.Status,
+                    startTime: conflictingApprovedBooking.Start_Time,
+                    endTime: conflictingApprovedBooking.End_Time,
+                    bookedBy: conflictingApprovedBooking.User
+                        ? `${conflictingApprovedBooking.User.First_Name} ${conflictingApprovedBooking.User.Last_Name}`
                         : 'Unknown'
                 }
             });
         }
-        const requestingUser = await prisma.user.findUnique({
-            where: { User_ID: parseInt(User_ID) },
-            select: { User_Role: true }
-        });
 
-        const isLabHead = requestingUser?.User_Role?.toUpperCase() === 'LAB_HEAD';
-        const bookingStatus = isLabHead ? 'APPROVED' : 'PENDING';
-        // Create the booking with PENDING status
-        const booking = await prisma.Booked_Room.create({
-            data: {
-                User_ID: parseInt(User_ID),
-                Room_ID: parseInt(Room_ID),
-                Start_Time: new Date(Start_Time),
-                End_Time: new Date(End_Time),
-                Status: bookingStatus,
-                Approved_By: isLabHead ? parseInt(User_ID) : null,
-                Purpose: Purpose || '',
-                Created_At: new Date()
-            },
-            include: {
-                Room: true,
-                User: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
+        const conflictingPendingBookings = secretaryConferencePriority
+            ? await prisma.Booked_Room.findMany({
+                where: {
+                    Room_ID: parseInt(Room_ID),
+                    Status: 'PENDING',
+                    Start_Time: { lt: requestedEnd },
+                    End_Time: { gt: requestedStart }
                 },
-                Approver: {
-                    select: {
-                        User_ID: true,
-                        First_Name: true,
-                        Last_Name: true,
-                        User_Role: true
+                include: {
+                    Room: true,
+                    User: { select: { User_ID: true, First_Name: true, Last_Name: true, Email: true } },
+                    Approver: {
+                        select: {
+                            User_ID: true,
+                            First_Name: true,
+                            Last_Name: true,
+                            User_Role: true
+                        }
                     }
                 }
+            })
+            : [];
+
+        if (!secretaryConferencePriority) {
+            const conflictingPendingBooking = await prisma.Booked_Room.findFirst({
+                where: {
+                    Room_ID: parseInt(Room_ID),
+                    Status: 'PENDING',
+                    Start_Time: { lt: requestedEnd },
+                    End_Time: { gt: requestedStart }
+                },
+                include: {
+                    User: { select: { First_Name: true, Last_Name: true } }
+                }
+            });
+
+            if (conflictingPendingBooking) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'A pending booking already exists for this time slot',
+                    conflictingBooking: {
+                        id: conflictingPendingBooking.Booked_Room_ID,
+                        status: conflictingPendingBooking.Status,
+                        startTime: conflictingPendingBooking.Start_Time,
+                        endTime: conflictingPendingBooking.End_Time,
+                        bookedBy: conflictingPendingBooking.User
+                            ? `${conflictingPendingBooking.User.First_Name} ${conflictingPendingBooking.User.Last_Name}`
+                            : 'Unknown'
+                    }
+                });
             }
-        });
+        }
+
+        const isLabHead = normalizeRole(requestingUser.User_Role) === 'LAB_HEAD';
+        const isAutoApproved = isLabHead || secretaryConferencePriority;
+        const bookingData = {
+            User_ID: parseInt(User_ID),
+            Room_ID: parseInt(Room_ID),
+            Start_Time: requestedStart,
+            End_Time: requestedEnd,
+            Status: isAutoApproved ? 'APPROVED' : 'PENDING',
+            Approved_By: isAutoApproved ? parseInt(User_ID) : null,
+            Purpose: Purpose || '',
+            Created_At: new Date()
+        };
+        const bookingInclude = {
+            Room: true,
+            User: {
+                select: {
+                    User_ID: true,
+                    First_Name: true,
+                    Last_Name: true,
+                    Email: true
+                }
+            },
+            Approver: {
+                select: {
+                    User_ID: true,
+                    First_Name: true,
+                    Last_Name: true,
+                    User_Role: true
+                }
+            }
+        };
+
+        let booking;
+        let rejectedBookings = [];
+
+        if (secretaryConferencePriority && conflictingPendingBookings.length > 0) {
+            const rejectReason = `Secretary conference booking takes priority from ${formatBookingTime(requestedStart)} to ${formatBookingTime(requestedEnd)}.`;
+            const transactionResult = await prisma.$transaction(async (tx) => {
+                const rejected = await Promise.all(conflictingPendingBookings.map((pendingBooking) =>
+                    tx.Booked_Room.update({
+                        where: { Booked_Room_ID: pendingBooking.Booked_Room_ID },
+                        data: {
+                            Status: 'REJECTED',
+                            Notes: pendingBooking.Notes
+                                ? `${pendingBooking.Notes}\n${rejectReason}`
+                                : rejectReason,
+                            Updated_At: new Date()
+                        },
+                        include: {
+                            Room: true,
+                            User: { select: { User_ID: true, First_Name: true, Last_Name: true, Email: true } },
+                            Approver: {
+                                select: {
+                                    User_ID: true,
+                                    First_Name: true,
+                                    Last_Name: true,
+                                    User_Role: true
+                                }
+                            }
+                        }
+                    })
+                ));
+
+                const created = await tx.Booked_Room.create({
+                    data: bookingData,
+                    include: bookingInclude
+                });
+
+                return { booking: created, rejectedBookings: rejected };
+            });
+
+            booking = transactionResult.booking;
+            rejectedBookings = transactionResult.rejectedBookings;
+
+            for (const rejectedBooking of rejectedBookings) {
+                await notifyRejectedBooking(parseInt(User_ID), rejectedBooking, rejectReason);
+            }
+
+            await NotificationManager.broadcastBookingEvent('BOOKING_REJECTED', rejectedBookings[0], ['LAB_HEAD', 'LAB_TECH']);
+        } else {
+            // Create the booking with PENDING status unless the request is auto-approved.
+            booking = await prisma.Booked_Room.create({
+                data: bookingData,
+                include: bookingInclude
+            });
+        }
 
         // Log and notify Lab Heads about the new booking request
         console.log('[Bookings] About to call AuditLogger.logBooking...');
         try {
             await AuditLogger.logBooking(
                 parseInt(User_ID),
-                'ROOM_BOOKED',
+                secretaryConferencePriority ? 'BOOKING_APPROVED' : 'ROOM_BOOKED',
                 booking.Booked_Room_ID,
-                `New booking request for ${booking.Room.Name} by ${booking.User.First_Name} ${booking.User.Last_Name}`,
+                secretaryConferencePriority
+                    ? `Secretary conference booking for ${booking.Room.Name} was auto-approved`
+                    : `New booking request for ${booking.Room.Name} by ${booking.User.First_Name} ${booking.User.Last_Name}`,
                 'LAB_HEAD' // Notify Lab Heads
             );
             console.log('[Bookings] AuditLogger.logBooking completed successfully');
@@ -138,10 +295,17 @@ const createBooking = async (req, res) => {
         }
 
         // Broadcast real-time UI update to LAB_HEAD and LAB_TECH
-        await NotificationManager.broadcastBookingEvent('BOOKING_CREATED', booking, ['LAB_HEAD', 'LAB_TECH']);
+        await NotificationManager.broadcastBookingEvent(
+            secretaryConferencePriority ? 'BOOKING_APPROVED' : 'BOOKING_CREATED',
+            booking,
+            ['LAB_HEAD', 'LAB_TECH']
+        );
 
-
-        res.status(201).json({ success: true, data: booking });
+        res.status(201).json({
+            success: true,
+            data: booking,
+            meta: { rejectedBookings: rejectedBookings.length }
+        });
 
     } catch (error) {
         console.error('Booking error:', error);

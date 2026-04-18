@@ -48,7 +48,7 @@ describe('Bookings Routes', () => {
     jest.clearAllMocks();
   });
 
-  describe('GET /api/bookings', () => {
+  describe('GET /bookings', () => {
     it('should return all bookings', async () => {
       const mockBookings = [
         {
@@ -65,7 +65,7 @@ describe('Bookings Routes', () => {
       ];
       prisma.Booked_Room.findMany.mockResolvedValue(mockBookings);
 
-      const res = await request(app).get('/api/bookings');
+      const res = await request(app).get('/bookings');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -75,7 +75,7 @@ describe('Bookings Routes', () => {
     it('should filter by status', async () => {
       prisma.Booked_Room.findMany.mockResolvedValue([]);
 
-      const res = await request(app).get('/api/bookings?status=APPROVED');
+      const res = await request(app).get('/bookings?status=APPROVED');
 
       expect(res.status).toBe(200);
       expect(prisma.Booked_Room.findMany).toHaveBeenCalledWith(
@@ -88,7 +88,7 @@ describe('Bookings Routes', () => {
     it('should filter by roomId', async () => {
       prisma.Booked_Room.findMany.mockResolvedValue([]);
 
-      const res = await request(app).get('/api/bookings?roomId=1');
+      const res = await request(app).get('/bookings?roomId=1');
 
       expect(res.status).toBe(200);
       expect(prisma.Booked_Room.findMany).toHaveBeenCalledWith(
@@ -101,14 +101,14 @@ describe('Bookings Routes', () => {
     it('should handle database errors', async () => {
       prisma.Booked_Room.findMany.mockRejectedValue(new Error('DB error'));
 
-      const res = await request(app).get('/api/bookings');
+      const res = await request(app).get('/bookings');
 
       expect(res.status).toBe(500);
       expect(res.body.success).toBe(false);
     });
   });
 
-  describe('POST /api/bookings', () => {
+  describe('POST /bookings', () => {
     const validBooking = {
       User_ID: 1,
       Room_ID: 1,
@@ -134,11 +134,12 @@ describe('Bookings Routes', () => {
       };
 
       prisma.room.findUnique.mockResolvedValue(mockRoom);
+      prisma.user.findUnique.mockResolvedValue({ User_ID: 1, User_Role: 'FACULTY' });
       prisma.Booked_Room.findFirst.mockResolvedValue(null); // No conflicts
       prisma.Booked_Room.create.mockResolvedValue(mockCreatedBooking);
 
       const res = await request(app)
-        .post('/api/bookings')
+        .post('/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(201);
@@ -148,7 +149,7 @@ describe('Bookings Routes', () => {
 
     it('should reject booking with missing required fields', async () => {
       const res = await request(app)
-        .post('/api/bookings')
+        .post('/bookings')
         .send({ Room_ID: 1 }); // Missing User_ID, Start_Time, End_Time
 
       expect(res.status).toBe(400);
@@ -164,7 +165,7 @@ describe('Bookings Routes', () => {
       };
 
       const res = await request(app)
-        .post('/api/bookings')
+        .post('/bookings')
         .send(sundayBooking);
 
       expect(res.status).toBe(400);
@@ -175,7 +176,7 @@ describe('Bookings Routes', () => {
       prisma.room.findUnique.mockResolvedValue(null);
 
       const res = await request(app)
-        .post('/api/bookings')
+        .post('/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(404);
@@ -189,9 +190,10 @@ describe('Bookings Routes', () => {
         Status: 'MAINTENANCE',
         Schedule: [],
       });
+      prisma.user.findUnique.mockResolvedValue({ User_ID: 1, User_Role: 'FACULTY' });
 
       const res = await request(app)
-        .post('/api/bookings')
+        .post('/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(403);
@@ -205,6 +207,7 @@ describe('Bookings Routes', () => {
         Status: 'AVAILABLE',
         Schedule: [],
       });
+      prisma.user.findUnique.mockResolvedValue({ User_ID: 1, User_Role: 'FACULTY' });
       prisma.Booked_Room.findFirst.mockResolvedValue({
         Booked_Room_ID: 2,
         Status: 'APPROVED',
@@ -214,15 +217,82 @@ describe('Bookings Routes', () => {
       });
 
       const res = await request(app)
-        .post('/api/bookings')
+        .post('/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(409);
       expect(res.body.success).toBe(false);
     });
+
+    it('auto-approves secretary conference bookings and rejects overlapping pending bookings', async () => {
+      const conferenceBooking = {
+        User_ID: 5,
+        Room_ID: 9,
+        Start_Time: '2026-03-18T08:00:00.000Z',
+        End_Time: '2026-03-18T10:00:00.000Z',
+        Purpose: 'Conference',
+      };
+      const conferenceRoom = {
+        Room_ID: 9,
+        Name: 'Conference Room',
+        Room_Type: 'CONFERENCE',
+        Status: 'AVAILABLE',
+        Schedule: [],
+      };
+      const pendingBooking = {
+        Booked_Room_ID: 3,
+        User_ID: 8,
+        Room_ID: 9,
+        Status: 'PENDING',
+        Start_Time: '2026-03-18T08:30:00.000Z',
+        End_Time: '2026-03-18T09:30:00.000Z',
+        Notes: null,
+        Room: conferenceRoom,
+        User: { User_ID: 8, First_Name: 'Faculty', Last_Name: 'User', Email: 'faculty@test.com' },
+        Approver: null,
+      };
+      const createdBooking = {
+        Booked_Room_ID: 4,
+        ...conferenceBooking,
+        Status: 'APPROVED',
+        Approved_By: 5,
+        Room: conferenceRoom,
+        User: { User_ID: 5, First_Name: 'School', Last_Name: 'Secretary', Email: 'sec@test.com' },
+        Approver: { User_ID: 5, First_Name: 'School', Last_Name: 'Secretary', User_Role: 'SECRETARY' },
+      };
+
+      prisma.room.findUnique.mockResolvedValue(conferenceRoom);
+      prisma.user.findUnique.mockResolvedValue({ User_ID: 5, User_Role: 'SECRETARY' });
+      prisma.Booked_Room.findFirst.mockResolvedValue(null);
+      prisma.Booked_Room.findMany.mockResolvedValue([pendingBooking]);
+      prisma.Booked_Room.update.mockResolvedValue({ ...pendingBooking, Status: 'REJECTED' });
+      prisma.Booked_Room.create.mockResolvedValue(createdBooking);
+
+      const res = await request(app)
+        .post('/bookings')
+        .send(conferenceBooking);
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.Status).toBe('APPROVED');
+      expect(res.body.meta.rejectedBookings).toBe(1);
+      expect(prisma.Booked_Room.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { Booked_Room_ID: 3 },
+          data: expect.objectContaining({ Status: 'REJECTED' }),
+        })
+      );
+      expect(prisma.Booked_Room.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            Status: 'APPROVED',
+            Approved_By: 5,
+          }),
+        })
+      );
+    });
   });
 
-  describe('DELETE /api/bookings/:id', () => {
+  describe('DELETE /bookings/:id', () => {
     it('should delete a booking as owner', async () => {
       prisma.Booked_Room.findUnique.mockResolvedValue({
         Booked_Room_ID: 1,
@@ -232,7 +302,7 @@ describe('Bookings Routes', () => {
       });
       prisma.Booked_Room.delete.mockResolvedValue({});
 
-      const res = await request(app).delete('/api/bookings/1');
+      const res = await request(app).delete('/bookings/1');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -241,7 +311,7 @@ describe('Bookings Routes', () => {
     it('should return 404 for non-existent booking', async () => {
       prisma.Booked_Room.findUnique.mockResolvedValue(null);
 
-      const res = await request(app).delete('/api/bookings/999');
+      const res = await request(app).delete('/bookings/999');
 
       expect(res.status).toBe(404);
       expect(res.body.success).toBe(false);

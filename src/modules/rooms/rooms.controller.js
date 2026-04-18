@@ -153,7 +153,7 @@ const getOpenedLabs = async (req, res) => {
 // Create room
 const createRoom = async (req, res) => {
 
-  const VALID_ROOM_TYPES = ['CONSULTATION', 'LECTURE', 'LAB'];
+  const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB'];
   const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
   const { Name, Capacity, Room_Type, Lab_Type } = req.body;
 
@@ -204,7 +204,7 @@ const updateRoom = async (req, res) => {
   const roomId = parseInt(req.params.id);
   if (isNaN(roomId) || roomId <= 0) return res.status(400).json({ success: false, error: 'Invalid room ID' });
 
-  const VALID_ROOM_TYPES = ['CONSULTATION', 'LECTURE', 'LAB'];
+  const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB'];
   const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
   const { Name, Capacity, Room_Type, Status, Lab_Type } = req.body;
 
