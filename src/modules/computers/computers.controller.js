@@ -5,6 +5,7 @@ const {
     normalizeImportedStatus,
     parseCsvBuffer,
 } = require('../../utils/csvImport');
+const { readXlsxWorkbook } = require('../../utils/xlsxReader');
 
 const VALID_COMPUTER_STATUSES = ['AVAILABLE', 'IN_USE', 'MAINTENANCE', 'DECOMMISSIONED'];
 const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED'];
@@ -218,6 +219,48 @@ const buildImportedComputer = (headers, row) => {
             items: imported.items,
         }
     };
+};
+
+const parseComputerImportFile = (file, sheetName) => {
+    const originalName = file.originalname || '';
+    const lowerName = originalName.toLowerCase();
+
+    if (lowerName.endsWith('.csv')) {
+        return {
+            ...parseCsvBuffer(file.buffer),
+            sourceType: 'csv',
+        };
+    }
+
+    if (lowerName.endsWith('.xlsx')) {
+        const workbook = readXlsxWorkbook(file.buffer);
+        const sheet = sheetName
+            ? workbook.sheets.find(candidate => candidate.name === sheetName)
+            : workbook.sheets.find(candidate => candidate.rows.length > 0);
+
+        if (!sheet) {
+            const error = new Error(sheetName ? `Sheet "${sheetName}" not found` : 'Workbook has no readable sheets');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        const [headers = [], ...dataRows] = sheet.rows;
+        return {
+            headers: headers.map(header => String(header || '').trim()),
+            rows: dataRows
+                .map((values, index) => ({
+                    rowNumber: index + 2,
+                    values: values.map(value => String(value || '').trim()),
+                }))
+                .filter(row => row.values.some(value => value !== '')),
+            sourceType: 'xlsx',
+            sheetName: sheet.name,
+        };
+    }
+
+    const error = new Error('Only .csv and .xlsx files are supported');
+    error.statusCode = 400;
+    throw error;
 };
 
 const importComputerRow = async (tx, row, roomId, userId) => {
@@ -676,11 +719,11 @@ const deleteComputer = async (req, res) => {
     }
 };
 
-// POST /api/computers/import-csv - Import room computers and components from CSV
+// POST /api/computers/import-csv - Import room computers and components from CSV/XLSX
 const importComputersCsv = async (req, res) => {
     try {
         if (!req.file?.buffer) {
-            return res.status(400).json({ success: false, error: 'CSV file is required' });
+            return res.status(400).json({ success: false, error: 'CSV or Excel file is required' });
         }
 
         const parsedRoom = parseRequiredRoomId(req.body.roomId ?? req.query.roomId);
@@ -689,9 +732,9 @@ const importComputersCsv = async (req, res) => {
         const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoom.value } });
         if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
 
-        const parsed = parseCsvBuffer(req.file.buffer);
+        const parsed = parseComputerImportFile(req.file, req.body.sheetName ?? req.query.sheetName);
         if (parsed.headers.length === 0 || parsed.rows.length === 0) {
-            return res.status(400).json({ success: false, error: 'CSV must include headers and at least one data row' });
+            return res.status(400).json({ success: false, error: 'Import file must include headers and at least one data row' });
         }
 
         const candidateRows = parsed.rows.map(row => {
@@ -744,10 +787,20 @@ const importComputersCsv = async (req, res) => {
             duplicates: candidateRows.filter(row => row.status === 'duplicate').length,
         };
 
-        res.json({ success: true, data: { summary, rows: candidateRows, computers: decorateComputersForRoomDisplay(createdComputers) } });
+        res.json({
+            success: true,
+            data: {
+                summary,
+                rows: candidateRows,
+                computers: decorateComputersForRoomDisplay(createdComputers),
+                sourceType: parsed.sourceType,
+                sheetName: parsed.sheetName,
+            }
+        });
     } catch (error) {
         console.error('Error importing computers CSV:', error);
-        res.status(500).json({ success: false, error: 'Failed to import computers CSV' });
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json({ success: false, error: statusCode === 500 ? 'Failed to import computers file' : error.message });
     }
 };
 

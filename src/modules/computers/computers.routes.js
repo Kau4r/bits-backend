@@ -14,10 +14,11 @@ const {
 
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        if (!file.originalname.toLowerCase().endsWith('.csv')) {
-            return cb(new Error('Only .csv files are supported'));
+        const lowerName = file.originalname.toLowerCase();
+        if (!lowerName.endsWith('.csv') && !lowerName.endsWith('.xlsx')) {
+            return cb(new Error('Only .csv and .xlsx files are supported'));
         }
         return cb(null, true);
     }
@@ -26,7 +27,7 @@ const upload = multer({
 const uploadCsv = (req, res, next) => {
     upload.single('file')(req, res, (error) => {
         if (error) {
-            return res.status(400).json({ success: false, error: error.message || 'Invalid CSV upload' });
+            return res.status(400).json({ success: false, error: error.message || 'Invalid import file upload' });
         }
         return next();
     });

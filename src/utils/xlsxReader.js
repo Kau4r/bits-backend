@@ -87,7 +87,9 @@ const readZipEntries = (buffer) => {
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
     const localHeaderOffset = buffer.readUInt32LE(offset + 42);
-    const fileName = buffer.toString('utf8', offset + 46, offset + 46 + fileNameLength);
+    const fileName = buffer
+      .toString('utf8', offset + 46, offset + 46 + fileNameLength)
+      .replace(/\\/g, '/');
 
     entries.set(fileName, { fileName, method, compressedSize, localHeaderOffset });
     offset += 46 + fileNameLength + extraLength + commentLength;
