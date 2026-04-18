@@ -1,6 +1,13 @@
 const prisma = require('../../lib/prisma');
+const {
+    getRowValue,
+    normalizeCsvHeader,
+    normalizeImportedStatus,
+    parseCsvBuffer,
+} = require('../../utils/csvImport');
 
 const VALID_COMPUTER_STATUSES = ['AVAILABLE', 'IN_USE', 'MAINTENANCE', 'DECOMMISSIONED'];
+const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED'];
 
 const extractPcNumber = (name = '') => {
     if (typeof name !== 'string') return null;
@@ -77,6 +84,229 @@ const buildComputerInclude = () => ({
         }
     }
 });
+
+const normalizeImportedItemType = (value = 'GENERAL') => {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().replace(/[\s-]+/g, '_').toUpperCase();
+    if (!normalized || normalized.length > 50 || !/^[A-Z0-9_]+$/.test(normalized)) return null;
+    return normalized;
+};
+
+const parseRequiredRoomId = (value) => {
+    const parsedRoomId = parseInt(value, 10);
+    if (Number.isNaN(parsedRoomId) || parsedRoomId <= 0) return { error: 'Room_ID is required for computer import' };
+    return { value: parsedRoomId };
+};
+
+const isWideRoomAssetsCsv = (headers) => {
+    const normalized = headers.map(normalizeCsvHeader);
+    return normalized[0] === 'table' &&
+        normalized.includes('nuc') &&
+        normalized.includes('monitor') &&
+        normalized.includes('keyboard') &&
+        normalized.includes('mouse');
+};
+
+const buildWideRoomAssetComputer = (row) => {
+    const tableNumber = row.values[0]?.trim();
+    const name = tableNumber ? `PC ${tableNumber}` : '';
+
+    const componentDefinitions = [
+        { itemType: 'SYSTEM_UNIT', itemCode: row.values[1], brand: row.values[2], status: row.values[3] },
+        { itemType: 'POWER_ADAPTER', itemCode: row.values[4], serialNumber: row.values[5], status: row.values[6] },
+        { itemType: 'MONITOR', itemCode: row.values[7], serialNumber: row.values[8], status: row.values[9] },
+        { itemType: 'KEYBOARD', itemCode: row.values[10], serialNumber: row.values[11], status: row.values[12] },
+        { itemType: 'MOUSE', itemCode: row.values[13], serialNumber: row.values[14], status: row.values[15] },
+    ];
+
+    return {
+        name,
+        status: 'AVAILABLE',
+        items: componentDefinitions
+            .filter(item => item.itemCode && item.itemCode.trim())
+            .map(item => ({
+                itemType: item.itemType,
+                itemCode: item.itemCode.trim(),
+                brand: item.brand?.trim() || null,
+                serialNumber: item.serialNumber?.trim() || null,
+                status: normalizeImportedStatus(item.status, VALID_ITEM_STATUSES, 'AVAILABLE'),
+            })),
+    };
+};
+
+const buildNormalizedComputer = (headers, row) => {
+    const rawName = getRowValue(headers, row, ['Computer_Name', 'Computer Name', 'Computer', 'Name', 'PC']);
+    const tableNumber = getRowValue(headers, row, ['Table', 'PC Number', 'Computer Number']);
+    const name = rawName || (tableNumber ? `PC ${tableNumber}` : '');
+    const status = normalizeImportedStatus(
+        getRowValue(headers, row, ['Status', 'Computer Status']),
+        VALID_COMPUTER_STATUSES,
+        'AVAILABLE'
+    );
+
+    const componentDefinitions = [
+        { itemType: 'SYSTEM_UNIT', aliases: ['System Unit', 'System_Unit', 'SystemUnit', 'CPU', 'NUC'] },
+        { itemType: 'MONITOR', aliases: ['Monitor'] },
+        { itemType: 'KEYBOARD', aliases: ['Keyboard'] },
+        { itemType: 'MOUSE', aliases: ['Mouse'] },
+        { itemType: 'POWER_ADAPTER', aliases: ['Power Adapter', 'Power Adaptor', 'Power_Adapter', 'Power_Adaptor'] },
+    ];
+
+    const items = componentDefinitions.flatMap(definition => {
+        const normalizedKeys = definition.aliases.map(alias => alias.replace(/\s+/g, '_'));
+        const itemCode = getRowValue(headers, row, normalizedKeys.flatMap(key => [
+            `${key}_Item_Code`,
+            `${key} Item Code`,
+            `${key}_Code`,
+            `${key} Code`,
+            `${key}_Asset_Code`,
+            `${key} Asset Code`,
+        ]));
+        const brand = getRowValue(headers, row, normalizedKeys.flatMap(key => [
+            `${key}_Brand`,
+            `${key} Brand`,
+            `${key}_Model`,
+            `${key} Model`,
+        ]));
+        const serialNumber = getRowValue(headers, row, normalizedKeys.flatMap(key => [
+            `${key}_Serial_Number`,
+            `${key} Serial Number`,
+            `${key}_Serial`,
+            `${key} Serial`,
+        ]));
+        const rawStatus = getRowValue(headers, row, normalizedKeys.flatMap(key => [
+            `${key}_Status`,
+            `${key} Status`,
+            `${key}_Stat`,
+            `${key} Stat`,
+        ]));
+
+        if (!itemCode && !brand && !serialNumber) return [];
+
+        return [{
+            itemType: definition.itemType,
+            itemCode: itemCode.trim(),
+            brand: brand || null,
+            serialNumber: serialNumber || null,
+            status: normalizeImportedStatus(rawStatus, VALID_ITEM_STATUSES, 'AVAILABLE'),
+        }];
+    });
+
+    return { name, status, items };
+};
+
+const buildImportedComputer = (headers, row) => {
+    const imported = isWideRoomAssetsCsv(headers)
+        ? buildWideRoomAssetComputer(row)
+        : buildNormalizedComputer(headers, row);
+
+    if (!imported.name.trim()) return { error: 'Missing computer name or table number' };
+    if (!imported.status) return { error: 'Invalid computer status' };
+
+    for (const item of imported.items) {
+        if (!item.itemCode?.trim()) return { error: `Missing item code for ${item.itemType}` };
+        const normalizedItemType = normalizeImportedItemType(item.itemType);
+        if (!normalizedItemType) return { error: `Invalid item type: ${item.itemType}` };
+        if (!item.status) return { error: `Invalid status for ${item.itemCode || normalizedItemType}` };
+        item.itemType = normalizedItemType;
+    }
+
+    return {
+        computer: {
+            name: imported.name.trim(),
+            status: imported.status,
+            items: imported.items,
+        }
+    };
+};
+
+const importComputerRow = async (tx, row, roomId, userId) => {
+    const existingComputer = await tx.computer.findFirst({
+        where: { Name: row.computer.name, Room_ID: roomId },
+        select: { Computer_ID: true },
+    });
+    if (existingComputer) {
+        const error = new Error('Computer already exists in this room');
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const itemCodes = row.computer.items
+        .map(item => item.itemCode)
+        .filter(Boolean);
+    if (new Set(itemCodes.map(code => code.toLowerCase())).size !== itemCodes.length) {
+        const error = new Error('Duplicate component item code in row');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const existingItems = itemCodes.length > 0
+        ? await tx.item.findMany({
+            where: { Item_Code: { in: itemCodes } },
+            include: { Computer: { select: { Computer_ID: true, Name: true } } },
+        })
+        : [];
+
+    const itemsToConnect = [];
+    const itemsToCreate = [];
+
+    for (const item of row.computer.items) {
+        if (!item.itemCode) continue;
+
+        const existingItem = existingItems.find(existing => existing.Item_Code.toLowerCase() === item.itemCode.toLowerCase());
+        if (existingItem) {
+            if (existingItem.Computer.length > 0) {
+                const error = new Error(`${existingItem.Item_Code} is already assigned to ${existingItem.Computer[0].Name}`);
+                error.statusCode = 400;
+                throw error;
+            }
+            if (existingItem.Status !== 'AVAILABLE') {
+                const error = new Error(`${existingItem.Item_Code} is not available`);
+                error.statusCode = 400;
+                throw error;
+            }
+
+            itemsToConnect.push({ Item_ID: existingItem.Item_ID });
+            continue;
+        }
+
+        itemsToCreate.push({
+            Item_Code: item.itemCode,
+            Item_Type: item.itemType,
+            Brand: item.brand || null,
+            Serial_Number: item.serialNumber || null,
+            Status: item.status || 'AVAILABLE',
+            Room_ID: roomId,
+            IsBorrowable: false,
+            User_ID: userId,
+            Created_At: new Date(),
+            Updated_At: new Date(),
+        });
+    }
+
+    const computer = await tx.computer.create({
+        data: {
+            Name: row.computer.name,
+            Room_ID: roomId,
+            Status: row.computer.status,
+            Updated_At: new Date(),
+            Item: {
+                ...(itemsToConnect.length > 0 && { connect: itemsToConnect }),
+                ...(itemsToCreate.length > 0 && { create: itemsToCreate }),
+            },
+        },
+        include: buildComputerInclude(),
+    });
+
+    if (itemsToConnect.length > 0) {
+        await tx.item.updateMany({
+            where: { Item_ID: { in: itemsToConnect.map(item => item.Item_ID) } },
+            data: { Room_ID: roomId, IsBorrowable: false },
+        });
+    }
+
+    return computer;
+};
 
 // GET /api/computers - Fetch all computers (optionally filtered by roomId)
 const getComputers = async (req, res) => {
@@ -446,9 +676,85 @@ const deleteComputer = async (req, res) => {
     }
 };
 
+// POST /api/computers/import-csv - Import room computers and components from CSV
+const importComputersCsv = async (req, res) => {
+    try {
+        if (!req.file?.buffer) {
+            return res.status(400).json({ success: false, error: 'CSV file is required' });
+        }
+
+        const parsedRoom = parseRequiredRoomId(req.body.roomId ?? req.query.roomId);
+        if (parsedRoom.error) return res.status(400).json({ success: false, error: parsedRoom.error });
+
+        const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoom.value } });
+        if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
+
+        const parsed = parseCsvBuffer(req.file.buffer);
+        if (parsed.headers.length === 0 || parsed.rows.length === 0) {
+            return res.status(400).json({ success: false, error: 'CSV must include headers and at least one data row' });
+        }
+
+        const candidateRows = parsed.rows.map(row => {
+            const imported = buildImportedComputer(parsed.headers, row);
+            return {
+                rowNumber: row.rowNumber,
+                computer: imported.computer,
+                computerName: imported.computer?.name || '',
+                status: imported.error ? 'invalid' : 'valid',
+                reason: imported.error || 'Ready to import',
+            };
+        });
+
+        const seenNames = new Set();
+        for (const row of candidateRows.filter(row => row.status === 'valid')) {
+            const key = row.computerName.toLowerCase();
+            if (seenNames.has(key)) {
+                row.status = 'duplicate';
+                row.reason = 'Duplicate computer name in CSV';
+            }
+            seenNames.add(key);
+        }
+
+        const createdComputers = [];
+        for (const row of candidateRows.filter(row => row.status === 'valid')) {
+            try {
+                const created = await prisma.$transaction(tx =>
+                    importComputerRow(tx, row, parsedRoom.value, req.user.User_ID)
+                );
+                row.status = 'imported';
+                row.reason = 'Imported';
+                row.computerId = created.Computer_ID;
+                row.componentCount = created.Item.length;
+                createdComputers.push(created);
+            } catch (error) {
+                row.status = error.statusCode === 409 ? 'skipped' : 'invalid';
+                row.reason = error.message || 'Failed to import row';
+            }
+        }
+
+        candidateRows.forEach(row => {
+            delete row.computer;
+        });
+
+        const summary = {
+            totalRows: candidateRows.length,
+            imported: candidateRows.filter(row => row.status === 'imported').length,
+            skipped: candidateRows.filter(row => row.status === 'skipped').length,
+            invalid: candidateRows.filter(row => row.status === 'invalid').length,
+            duplicates: candidateRows.filter(row => row.status === 'duplicate').length,
+        };
+
+        res.json({ success: true, data: { summary, rows: candidateRows, computers: decorateComputersForRoomDisplay(createdComputers) } });
+    } catch (error) {
+        console.error('Error importing computers CSV:', error);
+        res.status(500).json({ success: false, error: 'Failed to import computers CSV' });
+    }
+};
+
 module.exports = {
     getComputers,
     createComputer,
     updateComputer,
-    deleteComputer
+    deleteComputer,
+    importComputersCsv
 };

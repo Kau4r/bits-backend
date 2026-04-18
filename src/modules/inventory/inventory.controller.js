@@ -1,5 +1,13 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
+const {
+  getRowValue,
+  normalizeImportedStatus,
+  parseCsvBuffer,
+  parseImportedBoolean,
+} = require('../../utils/csvImport');
+
+const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED'];
 
 const normalizeItemType = (value = 'GENERAL') => {
   if (typeof value !== 'string') return null;
@@ -10,6 +18,51 @@ const normalizeItemType = (value = 'GENERAL') => {
   }
 
   return normalized;
+};
+
+const parseRoomId = (value) => {
+  if (value === undefined || value === null || value === '') return { value: null };
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) return { error: 'Invalid room ID' };
+  return { value: parsed };
+};
+
+const buildImportedItem = (headers, row, defaultRoomId, userId) => {
+  const itemCode = getRowValue(headers, row, [
+    'Item_Code',
+    'Item Code',
+    'Asset Code',
+    'Asset_Code',
+    'Code',
+  ]);
+  const rawItemType = getRowValue(headers, row, ['Item_Type', 'Item Type', 'Type', 'Asset Type']);
+  const normalizedItemType = normalizeItemType(rawItemType || 'GENERAL');
+  const status = normalizeImportedStatus(
+    getRowValue(headers, row, ['Status', 'Stat', 'State']),
+    VALID_ITEM_STATUSES,
+    'AVAILABLE'
+  );
+  const roomIdResult = parseRoomId(getRowValue(headers, row, ['Room_ID', 'Room ID', 'RoomId']) || defaultRoomId);
+
+  if (!itemCode) return { error: 'Missing Item_Code / Asset Code' };
+  if (!normalizedItemType) return { error: 'Invalid Item_Type' };
+  if (!status) return { error: 'Invalid Status' };
+  if (roomIdResult.error) return { error: roomIdResult.error };
+
+  return {
+    item: {
+      Item_Code: itemCode.trim(),
+      Item_Type: normalizedItemType,
+      Brand: getRowValue(headers, row, ['Brand', 'Model', 'Description']) || null,
+      Serial_Number: getRowValue(headers, row, ['Serial_Number', 'Serial Number', 'Serial', 'Asset Serial']) || null,
+      Status: status,
+      Room_ID: roomIdResult.value,
+      IsBorrowable: parseImportedBoolean(getRowValue(headers, row, ['IsBorrowable', 'Borrowable', 'Can Borrow']), false),
+      User_ID: userId,
+      Created_At: new Date(),
+      Updated_At: new Date(),
+    }
+  };
 };
 
 // Helper function to check user role (kept for backward compatibility)
@@ -441,6 +494,108 @@ const bulkCreateItems = async (req, res) => {
   }
 };
 
+// Import room inventory items from CSV
+const importInventoryCsv = async (req, res) => {
+  try {
+    if (!req.file?.buffer) {
+      return res.status(400).json({ success: false, error: 'CSV file is required' });
+    }
+
+    const parsedRoom = parseRoomId(req.body.roomId ?? req.query.roomId);
+    if (parsedRoom.error) return res.status(400).json({ success: false, error: parsedRoom.error });
+
+    if (parsedRoom.value) {
+      const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoom.value } });
+      if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
+    }
+
+    const parsed = parseCsvBuffer(req.file.buffer);
+    if (parsed.headers.length === 0 || parsed.rows.length === 0) {
+      return res.status(400).json({ success: false, error: 'CSV must include headers and at least one data row' });
+    }
+
+    const candidateRows = parsed.rows.map(row => {
+      const imported = buildImportedItem(parsed.headers, row, parsedRoom.value, req.user.User_ID);
+      return {
+        rowNumber: row.rowNumber,
+        item: imported.item,
+        status: imported.error ? 'invalid' : 'valid',
+        reason: imported.error || 'Ready to import',
+      };
+    });
+
+    const validCandidates = candidateRows.filter(row => row.status === 'valid');
+    const seenCodes = new Set();
+    for (const row of validCandidates) {
+      const key = row.item.Item_Code.toLowerCase();
+      if (seenCodes.has(key)) {
+        row.status = 'duplicate';
+        row.reason = 'Duplicate Item_Code in CSV';
+      }
+      seenCodes.add(key);
+    }
+
+    const codes = validCandidates
+      .filter(row => row.status === 'valid')
+      .map(row => row.item.Item_Code);
+
+    if (codes.length > 0) {
+      const existingItems = await prisma.item.findMany({
+        where: { Item_Code: { in: codes } },
+        select: { Item_Code: true },
+      });
+      const existingCodes = new Set(existingItems.map(item => item.Item_Code.toLowerCase()));
+      validCandidates.forEach(row => {
+        if (row.status === 'valid' && existingCodes.has(row.item.Item_Code.toLowerCase())) {
+          row.status = 'skipped';
+          row.reason = 'Item_Code already exists';
+        }
+      });
+    }
+
+    const rowsToCreate = validCandidates.filter(row => row.status === 'valid');
+    const createdItems = rowsToCreate.length > 0
+      ? await prisma.$transaction(rowsToCreate.map(row => prisma.item.create({ data: row.item })))
+      : [];
+
+    const createdByCode = new Map(createdItems.map(item => [item.Item_Code.toLowerCase(), item]));
+    candidateRows.forEach(row => {
+      if (row.status === 'valid') {
+        row.status = 'imported';
+        row.reason = 'Imported';
+        row.itemId = createdByCode.get(row.item.Item_Code.toLowerCase())?.Item_ID;
+      }
+      if (row.item) {
+        row.itemCode = row.item.Item_Code;
+        row.itemType = row.item.Item_Type;
+        delete row.item;
+      }
+    });
+
+    if (createdItems.length > 0) {
+      await AuditLogger.log({
+        userId: req.user.User_ID,
+        action: 'ITEM_CREATED',
+        details: `Imported ${createdItems.length} inventory item(s) from CSV`,
+        logType: 'INVENTORY'
+      });
+    }
+
+    const summary = {
+      totalRows: candidateRows.length,
+      imported: candidateRows.filter(row => row.status === 'imported').length,
+      skipped: candidateRows.filter(row => row.status === 'skipped').length,
+      invalid: candidateRows.filter(row => row.status === 'invalid').length,
+      duplicates: candidateRows.filter(row => row.status === 'duplicate').length,
+    };
+
+    res.json({ success: true, data: { summary, rows: candidateRows, items: createdItems } });
+  } catch (error) {
+    console.error('Error importing inventory CSV:', error);
+    res.status(500).json({ success: false, error: 'Failed to import inventory CSV' });
+  }
+};
+
 module.exports = {
   getItems,
   getAvailableItems,
@@ -449,5 +604,6 @@ module.exports = {
   createItem,
   updateItem,
   deleteItem,
-  bulkCreateItems
+  bulkCreateItems,
+  importInventoryCsv
 };
