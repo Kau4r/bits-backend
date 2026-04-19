@@ -28,6 +28,7 @@ model User {
   Borrowing_Comp              Borrowing_Comp[]
   Form_Form_Approver_IDToUser Form[]                @relation("Form_Approver_IDToUser")
   Form_Form_Creator_IDToUser  Form[]                @relation("Form_Creator_IDToUser")
+  Form_Form_Received_ByToUser Form[]                @relation("Form_Received_ByToUser")
   Form_Attachments_Uploaded   FormAttachment[]      @relation("FormAttachmentUploader")
   Item                        Item[]
   NotificationReads           NotificationRead[]
@@ -106,10 +107,16 @@ model Form {
   Form_Type   FormType
   Is_Archived Boolean        @default(false)
   Status      FormStatus     @default(PENDING)
+  Is_Received Boolean        @default(false)
+  Received_At DateTime?
+  Received_By Int?
   Approver    User?          @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
   Creator     User           @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
+  Receiver    User?          @relation("Form_Received_ByToUser", fields: [Received_By], references: [User_ID], onDelete: SetNull)
   History     FormHistory[]
   Attachments FormAttachment[]
+
+  @@index([Received_By])
 }
 
 model FormHistory {
@@ -125,6 +132,7 @@ model FormAttachment {
   Attachment_ID Int            @id @default(autoincrement())
   Form_ID       Int
   Department    FormDepartment
+  Document_Type FormDocumentType @default(PROOF)
   File_Name     String
   File_Type     String?
   File_URL      String
@@ -136,6 +144,7 @@ model FormAttachment {
 
   @@index([Form_ID])
   @@index([Department])
+  @@index([Document_Type])
   @@index([Uploaded_By])
 }
 
@@ -337,6 +346,16 @@ enum FormDepartment {
   PURCHASING
   PPFO
   COMPLETED
+}
+
+enum FormDocumentType {
+  INITIAL
+  PURCHASE_ORDER
+  DELIVERY_RECEIPT
+  RECEIVING_REPORT
+  SALES_INVOICE
+  PROOF
+  OTHER
 }
 
 enum RoomStatus {

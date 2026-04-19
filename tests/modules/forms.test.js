@@ -49,6 +49,7 @@ const createdForm = (overrides = {}) => ({
     Attachment_ID: 1,
     Form_ID: 1,
     Department: 'REQUESTOR',
+    Document_Type: 'INITIAL',
     File_Name: 'wrf.pdf',
     File_URL: 'https://example.test/uploads/wrf.pdf',
     File_Type: 'application/pdf',
@@ -111,6 +112,7 @@ describe('Form Routes', () => {
             Attachments: {
               create: [{
                 Department: 'REQUESTOR',
+                Document_Type: 'INITIAL',
                 File_Name: 'wrf.pdf',
                 File_URL: 'https://example.test/uploads/wrf.pdf',
                 File_Type: 'application/pdf',
@@ -256,6 +258,95 @@ describe('Form Routes', () => {
       expect(res.body.error).toBe('Invalid department');
       expect(prisma.Form.update).not.toHaveBeenCalled();
     });
+
+    it('blocks RIS completion when required procurement files or received indicator are missing', async () => {
+      prisma.Form.findUnique.mockResolvedValue(createdForm({
+        Form_Type: 'RIS',
+        Department: 'PURCHASING',
+        Is_Received: false,
+        History: [
+          { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Department Head' },
+          { Department: 'DEAN_OFFICE', Notes: 'Dean Office' },
+          { Department: 'TNS', Notes: 'TNS' },
+          { Department: 'PURCHASING', Notes: 'Purchasing' },
+        ],
+        Attachments: [],
+      }));
+
+      const res = await request(app)
+        .post('/forms/1/transfer')
+        .send({ department: 'COMPLETED' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.missingDocumentTypes).toEqual([
+        'PURCHASE_ORDER',
+        'DELIVERY_RECEIPT',
+        'RECEIVING_REPORT',
+        'SALES_INVOICE',
+      ]);
+      expect(res.body.isReceived).toBe(false);
+      expect(prisma.Form.update).not.toHaveBeenCalled();
+    });
+
+    it('allows RIS completion after required files are uploaded and received is checked', async () => {
+      const requiredAttachments = [
+        'PURCHASE_ORDER',
+        'DELIVERY_RECEIPT',
+        'RECEIVING_REPORT',
+        'SALES_INVOICE',
+      ].map((Document_Type, index) => ({
+        Attachment_ID: index + 1,
+        Form_ID: 1,
+        Department: 'PURCHASING',
+        Document_Type,
+        File_Name: `${Document_Type}.pdf`,
+        File_URL: `https://example.test/uploads/${Document_Type}.pdf`,
+        Uploaded_By: 9999,
+        Uploaded_At: new Date().toISOString(),
+      }));
+
+      prisma.Form.findUnique.mockResolvedValue(createdForm({
+        Form_Type: 'RIS',
+        Department: 'PURCHASING',
+        Is_Received: true,
+        History: [
+          { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Department Head' },
+          { Department: 'DEAN_OFFICE', Notes: 'Dean Office' },
+          { Department: 'TNS', Notes: 'TNS' },
+          { Department: 'PURCHASING', Notes: 'Purchasing' },
+        ],
+        Attachments: requiredAttachments,
+      }));
+      prisma.Form.update.mockResolvedValue(createdForm({
+        Form_Type: 'RIS',
+        Department: 'COMPLETED',
+        Is_Received: true,
+        Attachments: requiredAttachments,
+      }));
+
+      const res = await request(app)
+        .post('/forms/1/transfer')
+        .send({ department: 'COMPLETED', notes: 'Complete RIS' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.Department).toBe('COMPLETED');
+      expect(prisma.Form.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { Form_ID: 1 },
+          data: {
+            Department: 'COMPLETED',
+            History: {
+              create: {
+                Department: 'COMPLETED',
+                Notes: 'Complete RIS',
+              },
+            },
+          },
+        })
+      );
+    });
   });
 
   describe('PATCH /forms/:id', () => {
@@ -332,6 +423,7 @@ describe('Form Routes', () => {
             Attachments: {
               create: [{
                 Department: 'PPFO',
+                Document_Type: 'PROOF',
                 File_Name: 'ppfo-proof.pdf',
                 File_URL: 'https://example.test/uploads/ppfo-proof.pdf',
                 File_Type: 'application/pdf',
@@ -348,6 +440,84 @@ describe('Form Routes', () => {
         `Added 1 attachment(s) to form WRF-${year}-001`,
         ['LAB_TECH', 'LAB_HEAD'],
         9999
+      );
+    });
+  });
+
+  describe('PATCH /forms/:id/received', () => {
+    it('rejects marking RIS received until all required files are uploaded', async () => {
+      prisma.Form.findUnique.mockResolvedValue(createdForm({
+        Form_Type: 'RIS',
+        Department: 'PURCHASING',
+        History: [
+          { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Department Head' },
+          { Department: 'DEAN_OFFICE', Notes: 'Dean Office' },
+          { Department: 'TNS', Notes: 'TNS' },
+          { Department: 'PURCHASING', Notes: 'Purchasing' },
+        ],
+        Attachments: [],
+      }));
+
+      const res = await request(app)
+        .patch('/forms/1/received')
+        .send({ isReceived: true });
+
+      expect(res.status).toBe(400);
+      expect(res.body.missingDocumentTypes).toContain('PURCHASE_ORDER');
+      expect(prisma.Form.update).not.toHaveBeenCalled();
+    });
+
+    it('marks RIS received after required files are uploaded', async () => {
+      const requiredAttachments = [
+        'PURCHASE_ORDER',
+        'DELIVERY_RECEIPT',
+        'RECEIVING_REPORT',
+        'SALES_INVOICE',
+      ].map((Document_Type, index) => ({
+        Attachment_ID: index + 1,
+        Form_ID: 1,
+        Department: 'PURCHASING',
+        Document_Type,
+        File_Name: `${Document_Type}.pdf`,
+        File_URL: `https://example.test/uploads/${Document_Type}.pdf`,
+        Uploaded_By: 9999,
+        Uploaded_At: new Date().toISOString(),
+      }));
+      const existingForm = createdForm({
+        Form_Type: 'RIS',
+        Department: 'PURCHASING',
+        History: [
+          { Department: 'REQUESTOR', Notes: 'Form created' },
+          { Department: 'DEPARTMENT_HEAD', Notes: 'Department Head' },
+          { Department: 'DEAN_OFFICE', Notes: 'Dean Office' },
+          { Department: 'TNS', Notes: 'TNS' },
+          { Department: 'PURCHASING', Notes: 'Purchasing' },
+        ],
+        Attachments: requiredAttachments,
+      });
+      prisma.Form.findUnique.mockResolvedValue(existingForm);
+      prisma.Form.update.mockResolvedValue({
+        ...existingForm,
+        Is_Received: true,
+        Received_By: 9999,
+        Received_At: new Date().toISOString(),
+      });
+
+      const res = await request(app)
+        .patch('/forms/1/received')
+        .send({ isReceived: true });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.Is_Received).toBe(true);
+      expect(prisma.Form.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { Form_ID: 1 },
+          data: expect.objectContaining({
+            Is_Received: true,
+            Received_By: 9999,
+          }),
+        })
       );
     });
   });

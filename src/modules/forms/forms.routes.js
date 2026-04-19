@@ -10,6 +10,7 @@ const {
     updateForm,
     archiveForm,
     transferForm,
+    setFormReceived,
     addFormAttachments,
     deleteForm
 } = require('./forms.controller');
@@ -21,6 +22,7 @@ router.get('/:id', authenticateToken, canManageForms, asyncHandler(getFormById))
 router.post('/', authenticateToken, canManageForms, asyncHandler(createForm));
 router.patch('/:id', authenticateToken, canManageForms, asyncHandler(updateForm));
 router.patch('/:id/archive', authenticateToken, canManageForms, asyncHandler(archiveForm));
+router.patch('/:id/received', authenticateToken, canManageForms, asyncHandler(setFormReceived));
 router.post('/:id/transfer', authenticateToken, canManageForms, asyncHandler(transferForm));
 router.post('/:id/attachments', authenticateToken, canManageForms, asyncHandler(addFormAttachments));
 router.delete('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(deleteForm));

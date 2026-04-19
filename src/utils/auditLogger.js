@@ -145,6 +145,9 @@ class AuditLogger {
             'FORM_IN_REVIEW': 'Form In Review',
             'FORM_TRANSFERRED': 'Form Transferred',
             'FORM_ARCHIVED': 'Form Archived',
+            'FORM_ATTACHMENT_ADDED': 'Form Attachment Added',
+            'FORM_RECEIVED': 'Form Received',
+            'FORM_RECEIVED_REVOKED': 'Form Received Reverted',
 
             // Inventory
             'ITEM_CREATED': 'Item Added to Inventory',

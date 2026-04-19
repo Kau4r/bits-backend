@@ -16,9 +16,36 @@ const FORM_DEPARTMENT_WORKFLOWS = {
     RIS: ['REQUESTOR', 'DEPARTMENT_HEAD', 'DEAN_OFFICE', 'TNS', 'PURCHASING', 'COMPLETED']
 };
 
+const VALID_FORM_DOCUMENT_TYPES = [
+    'INITIAL',
+    'PURCHASE_ORDER',
+    'DELIVERY_RECEIPT',
+    'RECEIVING_REPORT',
+    'SALES_INVOICE',
+    'PROOF',
+    'OTHER'
+];
+
+const RIS_REQUIRED_COMPLETION_DOCUMENT_TYPES = [
+    'PURCHASE_ORDER',
+    'DELIVERY_RECEIPT',
+    'RECEIVING_REPORT',
+    'SALES_INVOICE'
+];
+
+const DOCUMENT_TYPE_LABELS = {
+    PURCHASE_ORDER: 'Purchase Order',
+    DELIVERY_RECEIPT: 'Delivery Receipt',
+    RECEIVING_REPORT: 'Receiving Report',
+    SALES_INVOICE: 'Sales Invoice'
+};
+
 const normalizeDepartment = (department = 'REQUESTOR') => String(department).toUpperCase();
 const isValidDepartment = (department) => VALID_FORM_DEPARTMENTS.includes(department);
 const getWorkflowForFormType = (formType) => FORM_DEPARTMENT_WORKFLOWS[String(formType || '').toUpperCase()] || [];
+const normalizeDocumentType = (documentType = 'PROOF') =>
+    String(documentType || 'PROOF').trim().toUpperCase().replace(/[\s-]+/g, '_');
+const isValidDocumentType = (documentType) => VALID_FORM_DOCUMENT_TYPES.includes(documentType);
 
 const userSelect = {
     User_ID: true,
@@ -34,6 +61,9 @@ const formInclude = {
     Approver: {
         select: userSelect
     },
+    Receiver: {
+        select: userSelect
+    },
     History: {
         orderBy: { Changed_At: 'asc' }
     },
@@ -47,10 +77,11 @@ const formInclude = {
     }
 };
 
-const normalizeAttachmentInput = (attachment, fallbackDepartment, fallbackUploaderId) => {
+const normalizeAttachmentInput = (attachment, fallbackDepartment, fallbackUploaderId, fallbackDocumentType = 'PROOF') => {
     const fileName = String(attachment?.fileName || attachment?.File_Name || '').trim();
     const fileUrl = String(attachment?.fileUrl || attachment?.File_URL || '').trim();
     const department = normalizeDepartment(attachment?.department || attachment?.Department || fallbackDepartment);
+    const documentType = normalizeDocumentType(attachment?.documentType || attachment?.Document_Type || fallbackDocumentType);
 
     if (!fileName || !fileUrl) {
         return { error: 'Attachment file name and URL are required' };
@@ -60,9 +91,14 @@ const normalizeAttachmentInput = (attachment, fallbackDepartment, fallbackUpload
         return { error: 'Invalid attachment department' };
     }
 
+    if (!isValidDocumentType(documentType)) {
+        return { error: 'Invalid attachment document type' };
+    }
+
     return {
         data: {
             Department: department,
+            Document_Type: documentType,
             File_Name: fileName,
             File_URL: fileUrl,
             File_Type: attachment?.fileType || attachment?.File_Type || null,
@@ -72,11 +108,11 @@ const normalizeAttachmentInput = (attachment, fallbackDepartment, fallbackUpload
     };
 };
 
-const buildAttachmentCreateData = (attachments, fallbackDepartment, fallbackUploaderId) => {
+const buildAttachmentCreateData = (attachments, fallbackDepartment, fallbackUploaderId, fallbackDocumentType = 'PROOF') => {
     const normalizedAttachments = [];
 
     for (const attachment of attachments) {
-        const normalized = normalizeAttachmentInput(attachment, fallbackDepartment, fallbackUploaderId);
+        const normalized = normalizeAttachmentInput(attachment, fallbackDepartment, fallbackUploaderId, fallbackDocumentType);
         if (normalized.error) {
             return { error: normalized.error };
         }
@@ -84,6 +120,22 @@ const buildAttachmentCreateData = (attachments, fallbackDepartment, fallbackUplo
     }
 
     return { data: normalizedAttachments };
+};
+
+const getVisitedWorkflowDepartments = (form) => {
+    const workflow = getWorkflowForFormType(form.Form_Type);
+    const visitedDepartments = new Set(
+        (form.History || [])
+            .map(history => normalizeDepartment(history.Department))
+            .filter(department => workflow.includes(department))
+    );
+
+    const currentDepartment = normalizeDepartment(form.Department);
+    if (workflow.includes(currentDepartment)) {
+        visitedDepartments.add(currentDepartment);
+    }
+
+    return { workflow, visitedDepartments, currentDepartment };
 };
 
 const getTransferGate = (form, targetDepartment) => {
@@ -96,16 +148,7 @@ const getTransferGate = (form, targetDepartment) => {
         };
     }
 
-    const visitedDepartments = new Set(
-        (form.History || [])
-            .map(history => normalizeDepartment(history.Department))
-            .filter(department => workflow.includes(department))
-    );
-
-    const currentDepartment = normalizeDepartment(form.Department);
-    if (workflow.includes(currentDepartment)) {
-        visitedDepartments.add(currentDepartment);
-    }
+    const { visitedDepartments, currentDepartment } = getVisitedWorkflowDepartments(form);
 
     if (targetDepartment === currentDepartment) {
         return { allowed: true, noChange: true };
@@ -126,6 +169,59 @@ const getTransferGate = (form, targetDepartment) => {
         error: nextRequiredDepartment
             ? `Cannot transfer to ${targetDepartment} before visiting ${nextRequiredDepartment}`
             : `Cannot transfer to ${targetDepartment}`
+    };
+};
+
+const hasVisitedDepartment = (form, department) => {
+    const { visitedDepartments } = getVisitedWorkflowDepartments(form);
+    return visitedDepartments.has(department);
+};
+
+const getAttachmentDocumentTypes = (form) => new Set(
+    (form.Attachments || [])
+        .map(attachment => normalizeDocumentType(attachment.Document_Type || 'PROOF'))
+        .filter(isValidDocumentType)
+);
+
+const getMissingRisCompletionDocuments = (form) => {
+    const documentTypes = getAttachmentDocumentTypes(form);
+    return RIS_REQUIRED_COMPLETION_DOCUMENT_TYPES.filter(documentType => !documentTypes.has(documentType));
+};
+
+const getRisCompletionState = (form) => {
+    const missingDocumentTypes = getMissingRisCompletionDocuments(form);
+    const isReceived = form.Is_Received === true;
+
+    return {
+        applies: String(form.Form_Type || '').toUpperCase() === 'RIS',
+        requiredDocumentTypes: RIS_REQUIRED_COMPLETION_DOCUMENT_TYPES,
+        missingDocumentTypes,
+        missingDocumentLabels: missingDocumentTypes.map(type => DOCUMENT_TYPE_LABELS[type] || type),
+        isReceived,
+        documentsComplete: missingDocumentTypes.length === 0,
+        canComplete: missingDocumentTypes.length === 0 && isReceived
+    };
+};
+
+const buildRisCompletionError = (form) => {
+    const state = getRisCompletionState(form);
+    const missingLabels = state.missingDocumentLabels;
+    const missingParts = [];
+
+    if (missingLabels.length > 0) {
+        missingParts.push(`missing ${missingLabels.join(', ')}`);
+    }
+
+    if (!state.isReceived) {
+        missingParts.push('not marked received');
+    }
+
+    return {
+        success: false,
+        error: `RIS form cannot be completed until it is ${missingParts.join(' and ')}`,
+        requiredDocumentTypes: state.requiredDocumentTypes,
+        missingDocumentTypes: state.missingDocumentTypes,
+        isReceived: state.isReceived
     };
 };
 
@@ -267,6 +363,7 @@ const createForm = async (req, res) => {
                 fileUrl,
                 fileType,
                 department: departmentEnum,
+                documentType: 'INITIAL',
                 notes: 'Initial form attachment'
             });
         }
@@ -279,7 +376,7 @@ const createForm = async (req, res) => {
             return true;
         });
 
-        const attachmentCreate = buildAttachmentCreateData(dedupedAttachmentInputs, departmentEnum, parseInt(userId));
+        const attachmentCreate = buildAttachmentCreateData(dedupedAttachmentInputs, departmentEnum, parseInt(userId), 'INITIAL');
         if (attachmentCreate.error) {
             return res.status(400).json({ success: false, error: attachmentCreate.error });
         }
@@ -504,6 +601,13 @@ const transferForm = async (req, res) => {
             return res.json({ success: true, data: existingForm });
         }
 
+        if (String(existingForm.Form_Type || '').toUpperCase() === 'RIS' && departmentEnum === 'COMPLETED') {
+            const completionState = getRisCompletionState(existingForm);
+            if (!completionState.canComplete) {
+                return res.status(400).json(buildRisCompletionError(existingForm));
+            }
+        }
+
         // Update form and add history entry
         const form = await prisma.Form.update({
             where: { Form_ID: formId },
@@ -530,6 +634,74 @@ const transferForm = async (req, res) => {
     } catch (error) {
         console.error('Error transferring form:', error);
         res.status(500).json({ success: false, error: 'Failed to transfer form' });
+    }
+};
+
+// PATCH /api/forms/:id/received - Toggle RIS received indicator
+const setFormReceived = async (req, res) => {
+    const formId = parseInt(req.params.id);
+
+    if (isNaN(formId)) {
+        return res.status(400).json({ success: false, error: 'Invalid form ID' });
+    }
+
+    try {
+        const isReceived = req.body?.isReceived !== undefined ? req.body.isReceived === true : true;
+
+        const existingForm = await prisma.Form.findUnique({
+            where: { Form_ID: formId },
+            include: formInclude
+        });
+
+        if (!existingForm) {
+            return res.status(404).json({ success: false, error: 'Form not found' });
+        }
+
+        if (String(existingForm.Form_Type || '').toUpperCase() !== 'RIS') {
+            return res.status(400).json({ success: false, error: 'Received indicator is only required for RIS forms' });
+        }
+
+        if (!hasVisitedDepartment(existingForm, 'PURCHASING')) {
+            return res.status(400).json({
+                success: false,
+                error: 'RIS form must reach Purchasing before it can be marked received'
+            });
+        }
+
+        if (isReceived) {
+            const missingDocumentTypes = getMissingRisCompletionDocuments(existingForm);
+            if (missingDocumentTypes.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: `RIS form cannot be marked received until required files are uploaded: ${missingDocumentTypes.map(type => DOCUMENT_TYPE_LABELS[type] || type).join(', ')}`,
+                    requiredDocumentTypes: RIS_REQUIRED_COMPLETION_DOCUMENT_TYPES,
+                    missingDocumentTypes
+                });
+            }
+        }
+
+        const form = await prisma.Form.update({
+            where: { Form_ID: formId },
+            data: {
+                Is_Received: isReceived,
+                Received_At: isReceived ? new Date() : null,
+                Received_By: isReceived ? req.user.User_ID : null
+            },
+            include: formInclude
+        });
+
+        await AuditLogger.logForm(
+            req.user.User_ID,
+            isReceived ? 'FORM_RECEIVED' : 'FORM_RECEIVED_REVOKED',
+            `${isReceived ? 'Marked' : 'Unmarked'} form ${form.Form_Code} as received`,
+            getNotifyRoles(),
+            form.Creator_ID
+        );
+
+        res.json({ success: true, data: form });
+    } catch (error) {
+        console.error('Error updating form received indicator:', error);
+        res.status(500).json({ success: false, error: 'Failed to update received indicator' });
     }
 };
 
@@ -638,6 +810,7 @@ module.exports = {
     updateForm,
     archiveForm,
     transferForm,
+    setFormReceived,
     addFormAttachments,
     deleteForm
 };
