@@ -1,4 +1,4 @@
-﻿CREATE TYPE "FormDocumentType" AS ENUM (
+CREATE TYPE "FormDocumentType" AS ENUM (
   'INITIAL',
   'PURCHASE_ORDER',
   'DELIVERY_RECEIPT',
