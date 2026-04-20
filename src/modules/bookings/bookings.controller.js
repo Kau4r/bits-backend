@@ -5,16 +5,10 @@ const AuditLogger = require('../../utils/auditLogger');
 const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
 
 const normalizeRole = (role = '') => String(role).toUpperCase();
+const BOOKING_MANAGER_ROLES = ['ADMIN', 'SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
+const BOOKING_NOTIFICATION_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
 
-const isConferenceRoom = (room) => {
-    const roomType = String(room?.Room_Type || '').toUpperCase();
-    const roomName = String(room?.Name || '').toUpperCase();
-    return roomType === 'CONFERENCE' || roomName.includes('CONFERENCE');
-};
-
-const isSecretaryConferenceBooking = (user, room) => (
-    normalizeRole(user?.User_Role) === 'SECRETARY' && isConferenceRoom(room)
-);
+const isSecretaryBooking = (user) => normalizeRole(user?.User_Role) === 'SECRETARY';
 
 const formatBookingTime = (date) => (
     new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
@@ -90,7 +84,7 @@ const createBooking = async (req, res) => {
             return res.status(404).json({ success: false, error: 'User not found' });
         }
 
-        const secretaryConferencePriority = isSecretaryConferenceBooking(requestingUser, room);
+        const secretaryPriority = isSecretaryBooking(requestingUser);
 
         // Check if room is available for booking
         if (room.Status !== 'AVAILABLE') {
@@ -137,7 +131,7 @@ const createBooking = async (req, res) => {
             });
         }
 
-        const conflictingPendingBookings = secretaryConferencePriority
+        const conflictingPendingBookings = secretaryPriority
             ? await prisma.Booked_Room.findMany({
                 where: {
                     Room_ID: parseInt(Room_ID),
@@ -160,7 +154,7 @@ const createBooking = async (req, res) => {
             })
             : [];
 
-        if (!secretaryConferencePriority) {
+        if (!secretaryPriority) {
             const conflictingPendingBooking = await prisma.Booked_Room.findFirst({
                 where: {
                     Room_ID: parseInt(Room_ID),
@@ -191,7 +185,7 @@ const createBooking = async (req, res) => {
         }
 
         const isLabHead = normalizeRole(requestingUser.User_Role) === 'LAB_HEAD';
-        const isAutoApproved = isLabHead || secretaryConferencePriority;
+        const isAutoApproved = secretaryPriority || isLabHead;
         const bookingData = {
             User_ID: parseInt(User_ID),
             Room_ID: parseInt(Room_ID),
@@ -225,8 +219,8 @@ const createBooking = async (req, res) => {
         let booking;
         let rejectedBookings = [];
 
-        if (secretaryConferencePriority && conflictingPendingBookings.length > 0) {
-            const rejectReason = `Secretary conference booking takes priority from ${formatBookingTime(requestedStart)} to ${formatBookingTime(requestedEnd)}.`;
+        if (secretaryPriority && conflictingPendingBookings.length > 0) {
+            const rejectReason = `Secretary booking takes priority from ${formatBookingTime(requestedStart)} to ${formatBookingTime(requestedEnd)}.`;
             const transactionResult = await prisma.$transaction(async (tx) => {
                 const rejected = await Promise.all(conflictingPendingBookings.map((pendingBooking) =>
                     tx.Booked_Room.update({
@@ -268,7 +262,7 @@ const createBooking = async (req, res) => {
                 await notifyRejectedBooking(parseInt(User_ID), rejectedBooking, rejectReason);
             }
 
-            await NotificationManager.broadcastBookingEvent('BOOKING_REJECTED', rejectedBookings[0], ['LAB_HEAD', 'LAB_TECH']);
+            await NotificationManager.broadcastBookingEvent('BOOKING_REJECTED', rejectedBookings[0], BOOKING_NOTIFICATION_ROLES);
         } else {
             // Create the booking with PENDING status unless the request is auto-approved.
             booking = await prisma.Booked_Room.create({
@@ -282,23 +276,23 @@ const createBooking = async (req, res) => {
         try {
             await AuditLogger.logBooking(
                 parseInt(User_ID),
-                secretaryConferencePriority ? 'BOOKING_APPROVED' : 'ROOM_BOOKED',
+                secretaryPriority ? 'BOOKING_APPROVED' : 'ROOM_BOOKED',
                 booking.Booked_Room_ID,
-                secretaryConferencePriority
-                    ? `Secretary conference booking for ${booking.Room.Name} was auto-approved`
+                secretaryPriority
+                    ? `Secretary booking for ${booking.Room.Name} was auto-approved`
                     : `New booking request for ${booking.Room.Name} by ${booking.User.First_Name} ${booking.User.Last_Name}`,
-                'LAB_HEAD' // Notify Lab Heads
+                ['SECRETARY', 'LAB_HEAD'] // Notify booking managers
             );
             console.log('[Bookings] AuditLogger.logBooking completed successfully');
         } catch (auditError) {
             console.error('[Bookings] AuditLogger.logBooking FAILED:', auditError);
         }
 
-        // Broadcast real-time UI update to LAB_HEAD and LAB_TECH
+        // Broadcast real-time UI update to booking managers
         await NotificationManager.broadcastBookingEvent(
-            secretaryConferencePriority ? 'BOOKING_APPROVED' : 'BOOKING_CREATED',
+            secretaryPriority ? 'BOOKING_APPROVED' : 'BOOKING_CREATED',
             booking,
-            ['LAB_HEAD', 'LAB_TECH']
+            BOOKING_NOTIFICATION_ROLES
         );
 
         res.status(201).json({
@@ -484,7 +478,7 @@ const updateBookingStatus = async (req, res) => {
         }
 
         // Check if user has permission to change booking status
-        const isStaff = ['ADMIN', 'LAB_TECH', 'LAB_HEAD'].includes(approver.User_Role);
+        const isStaff = BOOKING_MANAGER_ROLES.includes(approver.User_Role);
 
         // Get the booking to check ownership and current status
         const existingBooking = await prisma.Booked_Room.findUnique({
@@ -497,7 +491,7 @@ const updateBookingStatus = async (req, res) => {
         }
 
         // Permission logic:
-        // - STAFF (LAB_TECH, LAB_HEAD, ADMIN) can approve/reject/cancel any booking
+        // - STAFF (SECRETARY, LAB_TECH, LAB_HEAD, ADMIN) can approve/reject/cancel any booking
         // - FACULTY can only CANCEL their OWN bookings
         const isOwner = existingBooking.User_ID === parseInt(approverId);
         const isFacultyCancellingOwn = approver.User_Role === 'FACULTY' && status === 'CANCELLED' && isOwner;
@@ -505,7 +499,7 @@ const updateBookingStatus = async (req, res) => {
         if (!isStaff && !isFacultyCancellingOwn) {
             return res.status(403).json({
                 success: false, error: 'Forbidden',
-                details: 'Only LAB_TECH, LAB_HEAD, or ADMIN can approve/reject bookings. Faculty can only cancel their own bookings.'
+                details: 'Only SECRETARY, LAB_TECH, LAB_HEAD, or ADMIN can approve/reject bookings. Faculty can only cancel their own bookings.'
             });
         }
 
@@ -591,7 +585,7 @@ const updateBookingStatus = async (req, res) => {
             // For approvals/rejections, notify both the requester AND staff
             // For cancellations, notify staff
             if (status === 'CANCELLED') {
-                await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', booking, ['LAB_HEAD', 'LAB_TECH']);
+                await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', booking, BOOKING_NOTIFICATION_ROLES);
             } else {
                 // Approved or Rejected - notify the faculty who made the booking
                 NotificationManager.send(existingBooking.User_ID, {
@@ -607,8 +601,8 @@ const updateBookingStatus = async (req, res) => {
                     }
                 });
 
-                // ALSO broadcast to LAB_HEAD/LAB_TECH so their calendars update too
-                await NotificationManager.broadcastBookingEvent(notificationType, booking, ['LAB_HEAD', 'LAB_TECH']);
+                // ALSO broadcast to booking managers so their calendars update too
+                await NotificationManager.broadcastBookingEvent(notificationType, booking, BOOKING_NOTIFICATION_ROLES);
             }
         }
 
@@ -687,7 +681,7 @@ const deleteBooking = async (req, res) => {
 
         // Only allow staff or the owner of the booking to delete it
         const isOwner = existingBooking.User_ID === req.user.User_ID;
-        const isStaff = ['ADMIN', 'LAB_TECH', 'LAB_HEAD'].includes(req.user.User_Role);
+        const isStaff = BOOKING_MANAGER_ROLES.includes(req.user.User_Role);
 
         if (!isOwner && !isStaff) {
             return res.status(403).json({
@@ -711,7 +705,7 @@ const deleteBooking = async (req, res) => {
         );
 
         // Notify UI to refresh schedules
-        await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', existingBooking, ['LAB_HEAD', 'LAB_TECH']);
+        await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', existingBooking, BOOKING_NOTIFICATION_ROLES);
 
         res.json({ success: true, data: { message: 'Booking deleted successfully' } });
     } catch (error) {

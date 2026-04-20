@@ -160,6 +160,7 @@ const formSchemas = {
             fileUrl: Joi.string().uri().required(),
             fileType: Joi.string().max(50).allow('', null),
             department: Joi.string().valid(...workflowFormDepartments),
+            documentType: Joi.string().valid('INITIAL', 'PURCHASE_ORDER', 'DELIVERY_RECEIPT', 'RECEIVING_REPORT', 'SALES_INVOICE', 'PROOF', 'OTHER'),
             notes: Joi.string().max(500).allow('', null)
         })),
         department: Joi.string().valid(...workflowFormDepartments).default('REQUESTOR'),

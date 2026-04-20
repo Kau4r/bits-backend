@@ -43,6 +43,10 @@ const DOCUMENT_TYPE_LABELS = {
 const normalizeDepartment = (department = 'REQUESTOR') => String(department).toUpperCase();
 const isValidDepartment = (department) => VALID_FORM_DEPARTMENTS.includes(department);
 const getWorkflowForFormType = (formType) => FORM_DEPARTMENT_WORKFLOWS[String(formType || '').toUpperCase()] || [];
+const normalizeOptionalText = (value) => {
+    const text = String(value || '').trim();
+    return text || null;
+};
 const normalizeDocumentType = (documentType = 'PROOF') =>
     String(documentType || 'PROOF').trim().toUpperCase().replace(/[\s-]+/g, '_');
 const isValidDocumentType = (documentType) => VALID_FORM_DOCUMENT_TYPES.includes(documentType);
@@ -392,14 +396,14 @@ const createForm = async (req, res) => {
                 Form_Code: formCode,
                 Creator_ID: parseInt(userId),
                 Form_Type: formTypeEnum,
-                Title: title || null,
-                Content: content || null,
+                Title: normalizeOptionalText(title),
+                Content: normalizeOptionalText(content),
                 Department: departmentEnum,
                 File_Name: primaryAttachment?.File_Name || fileName || null,
                 File_URL: primaryAttachment?.File_URL || fileUrl || null,
                 File_Type: primaryAttachment?.File_Type || fileType || null,
-                Requester_Name: requesterName || null,
-                Remarks: remarks || null,
+                Requester_Name: normalizeOptionalText(requesterName),
+                Remarks: normalizeOptionalText(remarks),
                 ...(attachmentCreate.data.length > 0 ? {
                     Attachments: {
                         create: attachmentCreate.data
@@ -423,12 +427,16 @@ const createForm = async (req, res) => {
         // Audit Log
         const notifyRole = getNotifyRoles();
 
-        await AuditLogger.logForm(
-            userId,
-            'FORM_SUBMITTED',
-            `Submitted form ${formCode} to ${departmentEnum}`,
-            notifyRole
-        );
+        try {
+            await AuditLogger.logForm(
+                userId,
+                'FORM_SUBMITTED',
+                `Submitted form ${formCode} to ${departmentEnum}`,
+                notifyRole
+            );
+        } catch (auditError) {
+            console.error('Failed to write form submission audit log:', auditError);
+        }
 
         // Fetch the form again with history included
         const formWithHistory = await prisma.Form.findUnique({
@@ -601,6 +609,13 @@ const transferForm = async (req, res) => {
             return res.json({ success: true, data: existingForm });
         }
 
+        if (existingForm.Status !== 'APPROVED') {
+            return res.status(400).json({
+                success: false,
+                error: 'Form must be approved before it can be transferred to another department'
+            });
+        }
+
         if (String(existingForm.Form_Type || '').toUpperCase() === 'RIS' && departmentEnum === 'COMPLETED') {
             const completionState = getRisCompletionState(existingForm);
             if (!completionState.canComplete) {
@@ -613,6 +628,8 @@ const transferForm = async (req, res) => {
             where: { Form_ID: formId },
             data: {
                 Department: departmentEnum,
+                Status: 'PENDING',
+                Is_Archived: false,
                 History: {
                     create: {
                         Department: departmentEnum,
