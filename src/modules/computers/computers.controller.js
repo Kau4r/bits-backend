@@ -486,6 +486,11 @@ const createComputer = async (req, res) => {
                 }
             }
 
+            const itemRelation = {
+                ...(itemsToConnect.length > 0 && { connect: itemsToConnect }),
+                ...(itemsToCreate.length > 0 && { create: itemsToCreate })
+            };
+
             const computer = await tx.computer.create({
                 data: {
                     Name: name.trim(),
@@ -493,10 +498,7 @@ const createComputer = async (req, res) => {
                     Status: normalizedStatus,
                     Is_Teacher: teacherFlag,
                     Updated_At: new Date(),
-                    Item: {
-                        ...(itemsToConnect.length > 0 && { connect: itemsToConnect }),
-                        ...(itemsToCreate.length > 0 && { create: itemsToCreate })
-                    }
+                    ...(Object.keys(itemRelation).length > 0 && { Item: itemRelation })
                 },
                 include: buildComputerInclude()
             });
