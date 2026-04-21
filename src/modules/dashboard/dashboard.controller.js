@@ -62,11 +62,12 @@ const getDashboardMetrics = async (req, res) => {
 
             // 3. Low Inventory (Example threshold < 5)
             // Note: Assuming 'Quantity' field exists or counting items by status
-            const [totalItems, brokenItems, availableItems, borrowedItems, roomsInMaintenance] = await Promise.all([
+            const [totalItems, brokenItems, availableItems, borrowedItems, disposedItems, roomsInMaintenance] = await Promise.all([
                 prisma.item.count(),
                 prisma.item.count({ where: { Status: 'DEFECTIVE' } }),
                 prisma.item.count({ where: { Status: 'AVAILABLE' } }),
                 prisma.item.count({ where: { Status: 'BORROWED' } }),
+                prisma.item.count({ where: { Status: 'DISPOSED' } }),
                 prisma.room.count({ where: { Status: 'MAINTENANCE' } })
             ]);
 
@@ -95,6 +96,7 @@ const getDashboardMetrics = async (req, res) => {
                 brokenItems,
                 availableItems,
                 borrowedItems,
+                disposedItems,
                 roomsInMaintenance,
                 pendingForms,
                 approvedForms,
@@ -123,7 +125,8 @@ const getDashboardMetrics = async (req, res) => {
                     total: totalItems,
                     available: availableItems,
                     borrowed: borrowedItems,
-                    defective: brokenItems
+                    defective: brokenItems,
+                    disposed: disposedItems
                 },
                 rooms: {
                     maintenance: roomsInMaintenance
@@ -173,11 +176,12 @@ const getDashboardMetrics = async (req, res) => {
             ]);
 
             // 3. Borrowed Items (Active)
-            const [borrowedItems, totalItems, defectiveItems, availableItems] = await Promise.all([
+            const [borrowedItems, totalItems, defectiveItems, availableItems, disposedItems] = await Promise.all([
                 prisma.borrow_Item.count({ where: { Status: 'BORROWED' } }),
                 prisma.item.count(),
                 prisma.item.count({ where: { Status: 'DEFECTIVE' } }),
-                prisma.item.count({ where: { Status: 'AVAILABLE' } })
+                prisma.item.count({ where: { Status: 'AVAILABLE' } }),
+                prisma.item.count({ where: { Status: 'DISPOSED' } })
             ]);
 
             // 4. Pending Forms (Laboratory)
@@ -204,6 +208,7 @@ const getDashboardMetrics = async (req, res) => {
                 totalItems,
                 defectiveItems,
                 availableItems,
+                disposedItems,
                 draftReports,
                 submittedReports
             };
@@ -227,7 +232,8 @@ const getDashboardMetrics = async (req, res) => {
                     total: totalItems,
                     available: availableItems,
                     defective: defectiveItems,
-                    borrowed: borrowedItems
+                    borrowed: borrowedItems,
+                    disposed: disposedItems
                 }
             };
 

@@ -260,7 +260,7 @@ describe('Inventory Routes', () => {
     it('should soft-delete an item', async () => {
       const existingItem = { Item_ID: 1, Item_Code: 'ITM-001', Status: 'AVAILABLE' };
       prisma.item.findUnique.mockResolvedValue(existingItem);
-      prisma.item.update.mockResolvedValue({ ...existingItem, Status: 'INACTIVE' });
+      prisma.item.update.mockResolvedValue({ ...existingItem, Status: 'DISPOSED' });
 
       const res = await request(app).delete('/inventory/1');
 
@@ -269,7 +269,7 @@ describe('Inventory Routes', () => {
       expect(prisma.item.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { Item_ID: 1 },
-          data: expect.objectContaining({ Status: 'INACTIVE' }),
+          data: expect.objectContaining({ Status: 'DISPOSED' }),
         })
       );
     });

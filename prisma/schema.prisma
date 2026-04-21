@@ -51,6 +51,7 @@ model Item {
   Brand         String?
   Serial_Number String?
   Status        ItemStatus
+  Location      String?
   Room_ID       Int?
   Created_At    DateTime      @default(now())
   Updated_At    DateTime      @updatedAt
@@ -440,6 +441,7 @@ enum ItemStatus {
   DEFECTIVE
   LOST
   REPLACED
+  DISPOSED
 }
 
 enum ComputerStatus {

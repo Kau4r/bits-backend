@@ -26,6 +26,16 @@ const findManySafely = async (delegate, args) => {
     return delegate.findMany(args);
 };
 
+const deleteManySafely = async (delegate, args) => {
+    if (!delegate?.deleteMany) return 0;
+    return (await delegate.deleteMany(args)).count;
+};
+
+const updateManySafely = async (delegate, args) => {
+    if (!delegate?.updateMany) return 0;
+    return (await delegate.updateMany(args)).count;
+};
+
 const parseSchoolYear = (schoolYear) => {
     const value = String(schoolYear || '').trim();
     const match = value.match(/^(\d{4})\s*[-/]\s*(\d{4})$/);
@@ -56,6 +66,31 @@ const rangeWhere = (field, range) => ({
         gte: range.start,
         lte: range.end
     }
+});
+
+const scheduleRangeWhere = (range) => ({
+    OR: [
+        rangeWhere('Created_At', range),
+        rangeWhere('Start_Time', range)
+    ]
+});
+
+const formAttachmentRangeWhere = (range) => ({
+    OR: [
+        rangeWhere('Uploaded_At', range),
+        { Form: rangeWhere('Created_At', range) }
+    ]
+});
+
+const formHistoryRangeWhere = (range) => ({
+    OR: [
+        rangeWhere('Changed_At', range),
+        { Form: rangeWhere('Created_At', range) }
+    ]
+});
+
+const notificationReadRangeWhere = (range) => ({
+    Audit_Log: rangeWhere('Timestamp', range)
 });
 
 const delegatesFor = (client) => ({
@@ -174,8 +209,8 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
         countSafely(delegates.computer),
         countSafely(delegates.item),
         countSafely(delegates.form, rangeWhere('Created_At', range)),
-        countSafely(delegates.formAttachment, rangeWhere('Uploaded_At', range)),
-        countSafely(delegates.formHistory, rangeWhere('Changed_At', range)),
+        countSafely(delegates.formAttachment, formAttachmentRangeWhere(range)),
+        countSafely(delegates.formHistory, formHistoryRangeWhere(range)),
         countSafely(delegates.ticket, rangeWhere('Created_At', range)),
         countSafely(delegates.bookedRoom, rangeWhere('Start_Time', range)),
         countSafely(delegates.borrowItem, rangeWhere('Created_At', range)),
@@ -190,8 +225,8 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
             Is_Notification: true,
             ...rangeWhere('Timestamp', range)
         }),
-        countSafely(delegates.notificationRead),
-        countSafely(delegates.schedule, rangeWhere('Created_At', range))
+        countSafely(delegates.notificationRead, notificationReadRangeWhere(range)),
+        countSafely(delegates.schedule, scheduleRangeWhere(range))
     ]);
 
     return {
@@ -216,7 +251,10 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
             borrowingComputers,
             reports,
             heartbeatSessions,
-            auditLogs
+            auditLogs,
+            notifications,
+            notificationReads,
+            schedules
         },
         willDelete: {
             forms,
@@ -242,11 +280,7 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
             inventoryItems,
             computers
         },
-        excludedFromArchive: {
-            notifications,
-            notificationReads,
-            schedules
-        }
+        excludedFromArchive: {}
     };
 };
 
@@ -263,11 +297,14 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
         formHistory,
         tickets,
         bookings,
+        schedules,
         borrowItems,
         borrowingComputers,
         reports,
         heartbeatSessions,
-        auditLogs
+        auditLogs,
+        notifications,
+        notificationReads
     ] = await Promise.all([
         findManySafely(delegates.user, {
             select: {
@@ -287,10 +324,11 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
         findManySafely(delegates.computer, {}),
         findManySafely(delegates.item, {}),
         findManySafely(delegates.form, { where: rangeWhere('Created_At', range) }),
-        findManySafely(delegates.formAttachment, { where: rangeWhere('Uploaded_At', range) }),
-        findManySafely(delegates.formHistory, { where: rangeWhere('Changed_At', range) }),
+        findManySafely(delegates.formAttachment, { where: formAttachmentRangeWhere(range) }),
+        findManySafely(delegates.formHistory, { where: formHistoryRangeWhere(range) }),
         findManySafely(delegates.ticket, { where: rangeWhere('Created_At', range) }),
         findManySafely(delegates.bookedRoom, { where: rangeWhere('Start_Time', range) }),
+        findManySafely(delegates.schedule, { where: scheduleRangeWhere(range) }),
         findManySafely(delegates.borrowItem, { where: rangeWhere('Created_At', range) }),
         findManySafely(delegates.borrowingComp, { where: rangeWhere('Created_At', range) }),
         findManySafely(delegates.weeklyReport, { where: rangeWhere('Week_Start', range) }),
@@ -300,7 +338,14 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
                 Is_Notification: false,
                 ...rangeWhere('Timestamp', range)
             }
-        })
+        }),
+        findManySafely(delegates.auditLog, {
+            where: {
+                Is_Notification: true,
+                ...rangeWhere('Timestamp', range)
+            }
+        }),
+        findManySafely(delegates.notificationRead, { where: notificationReadRangeWhere(range) })
     ]);
 
     return {
@@ -314,7 +359,7 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
                 start: range.start.toISOString(),
                 end: range.end.toISOString()
             },
-            excludedFromArchive: ['notifications', 'notificationReads', 'schedules'],
+            excludedFromArchive: [],
             format: 'json-gzip'
         },
         data: {
@@ -327,11 +372,14 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
             formHistory,
             tickets,
             bookings,
+            schedules,
             borrowItems,
             borrowingComputers,
             reports,
             heartbeatSessions,
-            auditLogs
+            auditLogs,
+            notifications,
+            notificationReads
         }
     };
 };
@@ -347,21 +395,21 @@ const writeArchiveFile = async (payload, archiveName) => {
 const resetOperationalData = async (tx, userId, details) => {
     const delegates = delegatesFor(tx);
     const deleted = {};
-    deleted.notificationReads = delegates.notificationRead ? (await delegates.notificationRead.deleteMany({})).count : 0;
-    deleted.notifications = delegates.auditLog ? (await delegates.auditLog.deleteMany({})).count : 0;
-    deleted.formAttachments = delegates.formAttachment ? (await delegates.formAttachment.deleteMany({})).count : 0;
-    deleted.formHistory = delegates.formHistory ? (await delegates.formHistory.deleteMany({})).count : 0;
-    deleted.forms = delegates.form ? (await delegates.form.deleteMany({})).count : 0;
-    deleted.tickets = delegates.ticket ? (await delegates.ticket.deleteMany({})).count : 0;
-    deleted.borrowingComputers = delegates.borrowingComp ? (await delegates.borrowingComp.deleteMany({})).count : 0;
-    deleted.borrowItems = delegates.borrowItem ? (await delegates.borrowItem.deleteMany({})).count : 0;
-    deleted.bookings = delegates.bookedRoom ? (await delegates.bookedRoom.deleteMany({})).count : 0;
-    deleted.schedules = delegates.schedule ? (await delegates.schedule.deleteMany({})).count : 0;
-    deleted.heartbeatSessions = delegates.computerHeartbeat ? (await delegates.computerHeartbeat.deleteMany({})).count : 0;
-    deleted.reports = delegates.weeklyReport ? (await delegates.weeklyReport.deleteMany({})).count : 0;
+    deleted.notificationReads = await deleteManySafely(delegates.notificationRead, {});
+    deleted.notifications = await deleteManySafely(delegates.auditLog, {});
+    deleted.formAttachments = await deleteManySafely(delegates.formAttachment, {});
+    deleted.formHistory = await deleteManySafely(delegates.formHistory, {});
+    deleted.forms = await deleteManySafely(delegates.form, {});
+    deleted.tickets = await deleteManySafely(delegates.ticket, {});
+    deleted.borrowingComputers = await deleteManySafely(delegates.borrowingComp, {});
+    deleted.borrowItems = await deleteManySafely(delegates.borrowItem, {});
+    deleted.bookings = await deleteManySafely(delegates.bookedRoom, {});
+    deleted.schedules = await deleteManySafely(delegates.schedule, {});
+    deleted.heartbeatSessions = await deleteManySafely(delegates.computerHeartbeat, {});
+    deleted.reports = await deleteManySafely(delegates.weeklyReport, {});
 
     const reset = {};
-    reset.rooms = delegates.room ? (await delegates.room.updateMany({
+    reset.rooms = await updateManySafely(delegates.room, {
         data: {
             Status: 'AVAILABLE',
             Current_Use_Type: null,
@@ -369,21 +417,79 @@ const resetOperationalData = async (tx, userId, details) => {
             Opened_At: null,
             Closed_At: null
         }
-    })).count : 0;
+    });
 
-    reset.computers = delegates.computer ? (await delegates.computer.updateMany({
+    reset.computers = await updateManySafely(delegates.computer, {
         data: {
             Status: 'AVAILABLE',
             Is_Online: false,
             Current_User_ID: null,
             Last_Seen: null
         }
-    })).count : 0;
+    });
 
-    reset.borrowedItems = delegates.item ? (await delegates.item.updateMany({
+    reset.borrowedItems = await updateManySafely(delegates.item, {
         where: { Status: 'BORROWED' },
         data: { Status: 'AVAILABLE' }
-    })).count : 0;
+    });
+
+    if (delegates.auditLog) {
+        await delegates.auditLog.create({
+            data: {
+                User_ID: userId,
+                Action: details.action,
+                Log_Type: 'SYSTEM',
+                Is_Notification: false,
+                Details: details.message
+            }
+        });
+    }
+
+    return { deleted, reset };
+};
+
+const resetSchoolYearOperationalData = async (tx, userId, schoolYear, details) => {
+    const range = parseSchoolYear(schoolYear);
+    const delegates = delegatesFor(tx);
+    const deleted = {};
+
+    deleted.notificationReads = await deleteManySafely(delegates.notificationRead, { where: notificationReadRangeWhere(range) });
+    deleted.notifications = await deleteManySafely(delegates.auditLog, { where: rangeWhere('Timestamp', range) });
+    deleted.formAttachments = await deleteManySafely(delegates.formAttachment, { where: formAttachmentRangeWhere(range) });
+    deleted.formHistory = await deleteManySafely(delegates.formHistory, { where: formHistoryRangeWhere(range) });
+    deleted.forms = await deleteManySafely(delegates.form, { where: rangeWhere('Created_At', range) });
+    deleted.tickets = await deleteManySafely(delegates.ticket, { where: rangeWhere('Created_At', range) });
+    deleted.borrowingComputers = await deleteManySafely(delegates.borrowingComp, { where: rangeWhere('Created_At', range) });
+    deleted.borrowItems = await deleteManySafely(delegates.borrowItem, { where: rangeWhere('Created_At', range) });
+    deleted.bookings = await deleteManySafely(delegates.bookedRoom, { where: rangeWhere('Start_Time', range) });
+    deleted.schedules = await deleteManySafely(delegates.schedule, { where: scheduleRangeWhere(range) });
+    deleted.heartbeatSessions = await deleteManySafely(delegates.computerHeartbeat, { where: rangeWhere('Timestamp', range) });
+    deleted.reports = await deleteManySafely(delegates.weeklyReport, { where: rangeWhere('Week_Start', range) });
+
+    const reset = {};
+    reset.rooms = await updateManySafely(delegates.room, {
+        data: {
+            Status: 'AVAILABLE',
+            Current_Use_Type: null,
+            Opened_By: null,
+            Opened_At: null,
+            Closed_At: null
+        }
+    });
+
+    reset.computers = await updateManySafely(delegates.computer, {
+        data: {
+            Status: 'AVAILABLE',
+            Is_Online: false,
+            Current_User_ID: null,
+            Last_Seen: null
+        }
+    });
+
+    reset.borrowedItems = await updateManySafely(delegates.item, {
+        where: { Status: 'BORROWED' },
+        data: { Status: 'AVAILABLE' }
+    });
 
     if (delegates.auditLog) {
         await delegates.auditLog.create({
@@ -472,9 +578,9 @@ const runSchoolYearArchiveCleanup = async (req, res) => {
 
         const before = await buildCleanupPreview();
         const userId = req.user?.User_ID || null;
-        const result = await prisma.$transaction((tx) => resetOperationalData(tx, userId, {
+        const result = await prisma.$transaction((tx) => resetSchoolYearOperationalData(tx, userId, schoolYear, {
             action: 'SCHOOL_YEAR_ARCHIVE_CLEANUP',
-            message: `Archived ${preview.schoolYear} to ${preview.archiveName} and reset operational data`
+            message: `Archived ${preview.schoolYear} to ${preview.archiveName} and reset selected school-year operational data`
         }));
 
         res.json({

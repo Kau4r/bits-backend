@@ -7,7 +7,7 @@ const {
   parseImportedBoolean,
 } = require('../../utils/csvImport');
 
-const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED'];
+const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED', 'DISPOSED'];
 
 const normalizeItemType = (value = 'GENERAL') => {
   if (typeof value !== 'string') return null;
@@ -56,6 +56,7 @@ const buildImportedItem = (headers, row, defaultRoomId, userId) => {
       Brand: getRowValue(headers, row, ['Brand', 'Model', 'Description']) || null,
       Serial_Number: getRowValue(headers, row, ['Serial_Number', 'Serial Number', 'Serial', 'Asset Serial']) || null,
       Status: status,
+      Location: getRowValue(headers, row, ['Location', 'Area', 'Storage Location']) || null,
       Room_ID: roomIdResult.value,
       IsBorrowable: parseImportedBoolean(getRowValue(headers, row, ['IsBorrowable', 'Borrowable', 'Can Borrow']), false),
       User_ID: userId,
@@ -199,6 +200,7 @@ const createItem = async (req, res) => {
       Brand,
       Serial_Number,
       Status = 'AVAILABLE',
+      Location,
       Room_ID
     } = req.body;
 
@@ -234,6 +236,7 @@ const createItem = async (req, res) => {
       Brand: Brand || null,
       Serial_Number: Serial_Number || null,
       Status,
+      Location: Location || null,
       Created_At: currentTime,
       Updated_At: currentTime
     };
@@ -336,7 +339,7 @@ const deleteItem = async (req, res) => {
     const deletedItem = await prisma.item.update({
       where: { Item_ID: itemId },
       data: {
-        Status: 'INACTIVE',
+        Status: 'DISPOSED',
         Updated_At: new Date()
       }
     });
@@ -457,6 +460,7 @@ const bulkCreateItems = async (req, res) => {
         Brand: item.Brand || null,
         Serial_Number: item.Serial_Number || null,
         Status: item.Status || 'AVAILABLE',
+        Location: item.Location || null,
         Room_ID: item.Room_ID || null,
         Created_At: new Date(),
         Updated_At: new Date(),
