@@ -40,6 +40,7 @@ model User {
   CurrentComputers            Computer[]            @relation("CurrentUser")
   Weekly_Reports_Authored     Weekly_Report[]       @relation("ReportAuthor")
   Weekly_Reports_Reviewed     Weekly_Report[]       @relation("ReportReviewer")
+  FormHistoryActions          FormHistory[]         @relation("FormHistoryPerformer")
 }
 
 model Item {
@@ -120,12 +121,18 @@ model Form {
 }
 
 model FormHistory {
-  History_ID Int            @id @default(autoincrement())
-  Form_ID    Int
-  Department FormDepartment
-  Changed_At DateTime       @default(now())
-  Notes      String?
-  Form       Form           @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
+  History_ID   Int               @id @default(autoincrement())
+  Form_ID      Int
+  Department   FormDepartment
+  Changed_At   DateTime          @default(now())
+  Notes        String?
+  Performed_By Int?
+  Action       FormHistoryAction @default(TRANSFERRED)
+  Reason       String?
+  Form         Form              @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
+  Performer    User?             @relation("FormHistoryPerformer", fields: [Performed_By], references: [User_ID], onDelete: SetNull)
+
+  @@index([Performed_By])
 }
 
 model FormAttachment {
@@ -346,6 +353,16 @@ enum FormDepartment {
   PURCHASING
   PPFO
   COMPLETED
+}
+
+enum FormHistoryAction {
+  CREATED
+  APPROVED
+  REJECTED
+  TRANSFERRED
+  RETURNED
+  ARCHIVED
+  RECEIVED
 }
 
 enum FormDocumentType {

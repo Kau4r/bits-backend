@@ -42,6 +42,11 @@ const DOCUMENT_TYPE_LABELS = {
 
 const normalizeDepartment = (department = 'REQUESTOR') => String(department).toUpperCase();
 const isValidDepartment = (department) => VALID_FORM_DEPARTMENTS.includes(department);
+const isFormTerminal = (form) => {
+    const dept = normalizeDepartment(form?.Department);
+    const status = String(form?.Status || '').toUpperCase();
+    return dept === 'COMPLETED' || status === 'REJECTED';
+};
 const getWorkflowForFormType = (formType) => FORM_DEPARTMENT_WORKFLOWS[String(formType || '').toUpperCase()] || [];
 const normalizeOptionalText = (value) => {
     const text = String(value || '').trim();
@@ -69,7 +74,12 @@ const formInclude = {
         select: userSelect
     },
     History: {
-        orderBy: { Changed_At: 'asc' }
+        orderBy: { Changed_At: 'asc' },
+        include: {
+            Performer: {
+                select: userSelect
+            }
+        }
     },
     Attachments: {
         orderBy: { Uploaded_At: 'asc' },
@@ -179,6 +189,45 @@ const getTransferGate = (form, targetDepartment) => {
 const hasVisitedDepartment = (form, department) => {
     const { visitedDepartments } = getVisitedWorkflowDepartments(form);
     return visitedDepartments.has(department);
+};
+
+const hasCurrentStepAttachment = (form) => {
+    const currentDept = normalizeDepartment(form?.Department);
+
+    // Requestor step: any attachment for this step counts (including the INITIAL upload).
+    if (currentDept === 'REQUESTOR') {
+        return (form.Attachments || []).some(a =>
+            normalizeDepartment(a.Department) === currentDept
+        );
+    }
+
+    // Other steps: find the most recent arrival at this step (TRANSFERRED or RETURNED history entry).
+    const arrivalEntry = (form.History || [])
+        .filter(h => {
+            const dept = normalizeDepartment(h.Department);
+            const action = String(h.Action || 'TRANSFERRED').toUpperCase();
+            return dept === currentDept && ['TRANSFERRED', 'RETURNED'].includes(action);
+        })
+        .sort((a, b) => new Date(b.Changed_At).getTime() - new Date(a.Changed_At).getTime())[0];
+
+    // Fallback: any history entry for this dept (handles legacy records that predate Action column).
+    const fallbackEntry = !arrivalEntry ? (form.History || [])
+        .filter(h => normalizeDepartment(h.Department) === currentDept)
+        .sort((a, b) => new Date(b.Changed_At).getTime() - new Date(a.Changed_At).getTime())[0] : null;
+
+    const arrivalTime = arrivalEntry?.Changed_At
+        || fallbackEntry?.Changed_At
+        || form.Created_At;
+
+    // Must have a non-INITIAL attachment for this step uploaded after the latest arrival.
+    return (form.Attachments || []).some(a => {
+        const aDept = normalizeDepartment(a.Department);
+        const docType = normalizeDocumentType(a.Document_Type || 'PROOF');
+        const uploadTime = a.Uploaded_At;
+        return aDept === currentDept
+            && docType !== 'INITIAL'
+            && new Date(uploadTime).getTime() > new Date(arrivalTime).getTime();
+    });
 };
 
 const getAttachmentDocumentTypes = (form) => new Set(
@@ -420,7 +469,9 @@ const createForm = async (req, res) => {
             data: {
                 Form_ID: form.Form_ID,
                 Department: departmentEnum,
-                Notes: 'Form created'
+                Notes: 'Form created',
+                Performed_By: parseInt(userId),
+                Action: 'CREATED'
             }
         });
 
@@ -471,7 +522,7 @@ const updateForm = async (req, res) => {
                 return res.status(400).json({ success: false, error: 'Invalid status' });
             }
             updateData.Status = status;
-            updateData.Is_Archived = status === 'ARCHIVED';
+            updateData.Is_Archived = status === 'ARCHIVED' || status === 'REJECTED';
 
             if (status === 'APPROVED') action = 'FORM_APPROVED';
             if (status === 'REJECTED') action = 'FORM_REJECTED';
@@ -512,11 +563,34 @@ const updateForm = async (req, res) => {
             updateData.File_Type = fileType || null;
         }
 
+        const existing = await prisma.Form.findUnique({ where: { Form_ID: formId } });
+        if (!existing) return res.status(404).json({ success: false, error: 'Form not found' });
+        if (isFormTerminal(existing)) {
+            // Allow only archive toggle via status=ARCHIVED (so archiveForm can still flip Is_Archived)
+            const onlyToggleArchive = Object.keys(req.body).every(k => k === 'status') && status === 'ARCHIVED';
+            if (!onlyToggleArchive) {
+                return res.status(400).json({ success: false, error: 'Form is in a terminal state and cannot be modified' });
+            }
+        }
+
         const form = await prisma.Form.update({
             where: { Form_ID: formId },
             data: updateData,
             include: formInclude
         });
+
+        // Write history entry for approval/rejection decisions
+        if (status === 'APPROVED' || status === 'REJECTED') {
+            await prisma.FormHistory.create({
+                data: {
+                    Form_ID: formId,
+                    Department: form.Department,
+                    Notes: `Form ${status.toLowerCase()} by user`,
+                    Performed_By: req.user.User_ID,
+                    Action: status
+                }
+            });
+        }
 
         // Notify Creator if status changes to Approved, Rejected, Pending, or In Review
         const notifyUserId = ['APPROVED', 'REJECTED', 'PENDING', 'IN_REVIEW'].includes(status) ? form.Creator_ID : null;
@@ -547,11 +621,32 @@ const archiveForm = async (req, res) => {
     }
 
     try {
+        const existingForm = await prisma.Form.findUnique({ where: { Form_ID: formId } });
+        if (!existingForm) {
+            return res.status(404).json({ success: false, error: 'Form not found' });
+        }
+        if (!isFormTerminal(existingForm)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Form can only be archived when it reaches a terminal state (Completed or Rejected)'
+            });
+        }
+
         const form = await prisma.Form.update({
             where: { Form_ID: formId },
             data: {
                 Is_Archived: true,
                 Status: 'ARCHIVED'
+            }
+        });
+
+        await prisma.FormHistory.create({
+            data: {
+                Form_ID: formId,
+                Department: form.Department,
+                Notes: 'Form archived',
+                Performed_By: req.user.User_ID,
+                Action: 'ARCHIVED'
             }
         });
 
@@ -578,7 +673,7 @@ const transferForm = async (req, res) => {
     }
 
     try {
-        const { department, notes } = req.body;
+        const { department, notes, reason } = req.body;
 
         if (!department) {
             return res.status(400).json({ success: false, error: 'Department is required' });
@@ -600,6 +695,10 @@ const transferForm = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Form not found' });
         }
 
+        if (isFormTerminal(existingForm)) {
+            return res.status(400).json({ success: false, error: 'Form is in a terminal state and cannot be transferred' });
+        }
+
         const transferGate = getTransferGate(existingForm, departmentEnum);
         if (!transferGate.allowed) {
             return res.status(400).json({ success: false, error: transferGate.error });
@@ -609,10 +708,37 @@ const transferForm = async (req, res) => {
             return res.json({ success: true, data: existingForm });
         }
 
-        if (existingForm.Status !== 'APPROVED') {
+        // Detect backward transfer: target department was already visited AND is not the next required step
+        const { visitedDepartments } = getVisitedWorkflowDepartments(existingForm);
+        const workflow = getWorkflowForFormType(existingForm.Form_Type);
+        const nextRequiredDepartment = workflow.find(d => !visitedDepartments.has(d));
+        const isBackwardTransfer = visitedDepartments.has(departmentEnum) && departmentEnum !== nextRequiredDepartment;
+
+        if (isBackwardTransfer) {
+            const trimmedReason = String(reason || '').trim();
+            if (!trimmedReason) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Reason required when returning a form to a previous step'
+                });
+            }
+        } else {
+            // Forward transfer: still requires APPROVED status
+            if (existingForm.Status !== 'APPROVED') {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Form must be approved before it can be transferred to another department'
+                });
+            }
+        }
+
+        if (!isBackwardTransfer && !hasCurrentStepAttachment(existingForm)) {
+            const currentDept = normalizeDepartment(existingForm.Department);
             return res.status(400).json({
                 success: false,
-                error: 'Form must be approved before it can be transferred to another department'
+                error: `Upload an updated form for ${currentDept} before transferring to the next step`,
+                requiresUpload: true,
+                currentStep: currentDept
             });
         }
 
@@ -622,6 +748,8 @@ const transferForm = async (req, res) => {
                 return res.status(400).json(buildRisCompletionError(existingForm));
             }
         }
+
+        const historyAction = isBackwardTransfer ? 'RETURNED' : 'TRANSFERRED';
 
         // Update form and add history entry
         const form = await prisma.Form.update({
@@ -633,7 +761,10 @@ const transferForm = async (req, res) => {
                 History: {
                     create: {
                         Department: departmentEnum,
-                        Notes: notes || `Transferred to ${departmentEnum}`
+                        Notes: notes || `${isBackwardTransfer ? 'Returned' : 'Transferred'} to ${departmentEnum}`,
+                        Performed_By: req.user.User_ID,
+                        Action: historyAction,
+                        Reason: String(reason || '').trim() || null
                     }
                 }
             },
@@ -706,6 +837,18 @@ const setFormReceived = async (req, res) => {
             },
             include: formInclude
         });
+
+        if (isReceived) {
+            await prisma.FormHistory.create({
+                data: {
+                    Form_ID: formId,
+                    Department: form.Department,
+                    Notes: `Form marked as received`,
+                    Performed_By: req.user.User_ID,
+                    Action: 'RECEIVED'
+                }
+            });
+        }
 
         await AuditLogger.logForm(
             req.user.User_ID,

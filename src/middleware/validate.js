@@ -179,7 +179,8 @@ const formSchemas = {
 
     transfer: Joi.object({
         department: Joi.string().valid(...workflowFormDepartments).required(),
-        notes: Joi.string().max(500).allow('', null)
+        notes: Joi.string().max(500).allow('', null),
+        reason: Joi.string().trim().max(500).allow('', null)
     })
 };
 
