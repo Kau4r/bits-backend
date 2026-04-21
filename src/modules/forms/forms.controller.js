@@ -40,12 +40,30 @@ const DOCUMENT_TYPE_LABELS = {
     SALES_INVOICE: 'Sales Invoice'
 };
 
+const FORM_QUERY_STATUSES = ['PENDING', 'IN_REVIEW', 'APPROVED', 'CANCELLED', 'ARCHIVED'];
+const FORM_UPDATE_STATUSES = ['PENDING', 'IN_REVIEW', 'APPROVED', 'CANCELLED'];
+const FORM_TERMINAL_STATUSES = ['CANCELLED', 'ARCHIVED'];
+const FORM_STATUS_AUDIT_ACTIONS = {
+    PENDING: 'FORM_PENDING',
+    IN_REVIEW: 'FORM_IN_REVIEW',
+    APPROVED: 'FORM_APPROVED',
+    CANCELLED: 'FORM_CANCELLED'
+};
+const FORM_STATUS_LABELS = {
+    PENDING: 'pending',
+    IN_REVIEW: 'in review',
+    APPROVED: 'approved',
+    CANCELLED: 'cancelled',
+    ARCHIVED: 'archived'
+};
+
 const normalizeDepartment = (department = 'REQUESTOR') => String(department).toUpperCase();
+const normalizeFormStatus = (status) => String(status || '').trim().toUpperCase();
 const isValidDepartment = (department) => VALID_FORM_DEPARTMENTS.includes(department);
 const isFormTerminal = (form) => {
     const dept = normalizeDepartment(form?.Department);
-    const status = String(form?.Status || '').toUpperCase();
-    return dept === 'COMPLETED' || status === 'REJECTED';
+    const status = normalizeFormStatus(form?.Status);
+    return dept === 'COMPLETED' || FORM_TERMINAL_STATUSES.includes(status);
 };
 const getWorkflowForFormType = (formType) => FORM_DEPARTMENT_WORKFLOWS[String(formType || '').toUpperCase()] || [];
 const normalizeOptionalText = (value) => {
@@ -313,7 +331,11 @@ const getForms = async (req, res) => {
         }
 
         if (status && status !== 'All') {
-            where.Status = status;
+            const statusEnum = normalizeFormStatus(status);
+            if (!FORM_QUERY_STATUSES.includes(statusEnum)) {
+                return res.status(400).json({ success: false, error: 'Invalid status' });
+            }
+            where.Status = statusEnum;
         }
 
         if (department && department !== 'All') {
@@ -512,23 +534,42 @@ const updateForm = async (req, res) => {
 
     try {
         const { status, approverId, title, content, requesterName, remarks, fileName, fileUrl, fileType } = req.body;
+        const statusEnum = status !== undefined ? normalizeFormStatus(status) : undefined;
+
+        const existing = await prisma.Form.findUnique({
+            where: { Form_ID: formId },
+            include: formInclude
+        });
+        if (!existing) return res.status(404).json({ success: false, error: 'Form not found' });
+        if (isFormTerminal(existing)) {
+            return res.status(400).json({ success: false, error: 'Form is in a terminal state and cannot be modified' });
+        }
 
         const updateData = {};
         let action = 'FORM_UPDATED';
 
-        if (status) {
-            // Validate status
-            if (!['PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'ARCHIVED'].includes(status)) {
+        if (status !== undefined) {
+            if (statusEnum === 'ARCHIVED') {
+                return res.status(400).json({ success: false, error: 'Use the archive endpoint to archive forms' });
+            }
+
+            if (!FORM_UPDATE_STATUSES.includes(statusEnum)) {
                 return res.status(400).json({ success: false, error: 'Invalid status' });
             }
-            updateData.Status = status;
-            updateData.Is_Archived = status === 'ARCHIVED' || status === 'REJECTED';
 
-            if (status === 'APPROVED') action = 'FORM_APPROVED';
-            if (status === 'REJECTED') action = 'FORM_REJECTED';
-            if (status === 'ARCHIVED') action = 'FORM_ARCHIVED';
-            if (status === 'PENDING') action = 'FORM_PENDING';
-            if (status === 'IN_REVIEW') action = 'FORM_IN_REVIEW';
+            if (statusEnum === 'APPROVED' && !hasCurrentStepAttachment(existing)) {
+                const currentDept = normalizeDepartment(existing.Department);
+                return res.status(400).json({
+                    success: false,
+                    error: `Upload an updated form for ${currentDept} before approval`,
+                    requiresUpload: true,
+                    currentStep: currentDept
+                });
+            }
+
+            updateData.Status = statusEnum;
+            updateData.Is_Archived = false;
+            action = FORM_STATUS_AUDIT_ACTIONS[statusEnum] || 'FORM_UPDATED';
         }
 
         if (approverId !== undefined) {
@@ -563,44 +604,35 @@ const updateForm = async (req, res) => {
             updateData.File_Type = fileType || null;
         }
 
-        const existing = await prisma.Form.findUnique({ where: { Form_ID: formId } });
-        if (!existing) return res.status(404).json({ success: false, error: 'Form not found' });
-        if (isFormTerminal(existing)) {
-            // Allow only archive toggle via status=ARCHIVED (so archiveForm can still flip Is_Archived)
-            const onlyToggleArchive = Object.keys(req.body).every(k => k === 'status') && status === 'ARCHIVED';
-            if (!onlyToggleArchive) {
-                return res.status(400).json({ success: false, error: 'Form is in a terminal state and cannot be modified' });
-            }
-        }
-
         const form = await prisma.Form.update({
             where: { Form_ID: formId },
             data: updateData,
             include: formInclude
         });
 
-        // Write history entry for approval/rejection decisions
-        if (status === 'APPROVED' || status === 'REJECTED') {
+        // Write history entry for approval/cancellation decisions.
+        if (statusEnum === 'APPROVED' || statusEnum === 'CANCELLED') {
             await prisma.FormHistory.create({
                 data: {
                     Form_ID: formId,
                     Department: form.Department,
-                    Notes: `Form ${status.toLowerCase()} by user`,
+                    Notes: `Form ${FORM_STATUS_LABELS[statusEnum]} by user`,
                     Performed_By: req.user.User_ID,
-                    Action: status
+                    Action: statusEnum
                 }
             });
         }
 
-        // Notify Creator if status changes to Approved, Rejected, Pending, or In Review
-        const notifyUserId = ['APPROVED', 'REJECTED', 'PENDING', 'IN_REVIEW'].includes(status) ? form.Creator_ID : null;
+        // Notify Creator if status changes to Approved, Cancelled, Pending, or In Review.
+        const notifyUserId = statusEnum && FORM_UPDATE_STATUSES.includes(statusEnum) ? form.Creator_ID : null;
 
         const notifyAuditRole = getNotifyRoles();
+        const statusLabel = statusEnum ? FORM_STATUS_LABELS[statusEnum] : null;
 
         await AuditLogger.logForm(
             req.user.User_ID,
             action,
-            `Form ${form.Form_Code} ${action === 'FORM_UPDATED' ? 'updated' : status.toLowerCase()}`,
+            `Form ${form.Form_Code} ${action === 'FORM_UPDATED' ? 'updated' : statusLabel}`,
             notifyAuditRole,
             notifyUserId
         );
@@ -628,7 +660,7 @@ const archiveForm = async (req, res) => {
         if (!isFormTerminal(existingForm)) {
             return res.status(400).json({
                 success: false,
-                error: 'Form can only be archived when it reaches a terminal state (Completed or Rejected)'
+                error: 'Form can only be archived when it reaches a terminal state (Completed or Cancelled)'
             });
         }
 

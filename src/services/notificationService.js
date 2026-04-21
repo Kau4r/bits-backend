@@ -100,6 +100,7 @@ class NotificationService {
       'FORM_UPDATE_REMINDER': 'TICKET',
       'FORM_COMPLETED': 'TICKET',
       'FORM_APPROVED': 'TICKET',
+      'FORM_CANCELLED': 'TICKET',
 
       // System Notifications
       'COMPUTER_USAGE': 'SYSTEM',
@@ -195,7 +196,7 @@ class NotificationService {
             Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED', 'BORROW_REQUESTED'] }
           }] : []),
           ...(user.User_Role === 'LAB_TECH' ? [{
-            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'FORM_APPROVED', 'FORM_REJECTED', 'BORROW_REQUESTED'] }
+            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'FORM_APPROVED', 'FORM_CANCELLED', 'FORM_REJECTED', 'BORROW_REQUESTED'] }
           }] : []),
         ]
       };
@@ -571,9 +572,10 @@ class NotificationService {
         message = `Your form "${form.Title}" has been approved.`;
         type = 'FORM_APPROVED';
         break;
+      case 'CANCELLED':
       case 'REJECTED':
-        title = 'Form Rejected';
-        message = `Your form "${form.Title}" has been rejected.`;
+        title = 'Form Cancelled';
+        message = `Your form "${form.Title}" has been cancelled.`;
         type = 'FORM_UPDATE_REMINDER';
         break;
       default:

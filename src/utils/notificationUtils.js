@@ -16,6 +16,7 @@ const getNotificationColor = (notificationType) => {
     'FORM_UPDATE_REMINDER',
     'FORM_COMPLETED',
     'FORM_APPROVED',
+    'FORM_CANCELLED',
   ];
 
   // System Notifications (Blue)
@@ -93,6 +94,7 @@ const getNotificationIcon = (notificationType) => {
     FORM_UPDATE_REMINDER: 'alert-circle',
     FORM_COMPLETED: 'check-circle',
     FORM_APPROVED: 'thumbs-up',
+    FORM_CANCELLED: 'x-circle',
     
     // System Notifications
     COMPUTER_USAGE: 'monitor',
@@ -121,6 +123,7 @@ const getNotificationAction = (notificationType) => {
     FORM_UPDATE_REMINDER: 'View Form',
     FORM_COMPLETED: 'View Form',
     FORM_APPROVED: 'View Form',
+    FORM_CANCELLED: 'View Form',
     COMPUTER_USAGE: 'View Usage',
     ITEM_BORROWED: 'View Item',
     ROOM_BOOKED: 'View Booking',
