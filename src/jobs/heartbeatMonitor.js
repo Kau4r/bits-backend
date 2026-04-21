@@ -6,24 +6,24 @@ const HeartbeatService = require('../services/heartbeatService');
  */
 const checkOfflineComputers = async () => {
   try {
-    console.log('[Heartbeat Monitor] Checking for offline computers...');
+    console.log('[Workstation Status Job] Checking workstation records...');
 
     const offlineCount = await HeartbeatService.checkOfflineComputers();
 
-    console.log(`[Heartbeat Monitor] Marked ${offlineCount} computers as offline`);
+    console.log(`[Workstation Status Job] Updated ${offlineCount} workstation records`);
   } catch (error) {
-    console.error('[Heartbeat Monitor] Error checking offline computers:', error);
+    console.error('[Workstation Status Job] Error updating workstation records:', error);
   }
 };
 
 /**
- * Initialize heartbeat monitoring job
+ * Initialize workstation status refresh job
  */
 const initHeartbeatMonitor = () => {
   // Run every minute
   cron.schedule('* * * * *', checkOfflineComputers);
 
-  console.log('[Heartbeat Monitor] Started - checking every minute');
+  console.log('[Workstation Status Job] Started - checking every minute');
 };
 
 module.exports = {

@@ -1,12 +1,84 @@
-﻿const prisma = require('../../lib/prisma');
+const fs = require('fs/promises');
+const path = require('path');
+const zlib = require('zlib');
+const { promisify } = require('util');
+const prisma = require('../../lib/prisma');
+
 const CONFIRMATION_TEXT = 'RESET OPERATIONAL DATA';
+const ARCHIVE_CONFIRMATION_TEXT = 'ARCHIVE AND RESET SCHOOL YEAR';
+const gzip = promisify(zlib.gzip);
+const archiveDir = path.join(__dirname, '../../../archives');
+
+const getDelegate = (client, ...names) => {
+    for (const name of names) {
+        if (client[name]) return client[name];
+    }
+    return null;
+};
 
 const countSafely = async (delegate, where) => {
     if (!delegate?.count) return 0;
     return where ? delegate.count({ where }) : delegate.count();
 };
 
+const findManySafely = async (delegate, args) => {
+    if (!delegate?.findMany) return [];
+    return delegate.findMany(args);
+};
+
+const parseSchoolYear = (schoolYear) => {
+    const value = String(schoolYear || '').trim();
+    const match = value.match(/^(\d{4})\s*[-/]\s*(\d{4})$/);
+
+    if (!match) {
+        const error = new Error('School year must use the format YYYY-YYYY');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const startYear = Number(match[1]);
+    const endYear = Number(match[2]);
+    if (endYear !== startYear + 1) {
+        const error = new Error('School year end must be the next calendar year');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    return {
+        label: `${startYear}-${endYear}`,
+        start: new Date(Date.UTC(startYear, 6, 1, 0, 0, 0, 0)),
+        end: new Date(Date.UTC(endYear, 5, 30, 23, 59, 59, 999))
+    };
+};
+
+const rangeWhere = (field, range) => ({
+    [field]: {
+        gte: range.start,
+        lte: range.end
+    }
+});
+
+const delegatesFor = (client) => ({
+    notificationRead: getDelegate(client, 'NotificationRead', 'notificationRead'),
+    auditLog: getDelegate(client, 'Audit_Log', 'audit_Log'),
+    formAttachment: getDelegate(client, 'FormAttachment', 'formAttachment'),
+    formHistory: getDelegate(client, 'FormHistory', 'formHistory'),
+    form: getDelegate(client, 'Form', 'form'),
+    ticket: getDelegate(client, 'Ticket', 'ticket'),
+    borrowingComp: getDelegate(client, 'Borrowing_Comp', 'borrowing_Comp'),
+    borrowItem: getDelegate(client, 'Borrow_Item', 'borrow_Item'),
+    bookedRoom: getDelegate(client, 'Booked_Room', 'booked_Room'),
+    schedule: getDelegate(client, 'Schedule', 'schedule'),
+    computerHeartbeat: getDelegate(client, 'ComputerHeartbeat', 'computerHeartbeat'),
+    weeklyReport: getDelegate(client, 'Weekly_Report', 'weekly_Report'),
+    room: getDelegate(client, 'Room', 'room'),
+    computer: getDelegate(client, 'Computer', 'computer'),
+    item: getDelegate(client, 'Item', 'item'),
+    user: getDelegate(client, 'User', 'user')
+});
+
 const buildCleanupPreview = async () => {
+    const delegates = delegatesFor(prisma);
     const [
         forms,
         formAttachments,
@@ -26,23 +98,23 @@ const buildCleanupPreview = async () => {
         users,
         inventoryItems
     ] = await Promise.all([
-        countSafely(prisma.Form),
-        countSafely(prisma.FormAttachment),
-        countSafely(prisma.FormHistory),
-        countSafely(prisma.Ticket || prisma.ticket),
-        countSafely(prisma.Booked_Room),
-        countSafely(prisma.Schedule),
-        countSafely(prisma.Borrow_Item || prisma.borrow_Item),
-        countSafely(prisma.Borrowing_Comp || prisma.borrowing_Comp),
-        countSafely(prisma.Audit_Log || prisma.audit_Log),
-        countSafely(prisma.NotificationRead || prisma.notificationRead),
-        countSafely(prisma.Weekly_Report || prisma.weekly_Report),
-        countSafely(prisma.ComputerHeartbeat || prisma.computerHeartbeat),
-        countSafely(prisma.Room || prisma.room),
-        countSafely(prisma.Computer || prisma.computer),
-        countSafely(prisma.item, { Status: 'BORROWED' }),
-        countSafely(prisma.User || prisma.user),
-        countSafely(prisma.item)
+        countSafely(delegates.form),
+        countSafely(delegates.formAttachment),
+        countSafely(delegates.formHistory),
+        countSafely(delegates.ticket),
+        countSafely(delegates.bookedRoom),
+        countSafely(delegates.schedule),
+        countSafely(delegates.borrowItem),
+        countSafely(delegates.borrowingComp),
+        countSafely(delegates.auditLog),
+        countSafely(delegates.notificationRead),
+        countSafely(delegates.weeklyReport),
+        countSafely(delegates.computerHeartbeat),
+        countSafely(delegates.room),
+        countSafely(delegates.computer),
+        countSafely(delegates.item, { Status: 'BORROWED' }),
+        countSafely(delegates.user),
+        countSafely(delegates.item)
     ]);
 
     return {
@@ -75,6 +147,259 @@ const buildCleanupPreview = async () => {
     };
 };
 
+const buildSchoolYearArchivePreview = async (schoolYear) => {
+    const range = parseSchoolYear(schoolYear);
+    const delegates = delegatesFor(prisma);
+    const [
+        users,
+        rooms,
+        computers,
+        inventoryItems,
+        forms,
+        formAttachments,
+        formHistory,
+        tickets,
+        bookings,
+        borrowItems,
+        borrowingComputers,
+        reports,
+        heartbeatSessions,
+        auditLogs,
+        notifications,
+        notificationReads,
+        schedules
+    ] = await Promise.all([
+        countSafely(delegates.user),
+        countSafely(delegates.room),
+        countSafely(delegates.computer),
+        countSafely(delegates.item),
+        countSafely(delegates.form, rangeWhere('Created_At', range)),
+        countSafely(delegates.formAttachment, rangeWhere('Uploaded_At', range)),
+        countSafely(delegates.formHistory, rangeWhere('Changed_At', range)),
+        countSafely(delegates.ticket, rangeWhere('Created_At', range)),
+        countSafely(delegates.bookedRoom, rangeWhere('Start_Time', range)),
+        countSafely(delegates.borrowItem, rangeWhere('Created_At', range)),
+        countSafely(delegates.borrowingComp, rangeWhere('Created_At', range)),
+        countSafely(delegates.weeklyReport, rangeWhere('Week_Start', range)),
+        countSafely(delegates.computerHeartbeat, rangeWhere('Timestamp', range)),
+        countSafely(delegates.auditLog, {
+            Is_Notification: false,
+            ...rangeWhere('Timestamp', range)
+        }),
+        countSafely(delegates.auditLog, {
+            Is_Notification: true,
+            ...rangeWhere('Timestamp', range)
+        }),
+        countSafely(delegates.notificationRead),
+        countSafely(delegates.schedule, rangeWhere('Created_At', range))
+    ]);
+
+    return {
+        confirmationText: ARCHIVE_CONFIRMATION_TEXT,
+        schoolYear: range.label,
+        archiveName: `BITS-Archive-SY-${range.label}.json.gz`,
+        dateRange: {
+            start: range.start.toISOString(),
+            end: range.end.toISOString()
+        },
+        willArchive: {
+            users,
+            rooms,
+            computers,
+            inventoryItems,
+            forms,
+            formAttachments,
+            formHistory,
+            tickets,
+            bookings,
+            borrowItems,
+            borrowingComputers,
+            reports,
+            heartbeatSessions,
+            auditLogs
+        },
+        willDelete: {
+            forms,
+            formAttachments,
+            formHistory,
+            tickets,
+            bookings,
+            schedules,
+            borrowItems,
+            borrowingComputers,
+            notifications,
+            notificationReads,
+            reports,
+            heartbeatSessions
+        },
+        willReset: {
+            rooms,
+            computers
+        },
+        willPreserve: {
+            users,
+            rooms,
+            inventoryItems,
+            computers
+        },
+        excludedFromArchive: {
+            notifications,
+            notificationReads,
+            schedules
+        }
+    };
+};
+
+const collectArchivePayload = async (schoolYear, createdBy) => {
+    const range = parseSchoolYear(schoolYear);
+    const delegates = delegatesFor(prisma);
+    const [
+        users,
+        rooms,
+        computers,
+        inventoryItems,
+        forms,
+        formAttachments,
+        formHistory,
+        tickets,
+        bookings,
+        borrowItems,
+        borrowingComputers,
+        reports,
+        heartbeatSessions,
+        auditLogs
+    ] = await Promise.all([
+        findManySafely(delegates.user, {
+            select: {
+                User_ID: true,
+                Username: true,
+                First_Name: true,
+                Middle_Name: true,
+                Last_Name: true,
+                Email: true,
+                Created_At: true,
+                Updated_At: true,
+                Is_Active: true,
+                User_Role: true
+            }
+        }),
+        findManySafely(delegates.room, {}),
+        findManySafely(delegates.computer, {}),
+        findManySafely(delegates.item, {}),
+        findManySafely(delegates.form, { where: rangeWhere('Created_At', range) }),
+        findManySafely(delegates.formAttachment, { where: rangeWhere('Uploaded_At', range) }),
+        findManySafely(delegates.formHistory, { where: rangeWhere('Changed_At', range) }),
+        findManySafely(delegates.ticket, { where: rangeWhere('Created_At', range) }),
+        findManySafely(delegates.bookedRoom, { where: rangeWhere('Start_Time', range) }),
+        findManySafely(delegates.borrowItem, { where: rangeWhere('Created_At', range) }),
+        findManySafely(delegates.borrowingComp, { where: rangeWhere('Created_At', range) }),
+        findManySafely(delegates.weeklyReport, { where: rangeWhere('Week_Start', range) }),
+        findManySafely(delegates.computerHeartbeat, { where: rangeWhere('Timestamp', range) }),
+        findManySafely(delegates.auditLog, {
+            where: {
+                Is_Notification: false,
+                ...rangeWhere('Timestamp', range)
+            }
+        })
+    ]);
+
+    return {
+        manifest: {
+            application: 'BITS',
+            archiveType: 'school-year-operational-data',
+            schoolYear: range.label,
+            createdAt: new Date().toISOString(),
+            createdBy,
+            dateRange: {
+                start: range.start.toISOString(),
+                end: range.end.toISOString()
+            },
+            excludedFromArchive: ['notifications', 'notificationReads', 'schedules'],
+            format: 'json-gzip'
+        },
+        data: {
+            users,
+            rooms,
+            computers,
+            inventoryItems,
+            forms,
+            formAttachments,
+            formHistory,
+            tickets,
+            bookings,
+            borrowItems,
+            borrowingComputers,
+            reports,
+            heartbeatSessions,
+            auditLogs
+        }
+    };
+};
+
+const writeArchiveFile = async (payload, archiveName) => {
+    await fs.mkdir(archiveDir, { recursive: true });
+    const compressed = await gzip(Buffer.from(JSON.stringify(payload, null, 2), 'utf8'));
+    const filePath = path.join(archiveDir, archiveName);
+    await fs.writeFile(filePath, compressed);
+    return filePath;
+};
+
+const resetOperationalData = async (tx, userId, details) => {
+    const delegates = delegatesFor(tx);
+    const deleted = {};
+    deleted.notificationReads = delegates.notificationRead ? (await delegates.notificationRead.deleteMany({})).count : 0;
+    deleted.notifications = delegates.auditLog ? (await delegates.auditLog.deleteMany({})).count : 0;
+    deleted.formAttachments = delegates.formAttachment ? (await delegates.formAttachment.deleteMany({})).count : 0;
+    deleted.formHistory = delegates.formHistory ? (await delegates.formHistory.deleteMany({})).count : 0;
+    deleted.forms = delegates.form ? (await delegates.form.deleteMany({})).count : 0;
+    deleted.tickets = delegates.ticket ? (await delegates.ticket.deleteMany({})).count : 0;
+    deleted.borrowingComputers = delegates.borrowingComp ? (await delegates.borrowingComp.deleteMany({})).count : 0;
+    deleted.borrowItems = delegates.borrowItem ? (await delegates.borrowItem.deleteMany({})).count : 0;
+    deleted.bookings = delegates.bookedRoom ? (await delegates.bookedRoom.deleteMany({})).count : 0;
+    deleted.schedules = delegates.schedule ? (await delegates.schedule.deleteMany({})).count : 0;
+    deleted.heartbeatSessions = delegates.computerHeartbeat ? (await delegates.computerHeartbeat.deleteMany({})).count : 0;
+    deleted.reports = delegates.weeklyReport ? (await delegates.weeklyReport.deleteMany({})).count : 0;
+
+    const reset = {};
+    reset.rooms = delegates.room ? (await delegates.room.updateMany({
+        data: {
+            Status: 'AVAILABLE',
+            Current_Use_Type: null,
+            Opened_By: null,
+            Opened_At: null,
+            Closed_At: null
+        }
+    })).count : 0;
+
+    reset.computers = delegates.computer ? (await delegates.computer.updateMany({
+        data: {
+            Status: 'AVAILABLE',
+            Is_Online: false,
+            Current_User_ID: null,
+            Last_Seen: null
+        }
+    })).count : 0;
+
+    reset.borrowedItems = delegates.item ? (await delegates.item.updateMany({
+        where: { Status: 'BORROWED' },
+        data: { Status: 'AVAILABLE' }
+    })).count : 0;
+
+    if (delegates.auditLog) {
+        await delegates.auditLog.create({
+            data: {
+                User_ID: userId,
+                Action: details.action,
+                Log_Type: 'SYSTEM',
+                Is_Notification: false,
+                Details: details.message
+            }
+        });
+    }
+
+    return { deleted, reset };
+};
+
 const getCleanupPreview = async (_req, res) => {
     try {
         const preview = await buildCleanupPreview();
@@ -82,6 +407,19 @@ const getCleanupPreview = async (_req, res) => {
     } catch (error) {
         console.error('Error building cleanup preview:', error);
         res.status(500).json({ success: false, error: 'Failed to build cleanup preview' });
+    }
+};
+
+const getSchoolYearArchivePreview = async (req, res) => {
+    try {
+        const preview = await buildSchoolYearArchivePreview(req.query.schoolYear);
+        res.json({ success: true, data: preview });
+    } catch (error) {
+        console.error('Error building school-year archive preview:', error);
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.message || 'Failed to build school-year archive preview'
+        });
     }
 };
 
@@ -97,73 +435,10 @@ const runCleanup = async (req, res) => {
 
         const before = await buildCleanupPreview();
         const userId = req.user?.User_ID || null;
-
-        const result = await prisma.$transaction(async (tx) => {
-            const delegates = {
-                notificationRead: tx.NotificationRead || tx.notificationRead,
-                auditLog: tx.Audit_Log || tx.audit_Log,
-                form: tx.Form || tx.form,
-                ticket: tx.Ticket || tx.ticket,
-                borrowingComp: tx.Borrowing_Comp || tx.borrowing_Comp,
-                borrowItem: tx.Borrow_Item || tx.borrow_Item,
-                bookedRoom: tx.Booked_Room || tx.booked_Room,
-                schedule: tx.Schedule || tx.schedule,
-                computerHeartbeat: tx.ComputerHeartbeat || tx.computerHeartbeat,
-                weeklyReport: tx.Weekly_Report || tx.weekly_Report,
-                room: tx.Room || tx.room,
-                computer: tx.Computer || tx.computer,
-                item: tx.Item || tx.item
-            };
-
-            const deleted = {};
-            deleted.notificationReads = (await delegates.notificationRead.deleteMany({})).count;
-            deleted.notifications = (await delegates.auditLog.deleteMany({})).count;
-            deleted.forms = (await delegates.form.deleteMany({})).count;
-            deleted.tickets = (await delegates.ticket.deleteMany({})).count;
-            deleted.borrowingComputers = (await delegates.borrowingComp.deleteMany({})).count;
-            deleted.borrowItems = (await delegates.borrowItem.deleteMany({})).count;
-            deleted.bookings = (await delegates.bookedRoom.deleteMany({})).count;
-            deleted.schedules = (await delegates.schedule.deleteMany({})).count;
-            deleted.heartbeatSessions = (await delegates.computerHeartbeat.deleteMany({})).count;
-            deleted.reports = (await delegates.weeklyReport.deleteMany({})).count;
-
-            const reset = {};
-            reset.rooms = (await delegates.room.updateMany({
-                data: {
-                    Status: 'AVAILABLE',
-                    Current_Use_Type: null,
-                    Opened_By: null,
-                    Opened_At: null,
-                    Closed_At: null
-                }
-            })).count;
-
-            reset.computers = (await delegates.computer.updateMany({
-                data: {
-                    Status: 'AVAILABLE',
-                    Is_Online: false,
-                    Current_User_ID: null,
-                    Last_Seen: null
-                }
-            })).count;
-
-            reset.borrowedItems = (await delegates.item.updateMany({
-                where: { Status: 'BORROWED' },
-                data: { Status: 'AVAILABLE' }
-            })).count;
-
-            await delegates.auditLog.create({
-                data: {
-                    User_ID: userId,
-                    Action: 'DATABASE_CLEANUP',
-                    Log_Type: 'SYSTEM',
-                    Is_Notification: false,
-                    Details: 'Operational data reset by admin'
-                }
-            });
-
-            return { deleted, reset };
-        });
+        const result = await prisma.$transaction((tx) => resetOperationalData(tx, userId, {
+            action: 'DATABASE_CLEANUP',
+            message: 'Operational data reset by admin'
+        }));
 
         res.json({
             success: true,
@@ -179,8 +454,71 @@ const runCleanup = async (req, res) => {
     }
 };
 
+const runSchoolYearArchiveCleanup = async (req, res) => {
+    try {
+        const confirmation = String(req.body?.confirmation || '').trim();
+        const schoolYear = req.body?.schoolYear;
+
+        if (confirmation !== ARCHIVE_CONFIRMATION_TEXT) {
+            return res.status(400).json({
+                success: false,
+                error: `Confirmation text must exactly match: ${ARCHIVE_CONFIRMATION_TEXT}`
+            });
+        }
+
+        const preview = await buildSchoolYearArchivePreview(schoolYear);
+        const payload = await collectArchivePayload(schoolYear, req.user?.User_ID || null);
+        await writeArchiveFile(payload, preview.archiveName);
+
+        const before = await buildCleanupPreview();
+        const userId = req.user?.User_ID || null;
+        const result = await prisma.$transaction((tx) => resetOperationalData(tx, userId, {
+            action: 'SCHOOL_YEAR_ARCHIVE_CLEANUP',
+            message: `Archived ${preview.schoolYear} to ${preview.archiveName} and reset operational data`
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                message: `School year ${preview.schoolYear} archived and cleanup completed`,
+                archiveName: preview.archiveName,
+                downloadUrl: `/maintenance/archives/${encodeURIComponent(preview.archiveName)}`,
+                preview,
+                before,
+                result
+            }
+        });
+    } catch (error) {
+        console.error('Error running school-year archive cleanup:', error);
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.message || 'Failed to run school-year archive cleanup'
+        });
+    }
+};
+
+const downloadArchive = async (req, res) => {
+    try {
+        const fileName = path.basename(req.params.fileName || '');
+        if (!/^BITS-Archive-SY-\d{4}-\d{4}\.json\.gz$/.test(fileName)) {
+            return res.status(400).json({ success: false, error: 'Invalid archive file name' });
+        }
+
+        const filePath = path.join(archiveDir, fileName);
+        await fs.access(filePath);
+        res.download(filePath, fileName);
+    } catch (error) {
+        console.error('Error downloading archive:', error);
+        res.status(404).json({ success: false, error: 'Archive not found' });
+    }
+};
+
 module.exports = {
     CONFIRMATION_TEXT,
+    ARCHIVE_CONFIRMATION_TEXT,
     getCleanupPreview,
-    runCleanup
+    getSchoolYearArchivePreview,
+    runCleanup,
+    runSchoolYearArchiveCleanup,
+    downloadArchive
 };
