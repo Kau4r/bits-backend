@@ -10,7 +10,12 @@ const {
     getReportById,
     updateReport,
     submitReport,
-    reviewReport
+    reviewReport,
+    getDashboardReportSummary,
+    exportDashboardSummaryCsv,
+    exportInventoryCsv,
+    exportRoomsCsv,
+    exportWeeklyReportsCsv
 } = require('./reports.controller');
 
 // Create a new report
@@ -32,6 +37,41 @@ router.get('/auto-populate',
     authenticateToken,
     authorize('LAB_TECH'),
     asyncHandler(autoPopulate)
+);
+
+// Dashboard report summary
+router.get('/summary',
+    authenticateToken,
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    asyncHandler(getDashboardReportSummary)
+);
+
+// Dashboard report summary export
+router.get('/summary.csv',
+    authenticateToken,
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    asyncHandler(exportDashboardSummaryCsv)
+);
+
+// Inventory report export
+router.get('/inventory.csv',
+    authenticateToken,
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    asyncHandler(exportInventoryCsv)
+);
+
+// Room report export
+router.get('/rooms.csv',
+    authenticateToken,
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    asyncHandler(exportRoomsCsv)
+);
+
+// Weekly reports export
+router.get('/weekly.csv',
+    authenticateToken,
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    asyncHandler(exportWeeklyReportsCsv)
 );
 
 // Get a single report
