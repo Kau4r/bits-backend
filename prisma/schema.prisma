@@ -341,7 +341,7 @@ enum FormStatus {
   PENDING
   IN_REVIEW
   APPROVED
-  REJECTED
+  CANCELLED
   ARCHIVED
 }
 
@@ -358,7 +358,7 @@ enum FormDepartment {
 enum FormHistoryAction {
   CREATED
   APPROVED
-  REJECTED
+  CANCELLED
   TRANSFERRED
   RETURNED
   ARCHIVED

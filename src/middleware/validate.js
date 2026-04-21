@@ -169,7 +169,7 @@ const formSchemas = {
     }),
 
     update: Joi.object({
-        status: Joi.string().valid('PENDING', 'IN_REVIEW', 'APPROVED', 'REJECTED', 'ARCHIVED'),
+        status: Joi.string().valid('PENDING', 'IN_REVIEW', 'APPROVED', 'CANCELLED'),
         approverId: Joi.number().integer().positive(),
         title: Joi.string().min(1).max(200),
         content: Joi.string().allow('', null),

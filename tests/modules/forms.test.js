@@ -38,12 +38,16 @@ const createdForm = (overrides = {}) => ({
   Form_Code: `WRF-${year}-001`,
   Creator_ID: 9999,
   Form_Type: 'WRF',
+  Status: 'PENDING',
   Department: 'REQUESTOR',
+  Is_Archived: false,
   File_Name: 'wrf.pdf',
   File_URL: 'https://example.test/uploads/wrf.pdf',
   File_Type: 'application/pdf',
   Requester_Name: 'Juan Dela Cruz',
   Remarks: 'Need replacement keyboard',
+  Created_At: '2026-04-01T00:00:00.000Z',
+  Updated_At: '2026-04-01T00:00:00.000Z',
   History: [{ Department: 'REQUESTOR', Notes: 'Form created' }],
   Attachments: [{
     Attachment_ID: 1,
@@ -124,11 +128,13 @@ describe('Form Routes', () => {
         })
       );
       expect(prisma.FormHistory.create).toHaveBeenCalledWith({
-        data: {
+        data: expect.objectContaining({
           Form_ID: 1,
           Department: 'REQUESTOR',
           Notes: 'Form created',
-        },
+          Performed_By: 9999,
+          Action: 'CREATED',
+        }),
       });
       expect(AuditLogger.logForm).toHaveBeenCalledWith(
         9999,
@@ -176,10 +182,25 @@ describe('Form Routes', () => {
   describe('POST /forms/:id/transfer', () => {
     it('transfers a WRF form to PPFO after Department Head has been visited', async () => {
       const existingForm = createdForm({
+        Status: 'APPROVED',
         Department: 'DEPARTMENT_HEAD',
         History: [
           { Department: 'REQUESTOR', Notes: 'Form created' },
           { Department: 'DEPARTMENT_HEAD', Notes: 'Send to Department Head' },
+        ],
+        Attachments: [
+          {
+            Attachment_ID: 2,
+            Form_ID: 1,
+            Department: 'DEPARTMENT_HEAD',
+            Document_Type: 'PROOF',
+            File_Name: 'department-head-proof.pdf',
+            File_URL: 'https://example.test/uploads/department-head-proof.pdf',
+            File_Type: 'application/pdf',
+            Uploaded_By: 9999,
+            Uploaded_At: '2026-04-01T01:00:00.000Z',
+            Notes: 'Department Head proof',
+          },
         ],
       });
       const form = createdForm({
@@ -202,15 +223,19 @@ describe('Form Routes', () => {
       expect(prisma.Form.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { Form_ID: 1 },
-          data: {
+          data: expect.objectContaining({
             Department: 'PPFO',
-            History: {
-              create: {
+            Status: 'PENDING',
+            Is_Archived: false,
+            History: expect.objectContaining({
+              create: expect.objectContaining({
                 Department: 'PPFO',
                 Notes: 'Send to PPFO',
-              },
-            },
-          },
+                Performed_By: 9999,
+                Action: 'TRANSFERRED',
+              }),
+            }),
+          }),
         })
       );
     });
@@ -262,6 +287,7 @@ describe('Form Routes', () => {
     it('blocks RIS completion when required procurement files or received indicator are missing', async () => {
       prisma.Form.findUnique.mockResolvedValue(createdForm({
         Form_Type: 'RIS',
+        Status: 'APPROVED',
         Department: 'PURCHASING',
         Is_Received: false,
         History: [
@@ -271,7 +297,18 @@ describe('Form Routes', () => {
           { Department: 'TNS', Notes: 'TNS' },
           { Department: 'PURCHASING', Notes: 'Purchasing' },
         ],
-        Attachments: [],
+        Attachments: [{
+          Attachment_ID: 9,
+          Form_ID: 1,
+          Department: 'PURCHASING',
+          Document_Type: 'PROOF',
+          File_Name: 'purchasing-proof.pdf',
+          File_URL: 'https://example.test/uploads/purchasing-proof.pdf',
+          File_Type: 'application/pdf',
+          Uploaded_By: 9999,
+          Uploaded_At: '2026-04-01T01:00:00.000Z',
+          Notes: 'Purchasing proof',
+        }],
       }));
 
       const res = await request(app)
@@ -308,6 +345,7 @@ describe('Form Routes', () => {
 
       prisma.Form.findUnique.mockResolvedValue(createdForm({
         Form_Type: 'RIS',
+        Status: 'APPROVED',
         Department: 'PURCHASING',
         Is_Received: true,
         History: [
@@ -335,30 +373,131 @@ describe('Form Routes', () => {
       expect(prisma.Form.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { Form_ID: 1 },
-          data: {
+          data: expect.objectContaining({
             Department: 'COMPLETED',
-            History: {
-              create: {
+            Status: 'PENDING',
+            Is_Archived: false,
+            History: expect.objectContaining({
+              create: expect.objectContaining({
                 Department: 'COMPLETED',
                 Notes: 'Complete RIS',
-              },
-            },
-          },
+                Performed_By: 9999,
+                Action: 'TRANSFERRED',
+              }),
+            }),
+          }),
         })
       );
     });
   });
 
   describe('PATCH /forms/:id', () => {
-    it('archives a form when status is changed to ARCHIVED', async () => {
+    it('rejects ARCHIVED in the normal status update path', async () => {
+      prisma.Form.findUnique.mockResolvedValue(createdForm());
+
+      const res = await request(app)
+        .patch('/forms/1')
+        .send({ status: 'ARCHIVED' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Use the archive endpoint to archive forms');
+      expect(prisma.Form.update).not.toHaveBeenCalled();
+    });
+
+    it('blocks approval until the current step has an attachment', async () => {
+      prisma.Form.findUnique.mockResolvedValue(createdForm({
+        Attachments: [],
+      }));
+
+      const res = await request(app)
+        .patch('/forms/1')
+        .send({ status: 'APPROVED' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.requiresUpload).toBe(true);
+      expect(prisma.Form.update).not.toHaveBeenCalled();
+    });
+
+    it('approves a form when the current step has an attachment', async () => {
+      const approvedForm = createdForm({ Status: 'APPROVED' });
+      prisma.Form.findUnique.mockResolvedValue(createdForm());
+      prisma.Form.update.mockResolvedValue(approvedForm);
+
+      const res = await request(app)
+        .patch('/forms/1')
+        .send({ status: 'APPROVED' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.Status).toBe('APPROVED');
+      expect(prisma.Form.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { Form_ID: 1 },
+          data: expect.objectContaining({
+            Status: 'APPROVED',
+            Is_Archived: false,
+          }),
+        })
+      );
+      expect(prisma.FormHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            Action: 'APPROVED',
+          }),
+        })
+      );
+    });
+
+    it('cancels a form without archiving it automatically', async () => {
+      const cancelledForm = createdForm({ Status: 'CANCELLED', Is_Archived: false });
+      prisma.Form.findUnique.mockResolvedValue(createdForm());
+      prisma.Form.update.mockResolvedValue(cancelledForm);
+
+      const res = await request(app)
+        .patch('/forms/1')
+        .send({ status: 'CANCELLED' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.Status).toBe('CANCELLED');
+      expect(res.body.data.Is_Archived).toBe(false);
+      expect(prisma.Form.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { Form_ID: 1 },
+          data: expect.objectContaining({
+            Status: 'CANCELLED',
+            Is_Archived: false,
+          }),
+        })
+      );
+      expect(prisma.FormHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            Action: 'CANCELLED',
+          }),
+        })
+      );
+      expect(AuditLogger.logForm).toHaveBeenCalledWith(
+        9999,
+        'FORM_CANCELLED',
+        `Form WRF-${year}-001 cancelled`,
+        ['LAB_TECH', 'LAB_HEAD'],
+        9999
+      );
+    });
+  });
+
+  describe('PATCH /forms/:id/archive', () => {
+    it('archives a completed form through the archive endpoint', async () => {
+      prisma.Form.findUnique.mockResolvedValue(createdForm({
+        Department: 'COMPLETED',
+      }));
       prisma.Form.update.mockResolvedValue(createdForm({
         Status: 'ARCHIVED',
         Is_Archived: true,
       }));
 
       const res = await request(app)
-        .patch('/forms/1')
-        .send({ status: 'ARCHIVED' });
+        .patch('/forms/1/archive')
+        .send();
 
       expect(res.status).toBe(200);
       expect(res.body.data.Status).toBe('ARCHIVED');

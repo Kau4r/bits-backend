@@ -139,7 +139,8 @@ class AuditLogger {
             // Forms
             'FORM_SUBMITTED': 'New Form Submitted',
             'FORM_APPROVED': 'Form Approved',
-            'FORM_REJECTED': 'Form Rejected',
+            'FORM_REJECTED': 'Form Cancelled',
+            'FORM_CANCELLED': 'Form Cancelled',
             'FORM_UPDATED': 'Form Updated',
             'FORM_PENDING': 'Form Pending',
             'FORM_IN_REVIEW': 'Form In Review',
