@@ -307,7 +307,7 @@ const generateFormCode = async (formType) => {
     const prefix = `${formType}-${year}`;
 
     // Count existing forms with this prefix
-    const count = await prisma.Form.count({
+    const count = await prisma.form.count({
         where: {
             Form_Code: {
                 startsWith: prefix
@@ -358,7 +358,7 @@ const getForms = async (req, res) => {
             ];
         }
 
-        const forms = await prisma.Form.findMany({
+        const forms = await prisma.form.findMany({
             where,
             include: formInclude,
             orderBy: { Created_At: 'desc' }
@@ -380,7 +380,7 @@ const getFormById = async (req, res) => {
     }
 
     try {
-        const form = await prisma.Form.findUnique({
+        const form = await prisma.form.findUnique({
             where: { Form_ID: formId },
             include: formInclude
         });
@@ -462,7 +462,7 @@ const createForm = async (req, res) => {
         const formCode = await generateFormCode(formTypeEnum);
 
         // Create form first
-        const form = await prisma.Form.create({
+        const form = await prisma.form.create({
             data: {
                 Form_Code: formCode,
                 Creator_ID: parseInt(userId),
@@ -487,7 +487,7 @@ const createForm = async (req, res) => {
         });
 
         // Create initial history entry
-        await prisma.FormHistory.create({
+        await prisma.formHistory.create({
             data: {
                 Form_ID: form.Form_ID,
                 Department: departmentEnum,
@@ -512,7 +512,7 @@ const createForm = async (req, res) => {
         }
 
         // Fetch the form again with history included
-        const formWithHistory = await prisma.Form.findUnique({
+        const formWithHistory = await prisma.form.findUnique({
             where: { Form_ID: form.Form_ID },
             include: formInclude
         });
@@ -536,7 +536,7 @@ const updateForm = async (req, res) => {
         const { status, approverId, title, content, requesterName, remarks, fileName, fileUrl, fileType } = req.body;
         const statusEnum = status !== undefined ? normalizeFormStatus(status) : undefined;
 
-        const existing = await prisma.Form.findUnique({
+        const existing = await prisma.form.findUnique({
             where: { Form_ID: formId },
             include: formInclude
         });
@@ -604,7 +604,7 @@ const updateForm = async (req, res) => {
             updateData.File_Type = fileType || null;
         }
 
-        const form = await prisma.Form.update({
+        const form = await prisma.form.update({
             where: { Form_ID: formId },
             data: updateData,
             include: formInclude
@@ -612,7 +612,7 @@ const updateForm = async (req, res) => {
 
         // Write history entry for approval/cancellation decisions.
         if (statusEnum === 'APPROVED' || statusEnum === 'CANCELLED') {
-            await prisma.FormHistory.create({
+            await prisma.formHistory.create({
                 data: {
                     Form_ID: formId,
                     Department: form.Department,
@@ -653,7 +653,7 @@ const archiveForm = async (req, res) => {
     }
 
     try {
-        const existingForm = await prisma.Form.findUnique({ where: { Form_ID: formId } });
+        const existingForm = await prisma.form.findUnique({ where: { Form_ID: formId } });
         if (!existingForm) {
             return res.status(404).json({ success: false, error: 'Form not found' });
         }
@@ -664,7 +664,7 @@ const archiveForm = async (req, res) => {
             });
         }
 
-        const form = await prisma.Form.update({
+        const form = await prisma.form.update({
             where: { Form_ID: formId },
             data: {
                 Is_Archived: true,
@@ -672,7 +672,7 @@ const archiveForm = async (req, res) => {
             }
         });
 
-        await prisma.FormHistory.create({
+        await prisma.formHistory.create({
             data: {
                 Form_ID: formId,
                 Department: form.Department,
@@ -718,7 +718,7 @@ const transferForm = async (req, res) => {
             return res.status(400).json({ success: false, error: 'Invalid department' });
         }
 
-        const existingForm = await prisma.Form.findUnique({
+        const existingForm = await prisma.form.findUnique({
             where: { Form_ID: formId },
             include: formInclude
         });
@@ -784,7 +784,7 @@ const transferForm = async (req, res) => {
         const historyAction = isBackwardTransfer ? 'RETURNED' : 'TRANSFERRED';
 
         // Update form and add history entry
-        const form = await prisma.Form.update({
+        const form = await prisma.form.update({
             where: { Form_ID: formId },
             data: {
                 Department: departmentEnum,
@@ -828,7 +828,7 @@ const setFormReceived = async (req, res) => {
     try {
         const isReceived = req.body?.isReceived !== undefined ? req.body.isReceived === true : true;
 
-        const existingForm = await prisma.Form.findUnique({
+        const existingForm = await prisma.form.findUnique({
             where: { Form_ID: formId },
             include: formInclude
         });
@@ -860,7 +860,7 @@ const setFormReceived = async (req, res) => {
             }
         }
 
-        const form = await prisma.Form.update({
+        const form = await prisma.form.update({
             where: { Form_ID: formId },
             data: {
                 Is_Received: isReceived,
@@ -871,7 +871,7 @@ const setFormReceived = async (req, res) => {
         });
 
         if (isReceived) {
-            await prisma.FormHistory.create({
+            await prisma.formHistory.create({
                 data: {
                     Form_ID: formId,
                     Department: form.Department,
@@ -906,7 +906,7 @@ const addFormAttachments = async (req, res) => {
     }
 
     try {
-        const existingForm = await prisma.Form.findUnique({
+        const existingForm = await prisma.form.findUnique({
             where: { Form_ID: formId },
             include: formInclude
         });
@@ -945,7 +945,7 @@ const addFormAttachments = async (req, res) => {
         const firstAttachment = attachmentCreate.data[0];
         const shouldSetLegacyFile = !existingForm.File_URL && firstAttachment;
 
-        const form = await prisma.Form.update({
+        const form = await prisma.form.update({
             where: { Form_ID: formId },
             data: {
                 ...(shouldSetLegacyFile ? {
@@ -984,7 +984,7 @@ const deleteForm = async (req, res) => {
     }
 
     try {
-        await prisma.Form.delete({
+        await prisma.form.delete({
             where: { Form_ID: formId }
         });
 

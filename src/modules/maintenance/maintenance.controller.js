@@ -126,7 +126,6 @@ const buildCleanupPreview = async () => {
         notifications,
         notificationReads,
         reports,
-        heartbeatSessions,
         rooms,
         computers,
         borrowedItems,
@@ -144,7 +143,6 @@ const buildCleanupPreview = async () => {
         countSafely(delegates.auditLog),
         countSafely(delegates.notificationRead),
         countSafely(delegates.weeklyReport),
-        countSafely(delegates.computerHeartbeat),
         countSafely(delegates.room),
         countSafely(delegates.computer),
         countSafely(delegates.item, { Status: 'BORROWED' }),
@@ -165,8 +163,7 @@ const buildCleanupPreview = async () => {
             borrowingComputers,
             notifications,
             notificationReads,
-            reports,
-            heartbeatSessions
+            reports
         },
         willReset: {
             rooms,
@@ -198,7 +195,6 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
         borrowItems,
         borrowingComputers,
         reports,
-        heartbeatSessions,
         auditLogs,
         notifications,
         notificationReads,
@@ -216,7 +212,6 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
         countSafely(delegates.borrowItem, rangeWhere('Created_At', range)),
         countSafely(delegates.borrowingComp, rangeWhere('Created_At', range)),
         countSafely(delegates.weeklyReport, rangeWhere('Week_Start', range)),
-        countSafely(delegates.computerHeartbeat, rangeWhere('Timestamp', range)),
         countSafely(delegates.auditLog, {
             Is_Notification: false,
             ...rangeWhere('Timestamp', range)
@@ -238,10 +233,6 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
             end: range.end.toISOString()
         },
         willArchive: {
-            users,
-            rooms,
-            computers,
-            inventoryItems,
             forms,
             formAttachments,
             formHistory,
@@ -250,7 +241,6 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
             borrowItems,
             borrowingComputers,
             reports,
-            heartbeatSessions,
             auditLogs,
             notifications,
             notificationReads,
@@ -267,8 +257,7 @@ const buildSchoolYearArchivePreview = async (schoolYear) => {
             borrowingComputers,
             notifications,
             notificationReads,
-            reports,
-            heartbeatSessions
+            reports
         },
         willReset: {
             rooms,
@@ -288,10 +277,6 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
     const range = parseSchoolYear(schoolYear);
     const delegates = delegatesFor(prisma);
     const [
-        users,
-        rooms,
-        computers,
-        inventoryItems,
         forms,
         formAttachments,
         formHistory,
@@ -301,28 +286,10 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
         borrowItems,
         borrowingComputers,
         reports,
-        heartbeatSessions,
         auditLogs,
         notifications,
         notificationReads
     ] = await Promise.all([
-        findManySafely(delegates.user, {
-            select: {
-                User_ID: true,
-                Username: true,
-                First_Name: true,
-                Middle_Name: true,
-                Last_Name: true,
-                Email: true,
-                Created_At: true,
-                Updated_At: true,
-                Is_Active: true,
-                User_Role: true
-            }
-        }),
-        findManySafely(delegates.room, {}),
-        findManySafely(delegates.computer, {}),
-        findManySafely(delegates.item, {}),
         findManySafely(delegates.form, { where: rangeWhere('Created_At', range) }),
         findManySafely(delegates.formAttachment, { where: formAttachmentRangeWhere(range) }),
         findManySafely(delegates.formHistory, { where: formHistoryRangeWhere(range) }),
@@ -332,7 +299,6 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
         findManySafely(delegates.borrowItem, { where: rangeWhere('Created_At', range) }),
         findManySafely(delegates.borrowingComp, { where: rangeWhere('Created_At', range) }),
         findManySafely(delegates.weeklyReport, { where: rangeWhere('Week_Start', range) }),
-        findManySafely(delegates.computerHeartbeat, { where: rangeWhere('Timestamp', range) }),
         findManySafely(delegates.auditLog, {
             where: {
                 Is_Notification: false,
@@ -363,10 +329,6 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
             format: 'json-gzip'
         },
         data: {
-            users,
-            rooms,
-            computers,
-            inventoryItems,
             forms,
             formAttachments,
             formHistory,
@@ -376,7 +338,6 @@ const collectArchivePayload = async (schoolYear, createdBy) => {
             borrowItems,
             borrowingComputers,
             reports,
-            heartbeatSessions,
             auditLogs,
             notifications,
             notificationReads
@@ -405,7 +366,7 @@ const resetOperationalData = async (tx, userId, details) => {
     deleted.borrowItems = await deleteManySafely(delegates.borrowItem, {});
     deleted.bookings = await deleteManySafely(delegates.bookedRoom, {});
     deleted.schedules = await deleteManySafely(delegates.schedule, {});
-    deleted.heartbeatSessions = await deleteManySafely(delegates.computerHeartbeat, {});
+    deleted.workstationSessions = await deleteManySafely(delegates.computerHeartbeat, {});
     deleted.reports = await deleteManySafely(delegates.weeklyReport, {});
 
     const reset = {};
@@ -463,7 +424,7 @@ const resetSchoolYearOperationalData = async (tx, userId, schoolYear, details) =
     deleted.borrowItems = await deleteManySafely(delegates.borrowItem, { where: rangeWhere('Created_At', range) });
     deleted.bookings = await deleteManySafely(delegates.bookedRoom, { where: rangeWhere('Start_Time', range) });
     deleted.schedules = await deleteManySafely(delegates.schedule, { where: scheduleRangeWhere(range) });
-    deleted.heartbeatSessions = await deleteManySafely(delegates.computerHeartbeat, { where: rangeWhere('Timestamp', range) });
+    deleted.workstationSessions = await deleteManySafely(delegates.computerHeartbeat, { where: rangeWhere('Timestamp', range) });
     deleted.reports = await deleteManySafely(delegates.weeklyReport, { where: rangeWhere('Week_Start', range) });
 
     const reset = {};
@@ -619,6 +580,74 @@ const downloadArchive = async (req, res) => {
     }
 };
 
+const listArchiveFiles = async (_req, res) => {
+    try {
+        await fs.mkdir(archiveDir, { recursive: true });
+        const entries = await fs.readdir(archiveDir, { withFileTypes: true });
+        const files = await Promise.all(entries
+            .filter((entry) => entry.isFile() && /^BITS-Archive-SY-\d{4}-\d{4}\.json\.gz$/.test(entry.name))
+            .map(async (entry) => {
+                const filePath = path.join(archiveDir, entry.name);
+                const stats = await fs.stat(filePath);
+                return {
+                    fileName: entry.name,
+                    sizeBytes: stats.size,
+                    createdAt: stats.birthtime,
+                    modifiedAt: stats.mtime,
+                    downloadUrl: `/maintenance/archives/${encodeURIComponent(entry.name)}`
+                };
+            }));
+
+        files.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+        res.json({ success: true, data: files });
+    } catch (error) {
+        console.error('Error listing archive files:', error);
+        res.status(500).json({ success: false, error: 'Failed to list archive files' });
+    }
+};
+
+const listMaintenanceHistory = async (_req, res) => {
+    try {
+        const delegates = delegatesFor(prisma);
+        const rows = delegates.auditLog ? await delegates.auditLog.findMany({
+            where: {
+                Action: {
+                    in: ['DATABASE_CLEANUP', 'SCHOOL_YEAR_ARCHIVE_CLEANUP']
+                }
+            },
+            take: 20,
+            orderBy: { Timestamp: 'desc' },
+            include: {
+                User: {
+                    select: {
+                        First_Name: true,
+                        Last_Name: true,
+                        Username: true
+                    }
+                }
+            }
+        }) : [];
+
+        res.json({
+            success: true,
+            data: rows.map((row) => ({
+                id: row.Log_ID,
+                action: row.Action,
+                details: row.Details,
+                timestamp: row.Timestamp,
+                user: row.User ? {
+                    firstName: row.User.First_Name,
+                    lastName: row.User.Last_Name,
+                    username: row.User.Username
+                } : null
+            }))
+        });
+    } catch (error) {
+        console.error('Error listing maintenance history:', error);
+        res.status(500).json({ success: false, error: 'Failed to list maintenance history' });
+    }
+};
+
 module.exports = {
     CONFIRMATION_TEXT,
     ARCHIVE_CONFIRMATION_TEXT,
@@ -626,5 +655,7 @@ module.exports = {
     getSchoolYearArchivePreview,
     runCleanup,
     runSchoolYearArchiveCleanup,
-    downloadArchive
+    downloadArchive,
+    listArchiveFiles,
+    listMaintenanceHistory
 };

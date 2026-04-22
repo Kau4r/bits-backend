@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 
 const groupByCount = async (delegate, by, where = {}) => {
     try {
+        if (!delegate?.groupBy) return {};
         const rows = await delegate.groupBy({
             by: [by],
             where,
@@ -16,6 +17,26 @@ const groupByCount = async (delegate, by, where = {}) => {
     } catch (error) {
         console.error(`[Dashboard] Failed to group by ${by}:`, error.message);
         return {};
+    }
+};
+
+const countSafely = async (delegate, args = undefined, fallback = 0) => {
+    try {
+        if (!delegate?.count) return fallback;
+        return args ? await delegate.count(args) : await delegate.count();
+    } catch (error) {
+        console.error('[Dashboard] Count failed:', error.message);
+        return fallback;
+    }
+};
+
+const findManySafely = async (delegate, args = {}, fallback = []) => {
+    try {
+        if (!delegate?.findMany) return fallback;
+        return await delegate.findMany(args);
+    } catch (error) {
+        console.error('[Dashboard] Recent activity failed:', error.message);
+        return fallback;
     }
 };
 
@@ -37,9 +58,9 @@ const getDashboardMetrics = async (req, res) => {
 
             // 1. Pending Tickets (Needs Approval/Assignment)
             const [pendingTickets, completedTickets, unassignedTickets] = await Promise.all([
-                prisma.ticket.count({ where: { Status: 'PENDING' } }),
-                prisma.ticket.count({ where: { Status: 'RESOLVED' } }),
-                prisma.ticket.count({ where: { Technician_ID: null, Status: { not: 'RESOLVED' } } })
+                countSafely(prisma.ticket, { where: { Status: 'PENDING' } }),
+                countSafely(prisma.ticket, { where: { Status: 'RESOLVED' } }),
+                countSafely(prisma.ticket, { where: { Technician_ID: null, Status: { not: 'RESOLVED' } } })
             ]);
 
             // 2. Active Bookings Today
@@ -49,34 +70,34 @@ const getDashboardMetrics = async (req, res) => {
             endOfDay.setHours(23, 59, 59, 999);
 
             const [activeBookings, pendingBookings, rejectedBookings] = await Promise.all([
-                prisma.booked_Room.count({
+                countSafely(prisma.booked_Room, {
                     where: {
                         Status: 'APPROVED',
                         Start_Time: { gte: startOfDay },
                         End_Time: { lte: endOfDay }
                     }
                 }),
-                prisma.booked_Room.count({ where: { Status: 'PENDING' } }),
-                prisma.booked_Room.count({ where: { Status: { in: ['REJECTED', 'CANCELLED'] } } })
+                countSafely(prisma.booked_Room, { where: { Status: 'PENDING' } }),
+                countSafely(prisma.booked_Room, { where: { Status: { in: ['REJECTED', 'CANCELLED'] } } })
             ]);
 
             // 3. Low Inventory (Example threshold < 5)
             // Note: Assuming 'Quantity' field exists or counting items by status
             const [totalItems, brokenItems, availableItems, borrowedItems, disposedItems, roomsInMaintenance] = await Promise.all([
-                prisma.item.count(),
-                prisma.item.count({ where: { Status: 'DEFECTIVE' } }),
-                prisma.item.count({ where: { Status: 'AVAILABLE' } }),
-                prisma.item.count({ where: { Status: 'BORROWED' } }),
-                prisma.item.count({ where: { Status: 'DISPOSED' } }),
-                prisma.room.count({ where: { Status: 'MAINTENANCE' } })
+                countSafely(prisma.item),
+                countSafely(prisma.item, { where: { Status: 'DEFECTIVE' } }),
+                countSafely(prisma.item, { where: { Status: 'AVAILABLE' } }),
+                countSafely(prisma.item, { where: { Status: 'BORROWED' } }),
+                countSafely(prisma.item, { where: { Status: 'DISPOSED' } }),
+                countSafely(prisma.room, { where: { Status: 'MAINTENANCE' } })
             ]);
 
             // 4. Form Stats
             const [pendingForms, approvedForms, inReviewForms, submittedReports] = await Promise.all([
-                prisma.form.count({ where: { Status: 'PENDING' } }),
-                prisma.form.count({ where: { Status: 'APPROVED' } }),
-                prisma.form.count({ where: { Status: 'IN_REVIEW' } }),
-                prisma.weekly_Report.count({ where: { Status: 'SUBMITTED' } })
+                countSafely(prisma.form, { where: { Status: 'PENDING' } }),
+                countSafely(prisma.form, { where: { Status: 'APPROVED' } }),
+                countSafely(prisma.form, { where: { Status: 'IN_REVIEW' } }),
+                countSafely(prisma.weekly_Report, { where: { Status: 'SUBMITTED' } })
             ]);
 
             const [itemTypes, itemStatuses, bookingStatuses] = await Promise.all([
@@ -137,7 +158,7 @@ const getDashboardMetrics = async (req, res) => {
             };
 
             // 5. Recent Activity (System-wide)
-            metrics.recentActivity = await prisma.audit_Log.findMany({
+            metrics.recentActivity = await findManySafely(prisma.audit_Log, {
                 take: 5,
                 orderBy: { Timestamp: 'desc' },
                 include: { User: { select: { First_Name: true, Last_Name: true } } }
@@ -148,52 +169,69 @@ const getDashboardMetrics = async (req, res) => {
 
             // 1. My Assigned Tickets
             const [myTickets, myCompletedTickets, pendingTickets, unassignedTickets] = await Promise.all([
-                prisma.ticket.count({
+                countSafely(prisma.ticket, {
                     where: {
                         Technician_ID: User_ID,
                         Status: { not: 'RESOLVED' }
                     }
                 }),
-                prisma.ticket.count({
+                countSafely(prisma.ticket, {
                     where: {
                         Technician_ID: User_ID,
                         Status: 'RESOLVED'
                     }
                 }),
-                prisma.ticket.count({ where: { Status: 'PENDING' } }),
-                prisma.ticket.count({ where: { Technician_ID: null, Status: { not: 'RESOLVED' } } })
+                countSafely(prisma.ticket, { where: { Status: 'PENDING' } }),
+                countSafely(prisma.ticket, { where: { Technician_ID: null, Status: { not: 'RESOLVED' } } })
             ]);
 
-            // 2. Scheduled Maintenance Today (Placeholder logic based on Ticket Category)
+            // 2. Room and hardware queue
             const [maintenanceTasks, roomsInMaintenance] = await Promise.all([
-                prisma.ticket.count({
+                countSafely(prisma.ticket, {
                     where: {
                         Category: 'HARDWARE',
                         Status: 'IN_PROGRESS'
                     }
                 }),
-                prisma.room.count({ where: { Status: 'MAINTENANCE' } })
+                countSafely(prisma.room, { where: { Status: 'MAINTENANCE' } })
             ]);
 
             // 3. Borrowed Items (Active)
             const [borrowedItems, totalItems, defectiveItems, availableItems, disposedItems] = await Promise.all([
-                prisma.borrow_Item.count({ where: { Status: 'BORROWED' } }),
-                prisma.item.count(),
-                prisma.item.count({ where: { Status: 'DEFECTIVE' } }),
-                prisma.item.count({ where: { Status: 'AVAILABLE' } }),
-                prisma.item.count({ where: { Status: 'DISPOSED' } })
+                countSafely(prisma.borrow_Item, { where: { Status: 'BORROWED' } }),
+                countSafely(prisma.item),
+                countSafely(prisma.item, { where: { Status: 'DEFECTIVE' } }),
+                countSafely(prisma.item, { where: { Status: 'AVAILABLE' } }),
+                countSafely(prisma.item, { where: { Status: 'DISPOSED' } })
             ]);
 
             // 4. Pending Forms (Laboratory)
-            const [pendingForms, draftReports, submittedReports] = await Promise.all([
-                prisma.form.count({
+            const [pendingForms, inReviewForms, approvedForms, draftReports, submittedReports] = await Promise.all([
+                countSafely(prisma.form, {
                     where: {
                         Status: 'PENDING',
                         Is_Archived: false
                     }
                 }),
-                prisma.weekly_Report.count({ where: { User_ID, Status: 'DRAFT' } }),
-                prisma.weekly_Report.count({ where: { User_ID, Status: 'SUBMITTED' } })
+                countSafely(prisma.form, {
+                    where: {
+                        Status: 'IN_REVIEW',
+                        Is_Archived: false
+                    }
+                }),
+                countSafely(prisma.form, {
+                    where: {
+                        Status: 'APPROVED',
+                        Is_Archived: false
+                    }
+                }),
+                countSafely(prisma.weekly_Report, { where: { User_ID, Status: 'DRAFT' } }),
+                countSafely(prisma.weekly_Report, { where: { User_ID, Status: 'SUBMITTED' } })
+            ]);
+
+            const [itemTypes, itemStatuses] = await Promise.all([
+                groupByCount(prisma.item, 'Item_Type'),
+                groupByCount(prisma.item, 'Status')
             ]);
 
             metrics.counts = {
@@ -205,12 +243,19 @@ const getDashboardMetrics = async (req, res) => {
                 roomsInMaintenance,
                 activeBorrowings: borrowedItems,
                 pendingForms,
+                inReviewForms,
+                approvedForms,
                 totalItems,
                 defectiveItems,
                 availableItems,
                 disposedItems,
                 draftReports,
                 submittedReports
+            };
+
+            metrics.distributions = {
+                itemTypes,
+                itemStatuses
             };
 
             metrics.summaries = {
@@ -228,6 +273,11 @@ const getDashboardMetrics = async (req, res) => {
                     drafts: draftReports,
                     submitted: submittedReports
                 },
+                forms: {
+                    pending: pendingForms,
+                    inReview: inReviewForms,
+                    approved: approvedForms
+                },
                 inventory: {
                     total: totalItems,
                     available: availableItems,
@@ -238,7 +288,7 @@ const getDashboardMetrics = async (req, res) => {
             };
 
             // 4. My Recent Activity
-            metrics.recentActivity = await prisma.audit_Log.findMany({
+            metrics.recentActivity = await findManySafely(prisma.audit_Log, {
                 where: { User_ID: User_ID },
                 take: 5,
                 orderBy: { Timestamp: 'desc' }
