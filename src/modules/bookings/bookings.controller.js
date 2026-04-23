@@ -9,6 +9,7 @@ const BOOKING_MANAGER_ROLES = ['ADMIN', 'SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
 const BOOKING_NOTIFICATION_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
 
 const isSecretaryBooking = (user) => normalizeRole(user?.User_Role) === 'SECRETARY';
+const SECRETARY_ALLOWED_ROOM_TYPES = new Set(['CONSULTATION', 'CONFERENCE']);
 
 const formatBookingTime = (date) => (
     new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
@@ -85,6 +86,13 @@ const createBooking = async (req, res) => {
         }
 
         const secretaryPriority = isSecretaryBooking(requestingUser);
+
+        if (secretaryPriority && !SECRETARY_ALLOWED_ROOM_TYPES.has(room.Room_Type)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Secretary bookings are limited to consultation and conference rooms'
+            });
+        }
 
         // Check if room is available for booking
         if (room.Status !== 'AVAILABLE') {
@@ -364,15 +372,26 @@ const updateBooking = async (req, res) => {
     try {
         const { id } = req.params;
         const { Start_Time, End_Time, Room_ID, Purpose, Notes } = req.body;
+        const requesterRole = normalizeRole(req.user?.User_Role);
 
         // Get the existing booking
         const existingBooking = await prisma.Booked_Room.findUnique({
             where: { Booked_Room_ID: parseInt(id) },
-            include: { User: true }
+            include: { User: true, Room: true }
         });
 
         if (!existingBooking) {
             return res.status(404).json({ success: false, error: 'Booking not found' });
+        }
+
+        const isOwner = existingBooking.User_ID === req.user?.User_ID;
+        const canEditAnyBooking = requesterRole === 'ADMIN' || requesterRole === 'LAB_HEAD';
+        if (!isOwner && !canEditAnyBooking) {
+            return res.status(403).json({
+                success: false,
+                error: 'Forbidden',
+                details: 'You can only edit your own bookings unless you are a Lab Head or Admin.'
+            });
         }
 
         // Build update data
@@ -390,6 +409,24 @@ const updateBooking = async (req, res) => {
         const newStart = updateData.Start_Time || existingBooking.Start_Time;
         const newEnd = updateData.End_Time || existingBooking.End_Time;
         const newRoom = updateData.Room_ID || existingBooking.Room_ID;
+
+        const targetRoom = newRoom === existingBooking.Room_ID
+            ? existingBooking.Room
+            : await prisma.Room.findUnique({
+                where: { Room_ID: newRoom },
+                select: { Room_ID: true, Room_Type: true }
+            });
+
+        if (!targetRoom) {
+            return res.status(404).json({ success: false, error: 'Room not found' });
+        }
+
+        if (requesterRole === 'SECRETARY' && !SECRETARY_ALLOWED_ROOM_TYPES.has(targetRoom.Room_Type)) {
+            return res.status(403).json({
+                success: false,
+                error: 'Secretary bookings are limited to consultation and conference rooms'
+            });
+        }
 
         const activeSchedules = await prisma.Schedule.findMany({
             where: { Room_ID: newRoom, IsActive: true }

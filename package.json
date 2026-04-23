@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "jest --verbose --forceExit"
+    "test": "jest --verbose --forceExit",
+    "seed:rooms": "node scripts/seed-workbook-rooms.js",
+    "seed:inventory": "node scripts/seed-ay25-26-inventory.js"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

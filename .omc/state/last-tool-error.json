@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"node scripts/seed-workbook-rooms.js 2>&1\",\"description\":\"Run room seeder against localhost DB\"}",
+  "error": "Exit code 1\nprisma:query SELECT \"public\".\"Room\".\"Room_ID\", \"public\".\"Room\".\"Name\", \"public\".\"Room\".\"Room_Type\"::text, \"public\".\"Room\".\"Lab_Type\"::text, \"public\".\"Room\".\"Capacity\", \"public\".\"Room\".\"Status\"::text, \"public\".\"Room\".\"Current_Use_Type\"::text, \"public\".\"Room\".\"Opened_By\", \"public\".\"Room\".\"Opened_At\", \"public\".\"Room\".\"Closed_At\", \"public\".\"Room\".\"Created_At\", \"public\".\"Room\".\"Updated_At\" FROM \"public\".\"Room\" WHERE \"public\".\"Room\".\"Name\" = $1 LIMIT $2 OFFSET $3\nprisma:query SELECT \"publi...",
+  "timestamp": "2026-04-23T18:18:13.834Z",
+  "retry_count": 1
+}

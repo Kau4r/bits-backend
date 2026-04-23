@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "RoomType" ADD VALUE IF NOT EXISTS 'OTHER';

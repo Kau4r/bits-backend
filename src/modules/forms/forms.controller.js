@@ -74,6 +74,7 @@ const isFormTerminal = (form) => {
     const status = normalizeFormStatus(form?.Status);
     return dept === 'COMPLETED' || FORM_TERMINAL_STATUSES.includes(status);
 };
+const isFormHardLocked = (form) => FORM_TERMINAL_STATUSES.includes(normalizeFormStatus(form?.Status));
 const getWorkflowForFormType = (formType) => FORM_DEPARTMENT_WORKFLOWS[String(formType || '').toUpperCase()] || [];
 const normalizeOptionalText = (value) => {
     const text = String(value || '').trim();
@@ -218,32 +219,10 @@ const hasVisitedDepartment = (form, department) => {
     return visitedDepartments.has(department);
 };
 
-// Steps that do NOT require a fresh attachment before approval/transfer.
-// Mirrors the frontend `stepRequiresAttachment` helper in src/types/formtypes.ts.
-// REQUESTOR is included because the initial submission at this step is optional
-// when the department is one of the "early" signatory stages.
-const STEPS_WITHOUT_ATTACHMENT_REQUIREMENT = new Set([
-    'REQUESTOR',
-    'DEPARTMENT_HEAD',
-    'DEAN_OFFICE',
-    'COMPLETED'
-]);
-
-const stepRequiresAttachment = (department) => {
-    const dept = normalizeDepartment(department);
-    return !STEPS_WITHOUT_ATTACHMENT_REQUIREMENT.has(dept);
-};
-
 const hasCurrentStepAttachment = (form) => {
     const currentDept = normalizeDepartment(form?.Department);
 
-    // Early stages (REQUESTOR, DEPARTMENT_HEAD, DEAN_OFFICE) do not require an
-    // attachment to approve or transfer — they are signatory-only steps.
-    if (!stepRequiresAttachment(currentDept)) {
-        return true;
-    }
-
-    // Other steps: find the most recent arrival at this step (TRANSFERRED or RETURNED history entry).
+    // Find the most recent arrival at this step (TRANSFERRED or RETURNED history entry).
     const arrivalEntry = (form.History || [])
         .filter(h => {
             const dept = normalizeDepartment(h.Department);
@@ -325,14 +304,17 @@ const getNotifyRoles = () => {
     return ['LAB_TECH', 'LAB_HEAD'];
 };
 
-// Generate form code (e.g., WRF-2026-001)
-const generateFormCode = async (formType) => {
+// Generate user-scoped form code (e.g., WRF-2026-U12-001)
+const generateFormCode = async (formType, userId) => {
     const year = new Date().getFullYear();
-    const prefix = `${formType}-${year}`;
+    const typePrefix = isRisFormType(formType) ? 'RIS' : 'WRF';
+    const parsedUserId = parseInt(userId);
+    const prefix = `${typePrefix}-${year}-U${parsedUserId}`;
 
-    // Count existing forms with this prefix
+    // Count this user's existing forms with this display prefix.
     const count = await prisma.form.count({
         where: {
+            Creator_ID: parsedUserId,
             Form_Code: {
                 startsWith: prefix
             }
@@ -426,6 +408,7 @@ const createForm = async (req, res) => {
         const {
             creatorId, // Optional, can use req.user.User_ID
             formType,
+            formNumber,
             title,
             content,
             fileName,
@@ -482,8 +465,18 @@ const createForm = async (req, res) => {
 
         const primaryAttachment = attachmentCreate.data[0];
 
-        // Generate form code
-        const formCode = await generateFormCode(formTypeEnum);
+        const formCode = normalizeOptionalText(formNumber)?.toUpperCase();
+        if (!formCode) {
+            return res.status(400).json({ success: false, error: 'Form number is required' });
+        }
+
+        const duplicateForm = await prisma.form.findUnique({
+            where: { Form_Code: formCode }
+        });
+
+        if (duplicateForm) {
+            return res.status(409).json({ success: false, error: 'Form number already exists' });
+        }
 
         // Create form first
         const form = await prisma.form.create({
@@ -565,7 +558,7 @@ const updateForm = async (req, res) => {
             include: formInclude
         });
         if (!existing) return res.status(404).json({ success: false, error: 'Form not found' });
-        if (isFormTerminal(existing)) {
+        if (isFormHardLocked(existing)) {
             return res.status(400).json({ success: false, error: 'Form is in a terminal state and cannot be modified' });
         }
 
@@ -579,16 +572,6 @@ const updateForm = async (req, res) => {
 
             if (!FORM_UPDATE_STATUSES.includes(statusEnum)) {
                 return res.status(400).json({ success: false, error: 'Invalid status' });
-            }
-
-            if (statusEnum === 'APPROVED' && !hasCurrentStepAttachment(existing)) {
-                const currentDept = normalizeDepartment(existing.Department);
-                return res.status(400).json({
-                    success: false,
-                    error: `Upload an updated form for ${currentDept} before approval`,
-                    requiresUpload: true,
-                    currentStep: currentDept
-                });
             }
 
             updateData.Status = statusEnum;
@@ -720,6 +703,56 @@ const archiveForm = async (req, res) => {
     }
 };
 
+// PATCH /api/forms/:id/unarchive - Restore archived form
+const unarchiveForm = async (req, res) => {
+    const formId = parseInt(req.params.id);
+
+    if (isNaN(formId)) {
+        return res.status(400).json({ success: false, error: 'Invalid form ID' });
+    }
+
+    try {
+        const existingForm = await prisma.form.findUnique({ where: { Form_ID: formId } });
+        if (!existingForm) {
+            return res.status(404).json({ success: false, error: 'Form not found' });
+        }
+        if (!existingForm.Is_Archived && normalizeFormStatus(existingForm.Status) !== 'ARCHIVED') {
+            return res.status(400).json({ success: false, error: 'Form is not archived' });
+        }
+
+        const restoredStatus = normalizeDepartment(existingForm.Department) === 'COMPLETED' ? 'APPROVED' : 'CANCELLED';
+        const form = await prisma.form.update({
+            where: { Form_ID: formId },
+            data: {
+                Is_Archived: false,
+                Status: restoredStatus
+            }
+        });
+
+        await prisma.formHistory.create({
+            data: {
+                Form_ID: formId,
+                Department: form.Department,
+                Notes: 'Form unarchived',
+                Performed_By: req.user.User_ID,
+                Action: restoredStatus
+            }
+        });
+
+        await AuditLogger.logForm(
+            req.user.User_ID,
+            'FORM_UNARCHIVED',
+            `Unarchived form ${form.Form_Code}`,
+            getNotifyRoles()
+        );
+
+        res.json({ success: true, data: form });
+    } catch (error) {
+        console.error('Error unarchiving form:', error);
+        res.status(500).json({ success: false, error: 'Failed to unarchive form' });
+    }
+};
+
 // POST /api/forms/:id/transfer - Transfer form to department
 const transferForm = async (req, res) => {
     const formId = parseInt(req.params.id);
@@ -751,7 +784,7 @@ const transferForm = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Form not found' });
         }
 
-        if (isFormTerminal(existingForm)) {
+        if (isFormHardLocked(existingForm)) {
             return res.status(400).json({ success: false, error: 'Form is in a terminal state and cannot be transferred' });
         }
 
@@ -788,21 +821,14 @@ const transferForm = async (req, res) => {
             }
         }
 
-        if (!isBackwardTransfer && !hasCurrentStepAttachment(existingForm)) {
+        if (!isBackwardTransfer && departmentEnum === 'COMPLETED' && !hasCurrentStepAttachment(existingForm)) {
             const currentDept = normalizeDepartment(existingForm.Department);
             return res.status(400).json({
                 success: false,
-                error: `Upload an updated form for ${currentDept} before transferring to the next step`,
+                error: `Upload a completed form for ${currentDept} before marking this form Completed`,
                 requiresUpload: true,
                 currentStep: currentDept
             });
-        }
-
-        if (isRisFormType(existingForm.Form_Type) && departmentEnum === 'COMPLETED') {
-            const completionState = getRisCompletionState(existingForm);
-            if (!completionState.canComplete) {
-                return res.status(400).json(buildRisCompletionError(existingForm));
-            }
         }
 
         const historyAction = isBackwardTransfer ? 'RETURNED' : 'TRANSFERRED';
@@ -812,7 +838,7 @@ const transferForm = async (req, res) => {
             where: { Form_ID: formId },
             data: {
                 Department: departmentEnum,
-                Status: 'PENDING',
+                Status: departmentEnum === 'COMPLETED' ? 'APPROVED' : 'PENDING',
                 Is_Archived: false,
                 History: {
                     create: {
@@ -870,18 +896,6 @@ const setFormReceived = async (req, res) => {
                 success: false,
                 error: 'RIS form must reach Purchasing before it can be marked received'
             });
-        }
-
-        if (isReceived) {
-            const missingDocumentTypes = getMissingRisCompletionDocuments(existingForm);
-            if (missingDocumentTypes.length > 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: `RIS form cannot be marked received until required files are uploaded: ${missingDocumentTypes.map(type => DOCUMENT_TYPE_LABELS[type] || type).join(', ')}`,
-                    requiredDocumentTypes: RIS_REQUIRED_COMPLETION_DOCUMENT_TYPES,
-                    missingDocumentTypes
-                });
-            }
         }
 
         const form = await prisma.form.update({
@@ -977,6 +991,10 @@ const addFormAttachments = async (req, res) => {
                     File_URL: firstAttachment.File_URL,
                     File_Type: firstAttachment.File_Type
                 } : {}),
+                ...(isFormTerminal(existingForm) ? {} : {
+                    Status: 'APPROVED',
+                    Is_Archived: false
+                }),
                 Attachments: {
                     create: attachmentCreate.data
                 }
@@ -996,6 +1014,63 @@ const addFormAttachments = async (req, res) => {
     } catch (error) {
         console.error('Error adding form attachment:', error);
         res.status(500).json({ success: false, error: 'Failed to add form attachment' });
+    }
+};
+
+// DELETE /api/forms/:id/attachments/:attachmentId - Remove a form attachment
+const deleteFormAttachment = async (req, res) => {
+    const formId = parseInt(req.params.id);
+    const attachmentId = parseInt(req.params.attachmentId);
+
+    if (isNaN(formId) || isNaN(attachmentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid form or attachment ID' });
+    }
+
+    try {
+        const existingForm = await prisma.form.findUnique({
+            where: { Form_ID: formId },
+            include: formInclude
+        });
+
+        if (!existingForm) {
+            return res.status(404).json({ success: false, error: 'Form not found' });
+        }
+
+        const attachment = existingForm.Attachments.find(item => item.Attachment_ID === attachmentId);
+        if (!attachment) {
+            return res.status(404).json({ success: false, error: 'Attachment not found' });
+        }
+
+        await prisma.formAttachment.delete({
+            where: { Attachment_ID: attachmentId }
+        });
+
+        const remainingAttachments = existingForm.Attachments.filter(item => item.Attachment_ID !== attachmentId);
+        const nextPrimaryAttachment = remainingAttachments[0];
+        const removedLegacyFile = existingForm.File_URL === attachment.File_URL;
+
+        const form = await prisma.form.update({
+            where: { Form_ID: formId },
+            data: removedLegacyFile ? {
+                File_Name: nextPrimaryAttachment?.File_Name || null,
+                File_URL: nextPrimaryAttachment?.File_URL || null,
+                File_Type: nextPrimaryAttachment?.File_Type || null
+            } : {},
+            include: formInclude
+        });
+
+        await AuditLogger.logForm(
+            req.user.User_ID,
+            'FORM_ATTACHMENT_REMOVED',
+            `Removed attachment from form ${form.Form_Code}`,
+            getNotifyRoles(),
+            form.Creator_ID
+        );
+
+        res.json({ success: true, data: form });
+    } catch (error) {
+        console.error('Error deleting form attachment:', error);
+        res.status(500).json({ success: false, error: 'Failed to delete form attachment' });
     }
 };
 
@@ -1025,8 +1100,10 @@ module.exports = {
     createForm,
     updateForm,
     archiveForm,
+    unarchiveForm,
     transferForm,
     setFormReceived,
     addFormAttachments,
+    deleteFormAttachment,
     deleteForm
 };

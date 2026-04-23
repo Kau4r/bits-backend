@@ -158,13 +158,21 @@ const getOpenedLabs = async (req, res) => {
 // Create room
 const createRoom = async (req, res) => {
 
-  const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB'];
+  const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB', 'OTHER'];
   const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
   const { Name, Capacity, Room_Type, Lab_Type } = req.body;
 
   const errors = [];
   if (!Name?.trim()) errors.push('Name is required');
-  if (!Capacity || isNaN(Capacity) || Capacity <= 0) errors.push('Valid capacity is required');
+  if (Capacity === undefined || Capacity === null || Capacity === '' || isNaN(Capacity)) {
+    errors.push('Valid capacity is required');
+  } else {
+    const parsedCapacity = parseInt(Capacity, 10);
+    const minimumCapacity = Room_Type === 'OTHER' ? 0 : 1;
+    if (parsedCapacity < minimumCapacity) {
+      errors.push(Room_Type === 'OTHER' ? 'Capacity cannot be negative' : 'Valid capacity is required');
+    }
+  }
   if (Room_Type && !VALID_ROOM_TYPES.includes(Room_Type)) {
     errors.push(`Room_Type must be one of: ${VALID_ROOM_TYPES.join(', ')}`);
   }
@@ -184,8 +192,9 @@ const createRoom = async (req, res) => {
       return res.status(409).json({ success: false, error: `A room named '${Name}' already exists` });
     }
 
+    const parsedCapacity = parseInt(Capacity, 10);
     const newRoom = await prisma.Room.create({
-      data: { Name: Name.trim(), Capacity: parseInt(Capacity), Room_Type: Room_Type || 'LECTURE', Lab_Type: Room_Type === 'LAB' ? Lab_Type : null, Status: 'AVAILABLE' },
+      data: { Name: Name.trim(), Capacity: parsedCapacity, Room_Type: Room_Type || 'LECTURE', Lab_Type: Room_Type === 'LAB' ? Lab_Type : null, Status: 'AVAILABLE' },
       select: { Room_ID: true, Name: true, Capacity: true, Room_Type: true, Lab_Type: true, Status: true, Created_At: true, Updated_At: true }
     });
 
@@ -209,7 +218,7 @@ const updateRoom = async (req, res) => {
   const roomId = parseInt(req.params.id);
   if (isNaN(roomId) || roomId <= 0) return res.status(400).json({ success: false, error: 'Invalid room ID' });
 
-  const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB'];
+  const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB', 'OTHER'];
   const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
   const { Name, Capacity, Room_Type, Status, Lab_Type } = req.body;
 
@@ -219,11 +228,6 @@ const updateRoom = async (req, res) => {
   if (Name !== undefined) {
     if (!Name.trim()) errors.push('Name must be a non-empty string');
     else updateData.Name = Name.trim();
-  }
-  if (Capacity !== undefined) {
-    const cap = parseInt(Capacity);
-    if (isNaN(cap) || cap <= 0) errors.push('Capacity must be a positive number');
-    else updateData.Capacity = cap;
   }
   if (Room_Type !== undefined) {
     if (!VALID_ROOM_TYPES.includes(Room_Type)) errors.push(`Room_Type must be one of: ${VALID_ROOM_TYPES.join(', ')}`);
@@ -247,6 +251,19 @@ const updateRoom = async (req, res) => {
     // Fetch existing room for merge-based validation
     const existingRoom = await prisma.Room.findUnique({ where: { Room_ID: roomId } });
     if (!existingRoom) return res.status(404).json({ success: false, error: 'Room not found' });
+
+    if (Capacity !== undefined) {
+      const cap = parseInt(Capacity, 10);
+      const effectiveRoomType = Room_Type ?? existingRoom.Room_Type;
+      const minimumCapacity = effectiveRoomType === 'OTHER' ? 0 : 1;
+      if (isNaN(cap) || cap < minimumCapacity) {
+        errors.push(effectiveRoomType === 'OTHER' ? 'Capacity cannot be negative' : 'Capacity must be a positive number');
+      } else {
+        updateData.Capacity = cap;
+      }
+    }
+
+    if (errors.length > 0) return res.status(400).json({ success: false, error: 'Validation Error', meta: { details: errors } });
 
     // Determine effective post-update state
     const effectiveRoomType = updateData.Room_Type ?? existingRoom.Room_Type;

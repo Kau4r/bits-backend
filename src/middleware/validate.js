@@ -66,9 +66,9 @@ const bookingSchemas = {
 const ticketSchemas = {
     createPublic: Joi.object({
         reporterIdentifier: Joi.string().trim().min(1).max(100).required(),
-        roomId: Joi.number().integer().positive().required(),
+        roomId: Joi.number().integer().positive().allow(null).optional(),
         issueType: Joi.string().valid('HARDWARE', 'SOFTWARE', 'NETWORK', 'OTHER').required(),
-        equipment: Joi.string().valid('MONITOR', 'KEYBOARD', 'MOUSE', 'SYSTEM_UNIT', 'HEADSET', 'OTHER').required(),
+        equipment: Joi.string().valid('MONITOR', 'KEYBOARD', 'MOUSE', 'MINI_PC', 'SYSTEM_UNIT', 'HEADSET', 'OTHER').allow('', null).optional(),
         description: Joi.string().trim().min(3).max(1000).required(),
         pcNumber: Joi.string().trim().max(50).allow('', null).optional(),
     }),
@@ -103,16 +103,16 @@ const ticketSchemas = {
 const roomSchemas = {
     create: Joi.object({
         Name: Joi.string().min(1).max(100).required(),
-        Room_Type: Joi.string().valid('CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB').required(),
-        Capacity: Joi.number().integer().positive().allow(null),
-        Status: Joi.string().valid('AVAILABLE', 'OCCUPIED', 'MAINTENANCE', 'CLOSED').default('AVAILABLE')
+        Room_Type: Joi.string().valid('CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB', 'OTHER').required(),
+        Capacity: Joi.number().integer().min(0).allow(null),
+        Status: Joi.string().valid('AVAILABLE', 'IN_USE', 'MAINTENANCE', 'RESERVED', 'CLOSED').default('AVAILABLE')
     }),
 
     update: Joi.object({
         Name: Joi.string().min(1).max(100),
-        Room_Type: Joi.string().valid('CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB'),
-        Capacity: Joi.number().integer().positive().allow(null),
-        Status: Joi.string().valid('AVAILABLE', 'OCCUPIED', 'MAINTENANCE', 'CLOSED')
+        Room_Type: Joi.string().valid('CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB', 'OTHER'),
+        Capacity: Joi.number().integer().min(0).allow(null),
+        Status: Joi.string().valid('AVAILABLE', 'IN_USE', 'MAINTENANCE', 'RESERVED', 'CLOSED')
     }).min(1),
 
     studentAvailability: Joi.object({

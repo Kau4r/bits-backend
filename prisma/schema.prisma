@@ -417,6 +417,7 @@ enum RoomType {
   LECTURE
   LAB
   CONFERENCE
+  OTHER
 }
 
 enum LabType {

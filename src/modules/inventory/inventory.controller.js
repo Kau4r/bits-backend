@@ -6,18 +6,31 @@ const {
   parseCsvBuffer,
   parseImportedBoolean,
 } = require('../../utils/csvImport');
+const { readXlsxWorkbook } = require('../../utils/xlsxReader');
 
 const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED', 'DISPOSED'];
 
-const normalizeItemType = (value = 'GENERAL') => {
+const normalizeItemType = (value = 'OTHER') => {
   if (typeof value !== 'string') return null;
 
   const normalized = value.trim().replace(/[\s-]+/g, '_').toUpperCase();
+  if (['GENERAL', '_', '__'].includes(normalized)) {
+    return 'OTHER';
+  }
+  if (normalized === 'SYSTEM_UNIT') {
+    return 'MINI_PC';
+  }
   if (!normalized || normalized.length > 50 || !/^[A-Z0-9_]+$/.test(normalized)) {
     return null;
   }
 
   return normalized;
+};
+
+const normalizeBrand = (value) => {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim().toUpperCase();
+  return normalized || null;
 };
 
 const parseRoomId = (value) => {
@@ -36,7 +49,7 @@ const buildImportedItem = (headers, row, defaultRoomId, userId) => {
     'Code',
   ]);
   const rawItemType = getRowValue(headers, row, ['Item_Type', 'Item Type', 'Type', 'Asset Type']);
-  const normalizedItemType = normalizeItemType(rawItemType || 'GENERAL');
+  const normalizedItemType = normalizeItemType(rawItemType || 'OTHER');
   const status = normalizeImportedStatus(
     getRowValue(headers, row, ['Status', 'Stat', 'State']),
     VALID_ITEM_STATUSES,
@@ -53,7 +66,7 @@ const buildImportedItem = (headers, row, defaultRoomId, userId) => {
     item: {
       Item_Code: itemCode.trim(),
       Item_Type: normalizedItemType,
-      Brand: getRowValue(headers, row, ['Brand', 'Model', 'Description']) || null,
+      Brand: normalizeBrand(getRowValue(headers, row, ['Brand', 'Model', 'Description'])),
       Serial_Number: getRowValue(headers, row, ['Serial_Number', 'Serial Number', 'Serial', 'Asset Serial']) || null,
       Status: status,
       Room_ID: roomIdResult.value,
@@ -63,11 +76,6 @@ const buildImportedItem = (headers, row, defaultRoomId, userId) => {
       Updated_At: new Date(),
     }
   };
-};
-
-// Helper function to check user role (kept for backward compatibility)
-const checkUserRole = async (userId, allowedRoles) => {
-  return { authorized: true };
 };
 
 // Get all items
@@ -115,7 +123,10 @@ const getAvailableItems = async (req, res) => {
     };
 
     if (type) {
-      where.Item_Type = type;
+      const normalizedType = normalizeItemType(type);
+      where.Item_Type = normalizedType === 'MINI_PC'
+        ? { in: ['MINI_PC', 'SYSTEM_UNIT'] }
+        : normalizedType;
     }
 
     const items = await prisma.item.findMany({
@@ -195,7 +206,7 @@ const createItem = async (req, res) => {
     const {
       User_ID, // Optional if we use req.user.User_ID
       Item_Code,
-      Item_Type = 'GENERAL',
+      Item_Type = 'OTHER',
       Brand,
       Serial_Number,
       Status = 'AVAILABLE',
@@ -231,7 +242,7 @@ const createItem = async (req, res) => {
       User: { connect: { User_ID: parseInt(creatorId) } },
       Item_Code,
       Item_Type: normalizedItemType,
-      Brand: Brand || null,
+      Brand: normalizeBrand(Brand),
       Serial_Number: Serial_Number || null,
       Status,
       Created_At: currentTime,
@@ -275,13 +286,44 @@ const updateItem = async (req, res) => {
   try {
 
     const itemId = parseInt(req.params.id);
-    const updates = req.body;
-    if (updates.Item_Type !== undefined) {
-      const normalizedItemType = normalizeItemType(updates.Item_Type);
+    const {
+      Item_Type,
+      Brand,
+      Serial_Number,
+      Status,
+      Room_ID,
+      IsBorrowable,
+    } = req.body;
+
+    const updateData = {};
+
+    if (Item_Type !== undefined) {
+      const normalizedItemType = normalizeItemType(Item_Type);
       if (!normalizedItemType) {
         return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
       }
-      updates.Item_Type = normalizedItemType;
+      updateData.Item_Type = normalizedItemType;
+    }
+
+    if (Brand !== undefined) updateData.Brand = normalizeBrand(Brand);
+    if (Serial_Number !== undefined) updateData.Serial_Number = Serial_Number || null;
+    if (Status !== undefined) {
+      if (!VALID_ITEM_STATUSES.includes(Status)) {
+        return res.status(400).json({ success: false, error: 'Invalid status' });
+      }
+      updateData.Status = Status;
+    }
+    if (IsBorrowable !== undefined) updateData.IsBorrowable = Boolean(IsBorrowable);
+    if (Room_ID !== undefined) {
+      const parsedRoomId = Room_ID ? parseInt(Room_ID) : null;
+      if (Room_ID && Number.isNaN(parsedRoomId)) {
+        return res.status(400).json({ success: false, error: 'Invalid room ID' });
+      }
+      if (parsedRoomId) {
+        const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoomId } });
+        if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
+      }
+      updateData.Room_ID = parsedRoomId;
     }
 
     // Check if item exists
@@ -296,10 +338,7 @@ const updateItem = async (req, res) => {
     // Update the item
     const updatedItem = await prisma.item.update({
       where: { Item_ID: itemId },
-      data: {
-        ...updates,
-        Updated_At: new Date()
-      }
+      data: updateData
     });
 
     // Audit Log
@@ -308,7 +347,7 @@ const updateItem = async (req, res) => {
       action: 'ITEM_UPDATED',
       details: `Updated item ${existingItem.Item_Code}`,
       logType: 'INVENTORY',
-      notificationData: { updates }
+      notificationData: { updates: updateData }
     });
 
     res.json({ success: true, data: updatedItem });
@@ -371,12 +410,12 @@ const bulkCreateItems = async (req, res) => {
     const prefix = 'ITM';
 
     // First, get all unique item types and serial numbers in this batch
-    const invalidItem = items.find(item => !normalizeItemType(item.Item_Type || 'GENERAL'));
+    const invalidItem = items.find(item => !normalizeItemType(item.Item_Type || 'OTHER'));
     if (invalidItem) {
       return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
     }
 
-    const itemTypes = [...new Set(items.map(item => normalizeItemType(item.Item_Type || 'GENERAL')))];
+    const itemTypes = [...new Set(items.map(item => normalizeItemType(item.Item_Type || 'OTHER')))];
     const serialNumbers = items.map(item => item.Serial_Number).filter(Boolean);
 
     // Check for duplicate serial numbers in the current batch
@@ -440,7 +479,7 @@ const bulkCreateItems = async (req, res) => {
 
     // Prepare item data with generated codes
     const itemData = items.map(item => {
-      const itemType = normalizeItemType(item.Item_Type || 'GENERAL');
+      const itemType = normalizeItemType(item.Item_Type || 'OTHER');
       const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
 
       // Initialize counter for this item type if not exists
@@ -456,7 +495,7 @@ const bulkCreateItems = async (req, res) => {
       return {
         Item_Code: itemCode,
         Item_Type: itemType,
-        Brand: item.Brand || null,
+        Brand: normalizeBrand(item.Brand),
         Serial_Number: item.Serial_Number || null,
         Status: item.Status || 'AVAILABLE',
         Room_ID: item.Room_ID || null,
@@ -531,11 +570,92 @@ const checkInventoryItem = async (req, res) => {
     res.json({ success: true, data: updated });
 };
 
-// Import room inventory items from CSV
+// DELETE /api/inventory/:id/check - Clear an item's audit check
+const uncheckInventoryItem = async (req, res) => {
+    const itemId = parseInt(req.params.id, 10);
+    if (Number.isNaN(itemId)) {
+        return res.status(400).json({ success: false, error: 'Invalid item id' });
+    }
+
+    const item = await prisma.item.findUnique({ where: { Item_ID: itemId } });
+    if (!item) {
+        return res.status(404).json({ success: false, error: 'Item not found' });
+    }
+
+    const updated = await prisma.item.update({
+        where: { Item_ID: itemId },
+        data: {
+            Last_Checked_At: null,
+            Last_Checked_By_ID: null,
+        },
+        include: {
+            Room: true,
+            Last_Checked_By: {
+                select: { User_ID: true, First_Name: true, Last_Name: true },
+            },
+        },
+    });
+
+    res.json({ success: true, data: updated });
+};
+
+const parseInventoryImportFile = (file, sheetName) => {
+  const originalName = file.originalname || '';
+  const lowerName = originalName.toLowerCase();
+
+  if (lowerName.endsWith('.csv')) {
+    return {
+      ...parseCsvBuffer(file.buffer),
+      sourceType: 'csv',
+    };
+  }
+
+  if (lowerName.endsWith('.xlsx')) {
+    const workbook = readXlsxWorkbook(file.buffer);
+    const sheet = sheetName
+      ? workbook.sheets.find(candidate => candidate.name === sheetName)
+      : workbook.sheets.find(candidate => candidate.rows.length > 0);
+
+    if (!sheet) {
+      const error = new Error(sheetName ? `Sheet "${sheetName}" not found` : 'Workbook has no readable sheets');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const [headers = [], ...dataRows] = sheet.rows;
+    const isFlatHeaderSheet = headers.some(header =>
+      ['Item_Code', 'Item Code', 'Asset Code', 'Item_Type', 'Item Type', 'Room_ID', 'Room ID'].includes(String(header || '').trim())
+    );
+
+    if (!isFlatHeaderSheet) {
+      const error = new Error('Sheet must have a header row containing Item_Code / Asset Code / Item_Type / Room_ID columns.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return {
+      headers: headers.map(header => String(header || '').trim()),
+      rows: dataRows
+        .map((values, index) => ({
+          rowNumber: index + 2,
+          values: values.map(value => String(value || '').trim()),
+        }))
+        .filter(row => row.values.some(value => value !== '')),
+      sourceType: 'xlsx',
+      sheetName: sheet.name,
+    };
+  }
+
+  const error = new Error('Only .csv and .xlsx files are supported');
+  error.statusCode = 400;
+  throw error;
+};
+
+// Import inventory items from a flat CSV or XLSX header layout
 const importInventoryCsv = async (req, res) => {
   try {
     if (!req.file?.buffer) {
-      return res.status(400).json({ success: false, error: 'CSV file is required' });
+      return res.status(400).json({ success: false, error: 'CSV or Excel file is required' });
     }
 
     const parsedRoom = parseRoomId(req.body.roomId ?? req.query.roomId);
@@ -546,10 +666,7 @@ const importInventoryCsv = async (req, res) => {
       if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
     }
 
-    const parsed = parseCsvBuffer(req.file.buffer);
-    if (parsed.headers.length === 0 || parsed.rows.length === 0) {
-      return res.status(400).json({ success: false, error: 'CSV must include headers and at least one data row' });
-    }
+    const parsed = parseInventoryImportFile(req.file, req.body.sheetName ?? req.query.sheetName);
 
     const candidateRows = parsed.rows.map(row => {
       const imported = buildImportedItem(parsed.headers, row, parsedRoom.value, req.user.User_ID);
@@ -561,13 +678,17 @@ const importInventoryCsv = async (req, res) => {
       };
     });
 
+    if (candidateRows.length === 0) {
+      return res.status(400).json({ success: false, error: 'Import file must include at least one readable inventory row' });
+    }
+
     const validCandidates = candidateRows.filter(row => row.status === 'valid');
     const seenCodes = new Set();
     for (const row of validCandidates) {
       const key = row.item.Item_Code.toLowerCase();
       if (seenCodes.has(key)) {
         row.status = 'duplicate';
-        row.reason = 'Duplicate Item_Code in CSV';
+        row.reason = 'Duplicate Item_Code in import file';
       }
       seenCodes.add(key);
     }
@@ -613,7 +734,7 @@ const importInventoryCsv = async (req, res) => {
       await AuditLogger.log({
         userId: req.user.User_ID,
         action: 'ITEM_CREATED',
-        details: `Imported ${createdItems.length} inventory item(s) from CSV`,
+        details: `Imported ${createdItems.length} inventory item(s) from ${parsed.sourceType === 'xlsx' ? 'Excel' : 'CSV'}`,
         logType: 'INVENTORY'
       });
     }
@@ -626,10 +747,10 @@ const importInventoryCsv = async (req, res) => {
       duplicates: candidateRows.filter(row => row.status === 'duplicate').length,
     };
 
-    res.json({ success: true, data: { summary, rows: candidateRows, items: createdItems } });
+    res.json({ success: true, data: { summary, rows: candidateRows, items: createdItems, sourceType: parsed.sourceType, sheetName: parsed.sheetName } });
   } catch (error) {
-    console.error('Error importing inventory CSV:', error);
-    res.status(500).json({ success: false, error: 'Failed to import inventory CSV' });
+    console.error('Error importing inventory file:', error);
+    res.status(error.statusCode || 500).json({ success: false, error: error.statusCode ? error.message : 'Failed to import inventory file' });
   }
 };
 
@@ -644,4 +765,5 @@ module.exports = {
   bulkCreateItems,
   importInventoryCsv,
   checkInventoryItem,
+  uncheckInventoryItem,
 };

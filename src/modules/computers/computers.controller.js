@@ -86,9 +86,11 @@ const buildComputerInclude = () => ({
     }
 });
 
-const normalizeImportedItemType = (value = 'GENERAL') => {
+const normalizeImportedItemType = (value = 'OTHER') => {
     if (typeof value !== 'string') return null;
     const normalized = value.trim().replace(/[\s-]+/g, '_').toUpperCase();
+    if (['GENERAL', '_', '__'].includes(normalized)) return 'OTHER';
+    if (normalized === 'SYSTEM_UNIT') return 'MINI_PC';
     if (!normalized || normalized.length > 50 || !/^[A-Z0-9_]+$/.test(normalized)) return null;
     return normalized;
 };
@@ -113,7 +115,7 @@ const buildWideRoomAssetComputer = (row) => {
     const name = tableNumber ? `PC ${tableNumber}` : '';
 
     const componentDefinitions = [
-        { itemType: 'SYSTEM_UNIT', itemCode: row.values[1], brand: row.values[2], status: row.values[3] },
+        { itemType: 'MINI_PC', itemCode: row.values[1], brand: row.values[2], status: row.values[3] },
         { itemType: 'POWER_ADAPTER', itemCode: row.values[4], serialNumber: row.values[5], status: row.values[6] },
         { itemType: 'MONITOR', itemCode: row.values[7], serialNumber: row.values[8], status: row.values[9] },
         { itemType: 'KEYBOARD', itemCode: row.values[10], serialNumber: row.values[11], status: row.values[12] },
@@ -146,7 +148,7 @@ const buildNormalizedComputer = (headers, row) => {
     );
 
     const componentDefinitions = [
-        { itemType: 'SYSTEM_UNIT', aliases: ['System Unit', 'System_Unit', 'SystemUnit', 'CPU', 'NUC'] },
+        { itemType: 'MINI_PC', aliases: ['Mini PC', 'Mini_PC', 'MiniPC', 'System Unit', 'System_Unit', 'SystemUnit', 'CPU', 'NUC'] },
         { itemType: 'MONITOR', aliases: ['Monitor'] },
         { itemType: 'KEYBOARD', aliases: ['Keyboard'] },
         { itemType: 'MOUSE', aliases: ['Mouse'] },
@@ -461,7 +463,7 @@ const createComputer = async (req, res) => {
                         throw error;
                     }
 
-                    if (requestedItem.itemType && foundItem.Item_Type !== requestedItem.itemType) {
+                    if (requestedItem.itemType && normalizeImportedItemType(foundItem.Item_Type) !== normalizeImportedItemType(requestedItem.itemType)) {
                         const error = new Error(`${foundItem.Item_Code} is not a ${requestedItem.itemType.replace('_', ' ').toLowerCase()}`);
                         error.statusCode = 400;
                         throw error;
@@ -627,37 +629,74 @@ const updateComputer = async (req, res) => {
                 });
             }
 
-            if (Array.isArray(items) && items.length > 0) {
-                for (const item of items) {
-                    if (item.itemId) {
-                        const updateItemData = {};
-                        if (item.brand !== undefined) updateItemData.Brand = item.brand;
-                        if (item.serialNumber !== undefined) updateItemData.Serial_Number = item.serialNumber;
-                        if (item.status !== undefined) updateItemData.Status = item.status;
+            if (Array.isArray(items)) {
+                const requestedItems = items.filter(item => item?.itemId);
+                const requestedItemIds = [...new Set(requestedItems.map(item => parseInt(item.itemId, 10)).filter(id => !Number.isNaN(id)))];
+                const existingItemIds = existingComputer.Item.map(item => item.Item_ID);
+                const existingItemIdSet = new Set(existingItemIds);
 
-                        if (Object.keys(updateItemData).length > 0) {
-                            await tx.item.update({
-                                where: { Item_ID: item.itemId },
-                                data: updateItemData
-                            });
-                        }
-                    } else if (item.brand || item.serialNumber) {
-                        const itemCode = `${item.itemType}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-                        await tx.item.create({
-                            data: {
-                                Item_Code: itemCode,
-                                Item_Type: item.itemType,
-                                Brand: item.brand || null,
-                                Serial_Number: item.serialNumber || null,
-                                Status: 'AVAILABLE',
-                                Room_ID: computer.Room_ID || null,
-                                IsBorrowable: false,
-                                Computer: {
-                                    connect: { Computer_ID: computerId }
-                                }
-                            }
-                        });
+                if (requestedItemIds.length > 0) {
+                    const foundItems = await tx.item.findMany({
+                        where: { Item_ID: { in: requestedItemIds } },
+                        include: { Computer: { select: { Computer_ID: true, Name: true } } },
+                    });
+
+                    if (foundItems.length !== requestedItemIds.length) {
+                        const error = new Error('One or more selected components no longer exist');
+                        error.statusCode = 400;
+                        throw error;
                     }
+
+                    for (const requestedItem of requestedItems) {
+                        const itemId = parseInt(requestedItem.itemId, 10);
+                        const foundItem = foundItems.find(item => item.Item_ID === itemId);
+                        const assignedComputer = foundItem.Computer.find(assigned => assigned.Computer_ID !== computerId);
+
+                        if (assignedComputer) {
+                            const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is already assigned to ${assignedComputer.Name}`);
+                            error.statusCode = 400;
+                            throw error;
+                        }
+
+                        if (!existingItemIdSet.has(itemId) && foundItem.Status !== 'AVAILABLE') {
+                            const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is not available`);
+                            error.statusCode = 400;
+                            throw error;
+                        }
+
+                        if (requestedItem.itemType && normalizeImportedItemType(foundItem.Item_Type) !== normalizeImportedItemType(requestedItem.itemType)) {
+                            const error = new Error(`${foundItem.Item_Code} is not a ${requestedItem.itemType.replace('_', ' ').toLowerCase()}`);
+                            error.statusCode = 400;
+                            throw error;
+                        }
+                    }
+                }
+
+                await tx.computer.update({
+                    where: { Computer_ID: computerId },
+                    data: {
+                        Item: {
+                            set: requestedItemIds.map(itemId => ({ Item_ID: itemId })),
+                        },
+                    },
+                });
+
+                const removedItemIds = existingItemIds.filter(itemId => !requestedItemIds.includes(itemId));
+                if (removedItemIds.length > 0) {
+                    await tx.item.updateMany({
+                        where: { Item_ID: { in: removedItemIds } },
+                        data: { Status: 'AVAILABLE' },
+                    });
+                }
+
+                if (requestedItemIds.length > 0) {
+                    await tx.item.updateMany({
+                        where: { Item_ID: { in: requestedItemIds } },
+                        data: {
+                            Room_ID: computer.Room_ID || null,
+                            IsBorrowable: false,
+                        },
+                    });
                 }
             }
 

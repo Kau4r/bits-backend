@@ -439,7 +439,7 @@ const getTicketById = async (req, res) => {
 // ==================== PUBLIC (UNAUTHENTICATED) ENDPOINT ====================
 
 const VALID_ISSUE_TYPES = ['HARDWARE', 'SOFTWARE', 'NETWORK', 'OTHER'];
-const VALID_EQUIPMENT = ['MONITOR', 'KEYBOARD', 'MOUSE', 'SYSTEM_UNIT', 'HEADSET', 'OTHER'];
+const VALID_EQUIPMENT = ['MONITOR', 'KEYBOARD', 'MOUSE', 'MINI_PC', 'SYSTEM_UNIT', 'HEADSET', 'OTHER'];
 
 // Module-scope cache for the system public-reporter user ID.
 let _publicReporterUserId = null;
@@ -495,13 +495,17 @@ const createPublicTicket = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Description cannot contain URLs' });
     }
 
-    // Validate room exists.
-    const room = await prisma.room.findUnique({
-      where: { Room_ID: roomId },
-      select: { Room_ID: true, Name: true },
-    });
-    if (!room) {
-      return res.status(400).json({ success: false, error: 'Invalid roomId: Room does not exist' });
+    // Validate room exists when a specific room was chosen. Null/omitted roomId
+    // means the reporter explicitly said the issue isn't tied to a specific room.
+    let room = null;
+    if (roomId != null) {
+      room = await prisma.room.findUnique({
+        where: { Room_ID: roomId },
+        select: { Room_ID: true, Name: true },
+      });
+      if (!room) {
+        return res.status(400).json({ success: false, error: 'Invalid roomId: Room does not exist' });
+      }
     }
 
     // Map issueType to TicketCategory enum (NETWORK has no direct mapping → OTHER).
@@ -514,8 +518,9 @@ const createPublicTicket = async (req, res) => {
     const category = categoryMap[issueType];
 
     // Build the Report_Problem string.
+    const equipmentPart = equipment ? ` [${equipment}]` : '';
     const pcPart = pcNumber ? ` [PC: ${pcNumber}]` : '';
-    const reportProblem = `[PUBLIC] [${issueType}] [${equipment}]${pcPart} — ${trimmedDesc} — reporter: ${reporterIdentifier}`;
+    const reportProblem = `[PUBLIC] [${issueType}]${equipmentPart}${pcPart} — ${trimmedDesc} — reporter: ${reporterIdentifier}`;
 
     // Get or create the system reporter user.
     const reporterUserId = await getOrCreatePublicReporterUser();
@@ -524,8 +529,8 @@ const createPublicTicket = async (req, res) => {
       data: {
         Reported_By_ID: reporterUserId,
         Report_Problem: reportProblem,
-        Room_ID: roomId,
-        Location: room.Name,
+        Room_ID: roomId ?? null,
+        Location: room?.Name ?? null,
         Category: category,
         Status: 'PENDING',
       },
