@@ -70,8 +70,12 @@ class AuditLogger {
                     console.log(`[AuditLogger] Sending real-time notification to roles: ${roles.join(', ')}`);
 
                     try {
-                        // Exclude the specific notifyUserId from role-based broadcast to prevent duplicates
-                        await NotificationService.notifyRole(roles, notificationPayload, notifyUserId);
+                        // Exclude both the actor (who already sees a service-level toast) and any
+                        // explicit notifyUserId from the role-based broadcast to prevent duplicates.
+                        const excludeUserIds = [userId, notifyUserId].filter(
+                            (id) => id !== null && id !== undefined,
+                        );
+                        await NotificationService.notifyRole(roles, notificationPayload, excludeUserIds);
                         console.log(`[AuditLogger] Notification sent to roles: ${roles.join(', ')}`);
                     } catch (notifyError) {
                         console.error(`[AuditLogger] Failed to notify roles ${roles}:`, notifyError.message);

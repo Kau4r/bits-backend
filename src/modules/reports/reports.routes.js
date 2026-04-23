@@ -11,6 +11,7 @@ const {
     updateReport,
     submitReport,
     reviewReport,
+    deleteReport,
     getDashboardReportSummary,
     exportDashboardSummaryCsv,
     exportInventoryCsv,
@@ -100,6 +101,13 @@ router.patch('/:id/review',
     authenticateToken,
     authorize('LAB_HEAD'),
     asyncHandler(reviewReport)
+);
+
+// Delete own DRAFT report
+router.delete('/:id',
+    authenticateToken,
+    authorize('LAB_TECH'),
+    asyncHandler(deleteReport)
 );
 
 module.exports = router;

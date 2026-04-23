@@ -56,7 +56,6 @@ const buildImportedItem = (headers, row, defaultRoomId, userId) => {
       Brand: getRowValue(headers, row, ['Brand', 'Model', 'Description']) || null,
       Serial_Number: getRowValue(headers, row, ['Serial_Number', 'Serial Number', 'Serial', 'Asset Serial']) || null,
       Status: status,
-      Location: getRowValue(headers, row, ['Location', 'Area', 'Storage Location']) || null,
       Room_ID: roomIdResult.value,
       IsBorrowable: parseImportedBoolean(getRowValue(headers, row, ['IsBorrowable', 'Borrowable', 'Can Borrow']), false),
       User_ID: userId,
@@ -200,7 +199,6 @@ const createItem = async (req, res) => {
       Brand,
       Serial_Number,
       Status = 'AVAILABLE',
-      Location,
       Room_ID
     } = req.body;
 
@@ -236,7 +234,6 @@ const createItem = async (req, res) => {
       Brand: Brand || null,
       Serial_Number: Serial_Number || null,
       Status,
-      Location: Location || null,
       Created_At: currentTime,
       Updated_At: currentTime
     };
@@ -259,11 +256,12 @@ const createItem = async (req, res) => {
     });
 
     // Audit Log
-    await AuditLogger.log(
-      req.user.User_ID,
-      'ITEM_CREATED',
-      `Created item ${Item_Code} (${normalizedItemType})`
-    );
+    await AuditLogger.log({
+      userId: req.user.User_ID,
+      action: 'ITEM_CREATED',
+      details: `Created item ${Item_Code} (${normalizedItemType})`,
+      logType: 'INVENTORY'
+    });
 
     res.status(201).json({ success: true, data: item });
   } catch (error) {
@@ -345,11 +343,12 @@ const deleteItem = async (req, res) => {
     });
 
     // Audit Log
-    await AuditLogger.log(
-      req.user.User_ID,
-      'ITEM_DELETED',
-      `Soft deleted item ${existingItem.Item_Code}`
-    );
+    await AuditLogger.log({
+      userId: req.user.User_ID,
+      action: 'ITEM_DELETED',
+      details: `Soft deleted item ${existingItem.Item_Code}`,
+      logType: 'INVENTORY'
+    });
 
     res.json({ success: true, data: deletedItem });
   } catch (error) {
@@ -460,7 +459,6 @@ const bulkCreateItems = async (req, res) => {
         Brand: item.Brand || null,
         Serial_Number: item.Serial_Number || null,
         Status: item.Status || 'AVAILABLE',
-        Location: item.Location || null,
         Room_ID: item.Room_ID || null,
         Created_At: new Date(),
         Updated_At: new Date(),
@@ -494,8 +492,43 @@ const bulkCreateItems = async (req, res) => {
 
   } catch (error) {
     console.error('Error in bulk item creation:', error);
-    res.status(500).json({ success: false, error: 'Failed to create items' });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create items',
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+    });
   }
+};
+
+// POST /api/inventory/:id/check - Mark an item as audited (present) for the current semester
+const checkInventoryItem = async (req, res) => {
+    const itemId = parseInt(req.params.id, 10);
+    if (Number.isNaN(itemId)) {
+        return res.status(400).json({ success: false, error: 'Invalid item id' });
+    }
+
+    const item = await prisma.item.findUnique({ where: { Item_ID: itemId } });
+    if (!item) {
+        return res.status(404).json({ success: false, error: 'Item not found' });
+    }
+
+    const updated = await prisma.item.update({
+        where: { Item_ID: itemId },
+        data: {
+            Last_Checked_At: new Date(),
+            Last_Checked_By_ID: req.user.User_ID,
+        },
+        include: {
+            Room: true,
+            Last_Checked_By: {
+                select: { User_ID: true, First_Name: true, Last_Name: true },
+            },
+        },
+    });
+
+    res.json({ success: true, data: updated });
 };
 
 // Import room inventory items from CSV
@@ -609,5 +642,6 @@ module.exports = {
   updateItem,
   deleteItem,
   bulkCreateItems,
-  importInventoryCsv
+  importInventoryCsv,
+  checkInventoryItem,
 };

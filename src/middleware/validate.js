@@ -40,13 +40,39 @@ const bookingSchemas = {
         Room_ID: Joi.number().integer().positive(),
         Purpose: Joi.string().max(500).allow('', null),
         Notes: Joi.string().max(500).allow('', null)
-    }).min(1)
+    }).min(1),
+
+    createWeekly: Joi.object({
+        roomId: Joi.number().integer().positive().required(),
+        purpose: Joi.string().max(500).allow('', null),
+        slots: Joi.array()
+            .items(Joi.object({
+                startTime: Joi.date().iso().required(),
+                endTime: Joi.date().iso().greater(Joi.ref('startTime')).required()
+            }))
+            .min(1)
+            .max(50)
+            .required()
+    }),
+
+    updateOccupancyStatus: Joi.object({
+        status: Joi.string().valid('OPEN', 'NEAR_FULL', 'FULL').required()
+    })
 };
 
 /**
  * Ticket validation schemas
  */
 const ticketSchemas = {
+    createPublic: Joi.object({
+        reporterIdentifier: Joi.string().trim().min(1).max(100).required(),
+        roomId: Joi.number().integer().positive().required(),
+        issueType: Joi.string().valid('HARDWARE', 'SOFTWARE', 'NETWORK', 'OTHER').required(),
+        equipment: Joi.string().valid('MONITOR', 'KEYBOARD', 'MOUSE', 'SYSTEM_UNIT', 'HEADSET', 'OTHER').required(),
+        description: Joi.string().trim().min(3).max(1000).required(),
+        pcNumber: Joi.string().trim().max(50).allow('', null).optional(),
+    }),
+
     create: Joi.object({
         Reported_By_ID: Joi.number().integer().positive().required(),
         Report_Problem: Joi.string().trim().min(1).max(1000).required(),

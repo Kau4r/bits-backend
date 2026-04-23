@@ -1,7 +1,12 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
 const NotificationManager = require('../../services/notificationManager');
-const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
+const { findScheduleConflict, formatScheduleTime, parseDays, getLocalDateParts, DEFAULT_TIMEZONE_OFFSET_MINUTES } = require('../../utils/scheduleConflict');
+
+// Public student landing schedule window (hours, local time)
+const PUBLIC_SCHEDULE_HOUR_START = 7;
+const PUBLIC_SCHEDULE_HOUR_END = 21;
+const PUBLIC_SCHEDULE_DAYS = 7;
 
 const roomNameCollator = new Intl.Collator('en', {
   numeric: true,
@@ -527,6 +532,335 @@ const setStudentAvailability = async (req, res) => {
   }
 };
 
+// GET /api/rooms/:id/audit-status - Inventory audit completeness for the current active semester
+const getRoomAuditStatus = async (req, res) => {
+  const roomId = parseInt(req.params.id, 10);
+  if (Number.isNaN(roomId)) {
+    return res.status(400).json({ success: false, error: 'Invalid room id' });
+  }
+
+  const activeSemester = await prisma.semester.findFirst({
+    where: { Is_Active: true },
+    orderBy: { Start_Date: 'desc' },
+  });
+
+  const items = await prisma.item.findMany({
+    where: { Room_ID: roomId },
+    select: {
+      Item_ID: true,
+      Item_Code: true,
+      Last_Checked_At: true,
+    },
+  });
+
+  const semesterStart = activeSemester ? activeSemester.Start_Date : null;
+  const isItemChecked = (item) =>
+    semesterStart
+      ? item.Last_Checked_At && item.Last_Checked_At.getTime() >= semesterStart.getTime()
+      : !!item.Last_Checked_At;
+
+  const checkedItems = items.filter(isItemChecked).length;
+  const totalItems = items.length;
+  const allChecked = totalItems > 0 && checkedItems === totalItems;
+
+  const latestChecked = items
+    .map(i => i.Last_Checked_At)
+    .filter(Boolean)
+    .sort((a, b) => b.getTime() - a.getTime())[0] || null;
+
+  res.json({
+    success: true,
+    data: {
+      roomId,
+      totalItems,
+      checkedItems,
+      allChecked,
+      semester: activeSemester
+        ? {
+            id: activeSemester.Semester_ID,
+            name: activeSemester.Name,
+            startDate: activeSemester.Start_Date,
+            endDate: activeSemester.End_Date,
+          }
+        : null,
+      lastCheckedAt: latestChecked,
+    },
+  });
+};
+
+// ==================== PUBLIC (UNAUTHENTICATED) ENDPOINTS ====================
+//
+// The following three handlers back the public student landing page at
+// `bits.dcism.org`. They return a safe, narrow projection of room data with
+// no user-identifying info beyond the lab-tech who opened a lab. Any
+// information exposed here must be considered publicly visible.
+
+// Normalize Queue_Status at read time: if a session has already ended, any
+// stored FULL/NEAR_FULL is meaningless — surface OPEN instead.
+const normalizeQueueStatus = (booking, now) => {
+  if (!booking) return 'OPEN';
+  const endTime = booking.End_Time ? new Date(booking.End_Time) : null;
+  if (endTime && endTime <= now) return 'OPEN';
+  return booking.Queue_Status || 'OPEN';
+};
+
+// Public: opened labs (mirror of getOpenedLabs but without auth).
+const getPublicOpenedLabs = async (req, res) => {
+  try {
+    const now = new Date();
+
+    const rooms = await prisma.Room.findMany({
+      where: {
+        Room_Type: 'LAB',
+        Status: { notIn: ['MAINTENANCE', 'CLOSED'] },
+        Booked_Rooms: {
+          some: {
+            Status: 'APPROVED',
+            Purpose: 'Student Usage',
+            End_Time: { gt: now }
+          }
+        }
+      },
+      include: {
+        Booked_Rooms: {
+          where: {
+            Status: 'APPROVED',
+            Purpose: 'Student Usage',
+            End_Time: { gt: now }
+          },
+          include: {
+            User: {
+              select: {
+                User_ID: true,
+                First_Name: true,
+                Last_Name: true
+              }
+            }
+          },
+          orderBy: {
+            Start_Time: 'asc'
+          }
+        }
+      },
+      orderBy: {
+        Name: 'asc'
+      }
+    });
+
+    const openedLabs = rooms
+      .map(room => {
+        const normalizedBookings = room.Booked_Rooms.map(b => ({
+          ...b,
+          Queue_Status: normalizeQueueStatus(b, now)
+        }));
+        const nextBooking = normalizedBookings[0];
+        return {
+          ...room,
+          Booked_Rooms: normalizedBookings,
+          Queue_Status: normalizeQueueStatus(nextBooking, now),
+          Opened_At: nextBooking?.Created_At || nextBooking?.Start_Time || null,
+          Opened_By_User: nextBooking?.User || null
+        };
+      })
+      .sort((a, b) => {
+        const aStart = a.Booked_Rooms[0]?.Start_Time ? new Date(a.Booked_Rooms[0].Start_Time).getTime() : 0;
+        const bStart = b.Booked_Rooms[0]?.Start_Time ? new Date(b.Booked_Rooms[0].Start_Time).getTime() : 0;
+        return aStart - bStart;
+      });
+
+    res.json({ success: true, data: openedLabs });
+  } catch (error) {
+    console.error('Error fetching public opened labs:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch opened laboratories' });
+  }
+};
+
+// Public: lecture rooms (safe projection only — no tickets, no users).
+const getPublicLectureRooms = async (req, res) => {
+  try {
+    const rooms = await prisma.Room.findMany({
+      where: { Room_Type: 'LECTURE' },
+      select: {
+        Room_ID: true,
+        Name: true,
+        Room_Type: true,
+        Capacity: true,
+        Status: true,
+        Current_Use_Type: true,
+      },
+      orderBy: { Name: 'asc' }
+    });
+
+    res.json({ success: true, data: sortRoomsForDisplay(rooms) });
+  } catch (error) {
+    console.error('Error fetching public lecture rooms:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch lecture rooms' });
+  }
+};
+
+// Public: 7-day hourly schedule for a single room.
+// GET-only. No write counterpart exists by design — students cannot alter this.
+const getPublicRoomSchedule7Day = async (req, res) => {
+  const roomId = parseInt(req.params.roomId, 10);
+  if (Number.isNaN(roomId) || roomId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid room ID' });
+  }
+
+  try {
+    const room = await prisma.Room.findUnique({
+      where: { Room_ID: roomId },
+      select: {
+        Room_ID: true,
+        Name: true,
+        Room_Type: true,
+        Capacity: true,
+      }
+    });
+
+    if (!room) {
+      return res.status(404).json({ success: false, error: 'Room not found' });
+    }
+
+    // Build the 7-day hourly grid, starting from local midnight today (PH tz).
+    const tzMinutes = DEFAULT_TIMEZONE_OFFSET_MINUTES;
+    const now = new Date();
+    const nowLocal = new Date(now.getTime() + tzMinutes * 60 * 1000);
+    const todayLocalMidnightUTC = Date.UTC(
+      nowLocal.getUTCFullYear(),
+      nowLocal.getUTCMonth(),
+      nowLocal.getUTCDate()
+    );
+    // Convert that local-midnight back to a real UTC instant.
+    const todayStartUtc = new Date(todayLocalMidnightUTC - tzMinutes * 60 * 1000);
+
+    const windowStart = todayStartUtc;
+    const windowEnd = new Date(todayStartUtc.getTime() + PUBLIC_SCHEDULE_DAYS * 24 * 60 * 60 * 1000);
+
+    // Fetch recurring schedules and concrete bookings that could fall in this window.
+    const [schedules, bookings] = await Promise.all([
+      prisma.Schedule.findMany({
+        where: { Room_ID: roomId, IsActive: true },
+        select: {
+          Schedule_ID: true,
+          Days: true,
+          Title: true,
+          Schedule_Type: true,
+          Start_Time: true,
+          End_Time: true,
+        }
+      }),
+      prisma.Booked_Room.findMany({
+        where: {
+          Room_ID: roomId,
+          Status: 'APPROVED',
+          Start_Time: { lt: windowEnd },
+          End_Time: { gt: windowStart },
+        },
+        select: {
+          Booked_Room_ID: true,
+          Start_Time: true,
+          End_Time: true,
+          Purpose: true,
+        }
+      })
+    ]);
+
+    const preparedSchedules = schedules.map(s => {
+      const start = getLocalDateParts(s.Start_Time, tzMinutes);
+      const end = getLocalDateParts(s.End_Time, tzMinutes);
+      return {
+        Schedule_ID: s.Schedule_ID,
+        Title: s.Title,
+        Schedule_Type: s.Schedule_Type,
+        days: parseDays(s.Days),
+        startMinutes: start.minutes,
+        endMinutes: end.minutes,
+      };
+    });
+
+    const days = [];
+    for (let d = 0; d < PUBLIC_SCHEDULE_DAYS; d++) {
+      const dayStartUtc = new Date(windowStart.getTime() + d * 24 * 60 * 60 * 1000);
+      const dayLocal = new Date(dayStartUtc.getTime() + tzMinutes * 60 * 1000);
+      const dayOfWeek = dayLocal.getUTCDay();
+      const dateStr = `${dayLocal.getUTCFullYear()}-${String(dayLocal.getUTCMonth() + 1).padStart(2, '0')}-${String(dayLocal.getUTCDate()).padStart(2, '0')}`;
+
+      const slots = [];
+      for (let h = PUBLIC_SCHEDULE_HOUR_START; h < PUBLIC_SCHEDULE_HOUR_END; h++) {
+        // Slot window in real UTC.
+        const slotStart = new Date(dayStartUtc.getTime() + h * 60 * 60 * 1000);
+        const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
+        const slotStartMinutes = h * 60;
+        const slotEndMinutes = (h + 1) * 60;
+
+        const sources = [];
+
+        // Matching recurring schedules (by day-of-week + minute-of-day overlap).
+        for (const s of preparedSchedules) {
+          if (!s.days.includes(dayOfWeek)) continue;
+          if (s.startMinutes < slotEndMinutes && s.endMinutes > slotStartMinutes) {
+            sources.push({
+              source: 'SCHEDULE',
+              title: s.Title,
+              type: s.Schedule_Type,
+            });
+          }
+        }
+
+        // Matching concrete bookings (instant-level overlap).
+        for (const b of bookings) {
+          const bStart = new Date(b.Start_Time).getTime();
+          const bEnd = new Date(b.End_Time).getTime();
+          if (bStart < slotEnd.getTime() && bEnd > slotStart.getTime()) {
+            sources.push({
+              source: 'BOOKING',
+              title: b.Purpose || 'Booked',
+            });
+          }
+        }
+
+        slots.push({
+          startIso: slotStart.toISOString(),
+          endIso: slotEnd.toISOString(),
+          hour: h,
+          sources,
+        });
+      }
+
+      days.push({ date: dateStr, dayOfWeek, slots });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        room,
+        days,
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching public room schedule:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch room schedule' });
+  }
+};
+
+// Public: all rooms (safe narrow projection — Room_ID, Name, Room_Type only).
+const getPublicRooms = async (req, res) => {
+  try {
+    const rooms = await prisma.Room.findMany({
+      select: {
+        Room_ID: true,
+        Name: true,
+        Room_Type: true,
+      },
+      orderBy: { Name: 'asc' },
+    });
+    res.json({ success: true, data: sortRoomsForDisplay(rooms) });
+  } catch (error) {
+    console.error('Error fetching public rooms:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch rooms' });
+  }
+};
+
 module.exports = {
   getRooms,
   getRoomById,
@@ -534,5 +868,10 @@ module.exports = {
   createRoom,
   updateRoom,
   deleteRoom,
-  setStudentAvailability
+  setStudentAvailability,
+  getRoomAuditStatus,
+  getPublicOpenedLabs,
+  getPublicLectureRooms,
+  getPublicRoomSchedule7Day,
+  getPublicRooms,
 };

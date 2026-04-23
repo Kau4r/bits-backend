@@ -310,7 +310,7 @@ const createBooking = async (req, res) => {
 // Get all room bookings
 const getBookings = async (req, res) => {
     try {
-        const { status, roomId, userId } = req.query;
+        const { status, roomId, userId, from, to } = req.query;
 
         const where = {};
         // Support comma-separated statuses (e.g., "PENDING,APPROVED")
@@ -320,6 +320,13 @@ const getBookings = async (req, res) => {
         }
         if (roomId) where.Room_ID = parseInt(roomId);
         if (userId) where.User_ID = parseInt(userId);
+
+        // Support date-range filtering on Start_Time: ?from=ISO&to=ISO
+        if (from || to) {
+            where.Start_Time = {};
+            if (from) where.Start_Time.gte = new Date(from);
+            if (to) where.Start_Time.lt = new Date(to);
+        }
 
         const bookings = await prisma.Booked_Room.findMany({
             where,
@@ -714,11 +721,311 @@ const deleteBooking = async (req, res) => {
     }
 };
 
+// Create multiple bookings for a full week in a single atomic transaction
+// All-or-nothing: if ANY slot conflicts, no bookings are created.
+const createBookingsWeekly = async (req, res) => {
+    try {
+        const { roomId, purpose, slots } = req.body;
+
+        const parsedRoomId = parseInt(roomId);
+
+        const room = await prisma.room.findUnique({
+            where: { Room_ID: parsedRoomId },
+            include: {
+                Schedule: { where: { IsActive: true } }
+            }
+        });
+
+        if (!room) {
+            return res.status(404).json({ success: false, error: 'Room not found' });
+        }
+
+        if (room.Status !== 'AVAILABLE') {
+            return res.status(403).json({
+                success: false,
+                error: 'Room is not available for booking',
+                details: `Room status is currently ${room.Status}`
+            });
+        }
+
+        // Normalize slot dates and reject any pair that spans Sunday or is invalid
+        const normalizedSlots = slots.map((s, idx) => ({
+            idx,
+            start: new Date(s.startTime),
+            end: new Date(s.endTime)
+        }));
+
+        for (const slot of normalizedSlots) {
+            if (slot.start.getDay() === 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Bookings are not allowed on Sundays',
+                    conflictingSlots: [{ index: slot.idx, reason: 'Sunday not allowed' }]
+                });
+            }
+        }
+
+        // Detect internal overlaps within the submitted slots
+        const sortedSlots = [...normalizedSlots].sort((a, b) => a.start - b.start);
+        for (let i = 1; i < sortedSlots.length; i++) {
+            if (sortedSlots[i].start < sortedSlots[i - 1].end) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Submitted slots overlap each other',
+                    conflictingSlots: [
+                        { index: sortedSlots[i - 1].idx },
+                        { index: sortedSlots[i].idx }
+                    ]
+                });
+            }
+        }
+
+        const conflictingSlots = [];
+
+        for (const slot of normalizedSlots) {
+            const conflictingSchedule = findScheduleConflict(room.Schedule, slot.start, slot.end);
+            if (conflictingSchedule) {
+                conflictingSlots.push({
+                    index: slot.idx,
+                    startTime: slot.start.toISOString(),
+                    endTime: slot.end.toISOString(),
+                    reason: `Conflicts with ${conflictingSchedule.Title || 'class'} from ${formatScheduleTime(conflictingSchedule.Start_Time)} to ${formatScheduleTime(conflictingSchedule.End_Time)}`
+                });
+                continue;
+            }
+
+            const conflictingBooking = await prisma.Booked_Room.findFirst({
+                where: {
+                    Room_ID: parsedRoomId,
+                    Status: { in: ['APPROVED', 'PENDING'] },
+                    Start_Time: { lt: slot.end },
+                    End_Time: { gt: slot.start }
+                },
+                include: {
+                    User: { select: { First_Name: true, Last_Name: true } }
+                }
+            });
+
+            if (conflictingBooking) {
+                conflictingSlots.push({
+                    index: slot.idx,
+                    startTime: slot.start.toISOString(),
+                    endTime: slot.end.toISOString(),
+                    reason: `Conflicts with existing ${conflictingBooking.Status.toLowerCase()} booking`,
+                    conflictingBookingId: conflictingBooking.Booked_Room_ID
+                });
+            }
+        }
+
+        if (conflictingSlots.length > 0) {
+            return res.status(409).json({
+                success: false,
+                error: 'One or more slots conflict with existing schedules or bookings',
+                conflictingSlots
+            });
+        }
+
+        // All slots are conflict-free. Create them atomically.
+        const now = new Date();
+        const created = await prisma.$transaction(
+            normalizedSlots.map(slot => prisma.Booked_Room.create({
+                data: {
+                    User_ID: req.user.User_ID,
+                    Room_ID: parsedRoomId,
+                    Start_Time: slot.start,
+                    End_Time: slot.end,
+                    Status: 'APPROVED',
+                    Purpose: purpose || 'Student Usage',
+                    Notes: 'Weekly student usage schedule set by Lab Tech',
+                    Approved_By: req.user.User_ID,
+                    Created_At: now,
+                    Updated_At: now
+                },
+                include: { Room: true }
+            }))
+        );
+
+        const createdIds = created.map(b => b.Booked_Room_ID);
+
+        // Audit log each booking
+        for (const booking of created) {
+            try {
+                await AuditLogger.logBooking(
+                    req.user.User_ID,
+                    'BOOKING_APPROVED',
+                    booking.Booked_Room_ID,
+                    `Weekly student usage booking for ${booking.Room.Name} auto-approved`,
+                    null,
+                    req.user.User_ID
+                );
+            } catch (auditError) {
+                console.error('[Bookings/Weekly] AuditLogger failed:', auditError);
+            }
+        }
+
+        // Broadcast a single event per booking so UIs refresh
+        for (const booking of created) {
+            await NotificationManager.broadcastBookingEvent(
+                'BOOKING_APPROVED',
+                booking,
+                BOOKING_NOTIFICATION_ROLES
+            );
+        }
+
+        // Include the full Queue_Status (default OPEN) on every created booking
+        // so the frontend can render the weekly grid without a follow-up fetch.
+        const createdBookings = created.map(b => ({
+            Booked_Room_ID: b.Booked_Room_ID,
+            Room_ID: b.Room_ID,
+            Start_Time: b.Start_Time,
+            End_Time: b.End_Time,
+            Status: b.Status,
+            Purpose: b.Purpose,
+            Queue_Status: b.Queue_Status || 'OPEN'
+        }));
+
+        res.status(201).json({
+            success: true,
+            data: { createdIds, createdBookings }
+        });
+    } catch (error) {
+        console.error('Weekly booking error:', error);
+        res.status(500).json({ success: false, error: 'Failed to create weekly bookings' });
+    }
+};
+
+// Update the queue occupancy status on a Booked_Room (OPEN / NEAR_FULL / FULL).
+// Only meaningful for active Student-Usage sessions. Lab techs and lab heads
+// can toggle this freely regardless of who originally queued the room.
+const updateOccupancyStatus = async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const bookingId = parseInt(id);
+    if (Number.isNaN(bookingId)) {
+        return res.status(400).json({ success: false, error: 'Invalid booking id' });
+    }
+
+    const existing = await prisma.Booked_Room.findUnique({
+        where: { Booked_Room_ID: bookingId },
+        include: { Room: true }
+    });
+
+    if (!existing) {
+        return res.status(404).json({ success: false, error: 'Booking not found' });
+    }
+
+    if (existing.Purpose !== 'Student Usage') {
+        return res.status(400).json({
+            success: false,
+            error: 'Queue status is only applicable to Student Usage bookings'
+        });
+    }
+
+    const updated = await prisma.Booked_Room.update({
+        where: { Booked_Room_ID: bookingId },
+        data: {
+            Queue_Status: status,
+            Updated_At: new Date()
+        },
+        include: {
+            Room: true,
+            User: {
+                select: {
+                    User_ID: true,
+                    First_Name: true,
+                    Last_Name: true,
+                    Email: true
+                }
+            }
+        }
+    });
+
+    try {
+        await AuditLogger.logBooking(
+            req.user.User_ID,
+            'BOOKING_UPDATED',
+            bookingId,
+            `Queue status → ${status}`,
+            null,
+            null
+        );
+    } catch (auditError) {
+        console.error('[Bookings/OccupancyStatus] AuditLogger failed:', auditError);
+    }
+
+    // Broadcast so other labtech UIs and the public student landing refresh.
+    try {
+        await NotificationManager.broadcastBookingEvent('BOOKING_UPDATED', updated, BOOKING_NOTIFICATION_ROLES);
+    } catch (broadcastError) {
+        console.error('[Bookings/OccupancyStatus] Broadcast failed:', broadcastError);
+    }
+
+    res.json({ success: true, data: updated });
+};
+
+// Normalize Queue_Status: when the session has ended, return OPEN so stale
+// "FULL" flags don't leak into summaries. This is computed per-row at read time.
+const effectiveQueueStatus = (booking) => {
+    if (!booking) return 'OPEN';
+    const now = new Date();
+    const endTime = booking.End_Time ? new Date(booking.End_Time) : null;
+    if (endTime && endTime <= now) return 'OPEN';
+    return booking.Queue_Status || 'OPEN';
+};
+
+// Return all APPROVED Student-Usage sessions that are live RIGHT NOW.
+// Used by the lab-tech Active Queue Dashboard. No role filter — any
+// authenticated user (esp. labtechs) can see all labs for overflow context.
+const getActiveQueues = async (req, res) => {
+    const now = new Date();
+
+    const bookings = await prisma.Booked_Room.findMany({
+        where: {
+            Status: 'APPROVED',
+            Purpose: 'Student Usage',
+            Start_Time: { lte: now },
+            End_Time: { gt: now }
+        },
+        include: {
+            Room: {
+                select: {
+                    Room_ID: true,
+                    Name: true,
+                    Lab_Type: true,
+                    Capacity: true,
+                    Room_Type: true
+                }
+            },
+            User: {
+                select: {
+                    User_ID: true,
+                    First_Name: true,
+                    Last_Name: true
+                }
+            }
+        },
+        orderBy: { Start_Time: 'asc' }
+    });
+
+    // Effective status for active sessions is always the stored status —
+    // End_Time has already been filtered > now. Kept explicit for clarity.
+    const data = bookings.map(b => ({
+        ...b,
+        Queue_Status: effectiveQueueStatus(b)
+    }));
+
+    res.json({ success: true, data });
+};
+
 module.exports = {
     createBooking,
+    createBookingsWeekly,
     getBookings,
     updateBooking,
     updateBookingStatus,
     getAvailableRooms,
-    deleteBooking
+    deleteBooking,
+    updateOccupancyStatus,
+    getActiveQueues
 };

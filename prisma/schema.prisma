@@ -9,65 +9,82 @@ datasource db {
 }
 
 model User {
-  User_ID                     Int                   @id @default(autoincrement())
-  Username                    String?               @unique
+  User_ID                     Int                 @id @default(autoincrement())
+  Username                    String?             @unique
   First_Name                  String
   Middle_Name                 String
   Last_Name                   String
-  Email                       String                @unique
+  Email                       String              @unique
   Password                    String
-  Created_At                  DateTime              @default(now())
-  Updated_At                  DateTime              @updatedAt
-  Is_Active                   Boolean               @default(true)
-  User_Role                   UserRole              @default(STUDENT)
+  Created_At                  DateTime            @default(now())
+  Updated_At                  DateTime            @updatedAt
+  Is_Active                   Boolean             @default(true)
+  User_Role                   UserRole            @default(STUDENT)
   Audit_Log                   Audit_Log[]
-  ApprovedBookings            Booked_Room[]         @relation("ScheduleApprover")
+  ApprovedBookings            Booked_Room[]       @relation("ScheduleApprover")
   Booked_Room                 Booked_Room[]
-  LentItems                   Borrow_Item[]         @relation("BorroweeRelation")
-  BorrowedItems               Borrow_Item[]         @relation("BorrowerRelation")
+  LentItems                   Borrow_Item[]       @relation("BorroweeRelation")
+  BorrowedItems               Borrow_Item[]       @relation("BorrowerRelation")
   Borrowing_Comp              Borrowing_Comp[]
-  Form_Form_Approver_IDToUser Form[]                @relation("Form_Approver_IDToUser")
-  Form_Form_Creator_IDToUser  Form[]                @relation("Form_Creator_IDToUser")
-  Form_Form_Received_ByToUser Form[]                @relation("Form_Received_ByToUser")
-  Form_Attachments_Uploaded   FormAttachment[]      @relation("FormAttachmentUploader")
+  Form_Form_Approver_IDToUser Form[]              @relation("Form_Approver_IDToUser")
+  Form_Form_Creator_IDToUser  Form[]              @relation("Form_Creator_IDToUser")
+  Form_Form_Received_ByToUser Form[]              @relation("Form_Received_ByToUser")
+  Form_Attachments_Uploaded   FormAttachment[]    @relation("FormAttachmentUploader")
   Item                        Item[]
+  ItemsLastChecked            Item[]              @relation("ItemLastCheckedBy")
   NotificationReads           NotificationRead[]
-  Opened_Rooms                Room[]                @relation("RoomOpenedBy")
-  Created_Schedules           Schedule[]            @relation("ScheduleCreatedBy")
-  CreatedTickets              Ticket[]              @relation("Ticket_User")
-  AssignedTickets             Ticket[]              @relation("TicketTechnician")
+  Opened_Rooms                Room[]              @relation("RoomOpenedBy")
+  Created_Schedules           Schedule[]          @relation("ScheduleCreatedBy")
+  CreatedTickets              Ticket[]            @relation("Ticket_User")
+  AssignedTickets             Ticket[]            @relation("TicketTechnician")
   ComputerHeartbeat           ComputerHeartbeat[]
-  CurrentComputers            Computer[]            @relation("CurrentUser")
-  Weekly_Reports_Authored     Weekly_Report[]       @relation("ReportAuthor")
-  Weekly_Reports_Reviewed     Weekly_Report[]       @relation("ReportReviewer")
-  FormHistoryActions          FormHistory[]         @relation("FormHistoryPerformer")
+  CurrentComputers            Computer[]          @relation("CurrentUser")
+  Weekly_Reports_Authored     Weekly_Report[]     @relation("ReportAuthor")
+  Weekly_Reports_Reviewed     Weekly_Report[]     @relation("ReportReviewer")
+  FormHistoryActions          FormHistory[]       @relation("FormHistoryPerformer")
 }
 
 model Item {
-  Item_ID       Int           @id @default(autoincrement())
-  User_ID       Int?
-  Item_Code     String        @unique
-  Item_Type     String        @default("GENERAL")
-  Brand         String?
-  Serial_Number String?
-  Status        ItemStatus
-  Location      String?
-  Room_ID       Int?
-  Created_At    DateTime      @default(now())
-  Updated_At    DateTime      @updatedAt
-  ReplacedById  Int?          @unique
-  IsBorrowable  Boolean?
-  Borrow_Item   Borrow_Item[]
-  ReplacedBy    Item?         @relation("ItemReplacement", fields: [ReplacedById], references: [Item_ID])
-  Replaces      Item?         @relation("ItemReplacement")
-  Room          Room?         @relation(fields: [Room_ID], references: [Room_ID])
-  User          User?         @relation(fields: [User_ID], references: [User_ID])
-  Tickets       Ticket[]
-  Computer      Computer[]    @relation("ComputerItems")
+  Item_ID            Int           @id @default(autoincrement())
+  User_ID            Int?
+  Item_Code          String        @unique
+  Item_Type          String        @default("GENERAL")
+  Brand              String?
+  Serial_Number      String?
+  Status             ItemStatus
+  Room_ID            Int?
+  Created_At         DateTime      @default(now())
+  Updated_At         DateTime      @updatedAt
+  ReplacedById       Int?          @unique
+  IsBorrowable       Boolean?
+  Last_Checked_At    DateTime?
+  Last_Checked_By_ID Int?
+  Borrow_Item        Borrow_Item[]
+  ReplacedBy         Item?         @relation("ItemReplacement", fields: [ReplacedById], references: [Item_ID])
+  Replaces           Item?         @relation("ItemReplacement")
+  Room               Room?         @relation(fields: [Room_ID], references: [Room_ID])
+  User               User?         @relation(fields: [User_ID], references: [User_ID])
+  Last_Checked_By    User?         @relation("ItemLastCheckedBy", fields: [Last_Checked_By_ID], references: [User_ID])
+  Tickets            Ticket[]
+  Computer           Computer[]    @relation("ComputerItems")
 
   @@index([Item_Code])
   @@index([Status])
   @@index([Room_ID])
+  @@index([Last_Checked_At])
+}
+
+model Semester {
+  Semester_ID Int      @id @default(autoincrement())
+  Name        String
+  Start_Date  DateTime
+  End_Date    DateTime
+  Is_Active   Boolean  @default(false)
+  Created_At  DateTime @default(now())
+  Updated_At  DateTime @updatedAt
+
+  @@index([Is_Active])
+  @@index([Start_Date])
 }
 
 model Ticket {
@@ -92,31 +109,31 @@ model Ticket {
 }
 
 model Form {
-  Form_ID     Int            @id @default(autoincrement())
-  Creator_ID  Int
-  Approver_ID Int?
-  Title       String?
-  Content     String?
-  Created_At  DateTime       @default(now())
-  Updated_At  DateTime       @updatedAt
-  Department  FormDepartment @default(REQUESTOR)
-  File_Name   String?
-  File_Type   String?
-  File_URL    String?
+  Form_ID        Int              @id @default(autoincrement())
+  Creator_ID     Int
+  Approver_ID    Int?
+  Title          String?
+  Content        String?
+  Created_At     DateTime         @default(now())
+  Updated_At     DateTime         @updatedAt
+  Department     FormDepartment   @default(REQUESTOR)
+  File_Name      String?
+  File_Type      String?
+  File_URL       String?
   Requester_Name String?
-  Remarks     String?
-  Form_Code   String         @unique
-  Form_Type   FormType
-  Is_Archived Boolean        @default(false)
-  Status      FormStatus     @default(PENDING)
-  Is_Received Boolean        @default(false)
-  Received_At DateTime?
-  Received_By Int?
-  Approver    User?          @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
-  Creator     User           @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
-  Receiver    User?          @relation("Form_Received_ByToUser", fields: [Received_By], references: [User_ID], onDelete: SetNull)
-  History     FormHistory[]
-  Attachments FormAttachment[]
+  Remarks        String?
+  Form_Code      String           @unique
+  Form_Type      FormType
+  Is_Archived    Boolean          @default(false)
+  Status         FormStatus       @default(PENDING)
+  Is_Received    Boolean          @default(false)
+  Received_At    DateTime?
+  Received_By    Int?
+  Approver       User?            @relation("Form_Approver_IDToUser", fields: [Approver_ID], references: [User_ID])
+  Creator        User             @relation("Form_Creator_IDToUser", fields: [Creator_ID], references: [User_ID])
+  Receiver       User?            @relation("Form_Received_ByToUser", fields: [Received_By], references: [User_ID], onDelete: SetNull)
+  History        FormHistory[]
+  Attachments    FormAttachment[]
 
   @@index([Received_By])
 }
@@ -137,7 +154,7 @@ model FormHistory {
 }
 
 model FormAttachment {
-  Attachment_ID Int            @id @default(autoincrement())
+  Attachment_ID Int              @id @default(autoincrement())
   Form_ID       Int
   Department    FormDepartment
   Document_Type FormDocumentType @default(PROOF)
@@ -145,10 +162,10 @@ model FormAttachment {
   File_Type     String?
   File_URL      String
   Uploaded_By   Int?
-  Uploaded_At   DateTime       @default(now())
+  Uploaded_At   DateTime         @default(now())
   Notes         String?
-  Form          Form           @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
-  Uploader      User?          @relation("FormAttachmentUploader", fields: [Uploaded_By], references: [User_ID], onDelete: SetNull)
+  Form          Form             @relation(fields: [Form_ID], references: [Form_ID], onDelete: Cascade)
+  Uploader      User?            @relation("FormAttachmentUploader", fields: [Uploaded_By], references: [User_ID], onDelete: SetNull)
 
   @@index([Form_ID])
   @@index([Department])
@@ -211,6 +228,7 @@ model Booked_Room {
   Schedule_ID    Int?
   Approved_By    Int?
   Notes          String?
+  Queue_Status   QueueStatus @default(OPEN)
   Audit_Log      Audit_Log[]
   Approver       User?       @relation("ScheduleApprover", fields: [Approved_By], references: [User_ID])
   Room           Room        @relation(fields: [Room_ID], references: [Room_ID])
@@ -290,23 +308,23 @@ model Borrowing_Comp {
 }
 
 model Computer {
-  Computer_ID       Int                   @id @default(autoincrement())
+  Computer_ID       Int                 @id @default(autoincrement())
   Name              String
-  Created_At        DateTime              @default(now())
+  Created_At        DateTime            @default(now())
   Updated_At        DateTime
-  Status            ComputerStatus        @default(AVAILABLE)
+  Status            ComputerStatus      @default(AVAILABLE)
   Room_ID           Int?
-  Mac_Address       String?               @unique
+  Mac_Address       String?             @unique
   IP_Address        String?
   Last_Seen         DateTime?
-  Is_Online         Boolean               @default(false)
-  Is_Teacher        Boolean               @default(false)
+  Is_Online         Boolean             @default(false)
+  Is_Teacher        Boolean             @default(false)
   Current_User_ID   Int?
   Borrowing_Comp    Borrowing_Comp[]
-  Room              Room?                 @relation(fields: [Room_ID], references: [Room_ID])
-  Item              Item[]                @relation("ComputerItems")
+  Room              Room?               @relation(fields: [Room_ID], references: [Room_ID])
+  Item              Item[]              @relation("ComputerItems")
   ComputerHeartbeat ComputerHeartbeat[]
-  Current_User      User?                 @relation("CurrentUser", fields: [Current_User_ID], references: [User_ID])
+  Current_User      User?               @relation("CurrentUser", fields: [Current_User_ID], references: [User_ID])
 
   @@index([Is_Online])
   @@index([Last_Seen])
@@ -336,6 +354,8 @@ enum TicketCategory {
 enum FormType {
   WRF
   RIS
+  RIS_E
+  RIS_NE
 }
 
 enum FormStatus {
@@ -404,6 +424,12 @@ enum LabType {
   MAC
 }
 
+enum QueueStatus {
+  OPEN
+  NEAR_FULL
+  FULL
+}
+
 enum LogType {
   TICKET
   SCHEDULE
@@ -465,21 +491,21 @@ enum ReportStatus {
 }
 
 model ComputerHeartbeat {
-  Heartbeat_ID     Int              @id @default(autoincrement())
-  Computer_ID      Int
-  User_ID          Int?
-  Session_ID       String           @unique
-  Status           HeartbeatStatus  @default(ONLINE)
-  IP_Address       String?
-  Timestamp        DateTime         @default(now())
-  Interval_Used    Int
-  System_Info      Json?
-  Is_Active        Boolean          @default(true)
-  Session_Start    DateTime
-  Session_End      DateTime?
-  Last_Activity    DateTime         @updatedAt
-  Computer         Computer         @relation(fields: [Computer_ID], references: [Computer_ID], onDelete: Cascade)
-  User             User?            @relation(fields: [User_ID], references: [User_ID])
+  Heartbeat_ID  Int             @id @default(autoincrement())
+  Computer_ID   Int
+  User_ID       Int?
+  Session_ID    String          @unique
+  Status        HeartbeatStatus @default(ONLINE)
+  IP_Address    String?
+  Timestamp     DateTime        @default(now())
+  Interval_Used Int
+  System_Info   Json?
+  Is_Active     Boolean         @default(true)
+  Session_Start DateTime
+  Session_End   DateTime?
+  Last_Activity DateTime        @updatedAt
+  Computer      Computer        @relation(fields: [Computer_ID], references: [Computer_ID], onDelete: Cascade)
+  User          User?           @relation(fields: [User_ID], references: [User_ID])
 
   @@index([Status])
   @@index([Session_ID])
@@ -488,21 +514,21 @@ model ComputerHeartbeat {
 }
 
 model Weekly_Report {
-  Report_ID       Int           @id @default(autoincrement())
+  Report_ID       Int          @id @default(autoincrement())
   User_ID         Int
   Week_Start      DateTime
   Week_End        DateTime
   Tasks           Json
-  Issues_Reported Int           @default(0)
+  Issues_Reported Int          @default(0)
   Notes           String?
-  Status          ReportStatus  @default(DRAFT)
+  Status          ReportStatus @default(DRAFT)
   Reviewed_By     Int?
   Reviewed_At     DateTime?
-  Created_At      DateTime      @default(now())
-  Updated_At      DateTime      @updatedAt
+  Created_At      DateTime     @default(now())
+  Updated_At      DateTime     @updatedAt
 
-  User            User          @relation("ReportAuthor", fields: [User_ID], references: [User_ID])
-  Reviewer        User?         @relation("ReportReviewer", fields: [Reviewed_By], references: [User_ID])
+  User     User  @relation("ReportAuthor", fields: [User_ID], references: [User_ID])
+  Reviewer User? @relation("ReportReviewer", fields: [Reviewed_By], references: [User_ID])
 
   @@unique([User_ID, Week_Start])
   @@index([User_ID])

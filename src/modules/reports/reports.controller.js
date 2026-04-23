@@ -335,7 +335,71 @@ const getReports = async (req, res) => {
     res.json({ success: true, data: reports });
 };
 
-// GET /api/reports/auto-populate - Auto-populate report from tickets
+// Parse a YYYY-MM-DD date string as local midnight (avoids UTC drift).
+const parseLocalDate = (value) => {
+    if (!value) return null;
+    // If already a full ISO timestamp, trust Date's parser.
+    if (/T/.test(value)) {
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) {
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? null : d;
+    }
+    const [, y, m, d] = match;
+    return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10), 0, 0, 0, 0);
+};
+
+// Truncate to 200 chars for task descriptions, preserving readability.
+const truncate = (value, max = 200) => {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    return str.length > max ? `${str.slice(0, max - 1)}…` : str;
+};
+
+const TICKET_CATEGORY_LABEL = 'Tickets';
+const FORM_CATEGORY_LABEL = 'Forms';
+const BORROWING_CATEGORY_LABEL = 'Borrowing';
+const INVENTORY_CATEGORY_LABEL = 'Inventory';
+const BOOKING_CATEGORY_LABEL = 'Scheduling';
+
+const COMPLETED_FORM_ACTIONS = new Set(['FORM_APPROVED', 'FORM_CANCELLED', 'FORM_ARCHIVED']);
+const BORROWING_COMPLETED_ACTIONS = new Set(['ITEM_RETURNED', 'BORROW_REJECTED']);
+const BOOKING_COMPLETED_ACTIONS = new Set(['BOOKING_APPROVED', 'BOOKING_REJECTED']);
+const INVENTORY_ACTIONS = new Set(['ITEM_CREATED', 'ITEM_UPDATED', 'ITEM_DELETED']);
+const BORROWING_ACTIONS = new Set(['BORROW_APPROVED', 'ITEM_RETURNED', 'BORROW_REJECTED']);
+const BOOKING_ACTIONS = new Set(['BOOKING_APPROVED', 'BOOKING_REJECTED']);
+
+const ACTION_TITLES = {
+    TICKET_RESOLVED: 'Resolved Ticket',
+    TICKET_ASSIGNED: 'Assigned Ticket',
+    FORM_SUBMITTED: 'Submitted Form',
+    FORM_APPROVED: 'Approved Form',
+    FORM_TRANSFERRED: 'Transferred Form',
+    FORM_RETURNED: 'Returned Form',
+    FORM_CANCELLED: 'Cancelled Form',
+    FORM_ARCHIVED: 'Archived Form',
+    FORM_ATTACHMENT_ADDED: 'Added Form Attachment',
+    FORM_UPDATED: 'Updated Form',
+    FORM_RECEIVED: 'Received Form',
+    FORM_RECEIVED_REVOKED: 'Reverted Form Received',
+    FORM_PENDING: 'Form Pending',
+    FORM_IN_REVIEW: 'Form In Review',
+    BORROW_APPROVED: 'Approved Borrow Request',
+    ITEM_RETURNED: 'Returned Borrow',
+    BORROW_REJECTED: 'Rejected Borrow Request',
+    ITEM_CREATED: 'Created Inventory Item',
+    ITEM_UPDATED: 'Updated Inventory Item',
+    ITEM_DELETED: 'Removed Inventory Item',
+    BOOKING_APPROVED: 'Approved Booking',
+    BOOKING_REJECTED: 'Rejected Booking',
+};
+
+const titleForAction = (action) => ACTION_TITLES[action] || action.replace(/_/g, ' ');
+
+// GET /api/reports/auto-populate - Auto-populate report from the audit log
 const autoPopulate = async (req, res) => {
     const { weekStart, weekEnd } = req.query;
 
@@ -343,86 +407,222 @@ const autoPopulate = async (req, res) => {
         return res.status(400).json({ success: false, error: 'weekStart and weekEnd are required' });
     }
 
-    const start = new Date(weekStart);
-    const end = new Date(weekEnd);
+    const start = parseLocalDate(weekStart);
+    const end = parseLocalDate(weekEnd);
+    if (!start || !end) {
+        return res.status(400).json({ success: false, error: 'Invalid weekStart or weekEnd' });
+    }
+    // Strict Monday 00:00 to Sunday 23:59:59 window (no buffer).
     const endInclusive = new Date(end);
-    endInclusive.setDate(endInclusive.getDate() + 1);
+    endInclusive.setHours(23, 59, 59, 999);
 
-    const tickets = await prisma.ticket.findMany({
+    const userId = req.user.User_ID;
+
+    // Pull every audit entry for this user within the strict window.
+    const auditEntries = await prisma.audit_Log.findMany({
         where: {
-            Technician_ID: req.user.User_ID,
+            User_ID: userId,
+            Timestamp: { gte: start, lte: endInclusive },
+        },
+        orderBy: { Timestamp: 'asc' },
+    });
+
+    // Load tickets this user is assigned to that are still open (for pending/in-progress
+    // carry-forward even when no audit event exists for them this week).
+    const openTickets = await prisma.ticket.findMany({
+        where: {
+            Technician_ID: userId,
+            Status: { in: ['PENDING', 'IN_PROGRESS'] },
             Archived: false,
-            OR: [
-                // Tickets updated within this week
-                { Updated_At: { gte: start, lt: endInclusive } },
-                // Tickets created within this week
-                { Created_At: { gte: start, lt: endInclusive } },
-                // Tickets still in progress (carry-forward regardless of date)
-                { Status: 'IN_PROGRESS' }
-            ]
         },
         include: {
             Room: { select: { Name: true } },
-            Item: { select: { Item_Code: true, Brand: true } }
-        }
-    });
-
-    const existingReports = await prisma.weekly_Report.findMany({
-        where: {
-            User_ID: req.user.User_ID,
-            Status: { in: ['SUBMITTED', 'REVIEWED'] }
+            Item: { select: { Item_Code: true, Brand: true } },
         },
-        select: { Tasks: true }
     });
+    const openTicketsById = new Map(openTickets.map(t => [t.Ticket_ID, t]));
 
-    const reportedTicketIds = new Set();
-    for (const report of existingReports) {
-        const tasks = report.Tasks;
-        if (tasks && typeof tasks === 'object') {
-            for (const section of ['completed', 'inProgress', 'pending']) {
-                for (const task of (tasks[section] || [])) {
-                    if (task.ticketId) reportedTicketIds.add(task.ticketId);
-                }
-            }
-        }
+    // Also preload tickets referenced by TICKET audit entries so we can enrich
+    // titles/descriptions beyond what the Details string offers.
+    const referencedTicketIds = auditEntries
+        .filter(a => a.Log_Type === 'TICKET' && a.Ticket_ID)
+        .map(a => a.Ticket_ID);
+    const extraTickets = referencedTicketIds.length
+        ? await prisma.ticket.findMany({
+            where: { Ticket_ID: { in: referencedTicketIds } },
+            include: {
+                Room: { select: { Name: true } },
+                Item: { select: { Item_Code: true, Brand: true } },
+            },
+        })
+        : [];
+    const ticketById = new Map(extraTickets.map(t => [t.Ticket_ID, t]));
+    for (const t of openTickets) {
+        if (!ticketById.has(t.Ticket_ID)) ticketById.set(t.Ticket_ID, t);
     }
 
-    const relevantTickets = tickets.filter(t => {
-        const updatedInWeek = t.Updated_At >= start && t.Updated_At < endInclusive;
-        const createdInWeek = t.Created_At >= start && t.Created_At < endInclusive;
-        const unreported = !reportedTicketIds.has(t.Ticket_ID);
-        return updatedInWeek || createdInWeek || unreported;
-    });
-
-    const completed = [];
-    const inProgress = [];
-    const pending = [];
-
-    for (const ticket of relevantTickets) {
+    const buildTicketDescription = (ticket) => {
         const locationParts = [];
         if (ticket.Location) locationParts.push(ticket.Location);
         if (ticket.Room) locationParts.push(ticket.Room.Name);
         if (ticket.Item) locationParts.push(`${ticket.Item.Brand || ''} ${ticket.Item.Item_Code || ''}`.trim());
+        const prefix = ticket.Category
+            ? `[${ticket.Category.charAt(0) + ticket.Category.slice(1).toLowerCase()}] `
+            : '';
+        return truncate(prefix + locationParts.filter(Boolean).join(' - '));
+    };
 
+    const completed = [];
+    const inProgress = [];
+    const pending = [];
+    const counts = {
+        Tickets: 0,
+        Forms: 0,
+        Borrowing: 0,
+        Inventory: 0,
+        Scheduling: 0,
+    };
+
+    // Track ticket IDs we've already emitted so we don't double up the
+    // open-ticket carry-forward pass.
+    const handledTicketIds = new Set();
+
+    // Helper: build the audit-derived description.
+    const auditDescription = (entry) => {
+        if (entry.Details) return truncate(entry.Details);
+        if (entry.Notification_Data && typeof entry.Notification_Data === 'object') {
+            try {
+                return truncate(JSON.stringify(entry.Notification_Data));
+            } catch {
+                // fallthrough
+            }
+        }
+        return 'via Audit_Log';
+    };
+
+    for (const entry of auditEntries) {
+        const action = entry.Action;
+        const logType = entry.Log_Type;
+
+        // Skip modules not part of this release.
+        if (logType === 'ROOM' || logType === 'AUTH' || logType === 'SYSTEM' || logType === 'REPORT') {
+            continue;
+        }
+
+        if (logType === 'TICKET') {
+            if (action === 'TICKET_RESOLVED') {
+                const ticket = entry.Ticket_ID ? ticketById.get(entry.Ticket_ID) : null;
+                const title = ticket?.Report_Problem
+                    ? truncate(ticket.Report_Problem)
+                    : titleForAction(action);
+                const description = ticket
+                    ? buildTicketDescription(ticket)
+                    : auditDescription(entry);
+                completed.push({
+                    title,
+                    description,
+                    category: TICKET_CATEGORY_LABEL,
+                    ticketId: entry.Ticket_ID || undefined,
+                    auditLogId: entry.Log_ID,
+                });
+                if (entry.Ticket_ID) handledTicketIds.add(entry.Ticket_ID);
+                counts.Tickets += 1;
+            } else if (action === 'TICKET_ASSIGNED') {
+                // Only surface if the ticket is currently open and assigned to this user.
+                const ticket = entry.Ticket_ID ? ticketById.get(entry.Ticket_ID) : null;
+                if (ticket && (ticket.Status === 'IN_PROGRESS' || ticket.Status === 'PENDING')
+                    && ticket.Technician_ID === userId) {
+                    const title = ticket.Report_Problem
+                        ? truncate(ticket.Report_Problem)
+                        : titleForAction(action);
+                    inProgress.push({
+                        title,
+                        description: buildTicketDescription(ticket),
+                        category: TICKET_CATEGORY_LABEL,
+                        ticketId: ticket.Ticket_ID,
+                        auditLogId: entry.Log_ID,
+                    });
+                    handledTicketIds.add(ticket.Ticket_ID);
+                    counts.Tickets += 1;
+                }
+            }
+            // Skip TICKET_CREATED/TICKET_UPDATED/TICKET_ARCHIVED — not in the spec.
+            continue;
+        }
+
+        if (logType === 'FORM' && action.startsWith('FORM_')) {
+            const task = {
+                title: titleForAction(action),
+                description: auditDescription(entry),
+                category: FORM_CATEGORY_LABEL,
+                auditLogId: entry.Log_ID,
+            };
+            if (COMPLETED_FORM_ACTIONS.has(action)) {
+                completed.push(task);
+            } else {
+                inProgress.push(task);
+            }
+            counts.Forms += 1;
+            continue;
+        }
+
+        if (logType === 'BORROWING' && BORROWING_ACTIONS.has(action)) {
+            const task = {
+                title: titleForAction(action),
+                description: auditDescription(entry),
+                category: BORROWING_CATEGORY_LABEL,
+                auditLogId: entry.Log_ID,
+            };
+            if (BORROWING_COMPLETED_ACTIONS.has(action)) {
+                completed.push(task);
+            } else {
+                inProgress.push(task);
+            }
+            counts.Borrowing += 1;
+            continue;
+        }
+
+        if (logType === 'INVENTORY' && INVENTORY_ACTIONS.has(action)) {
+            completed.push({
+                title: titleForAction(action),
+                description: auditDescription(entry),
+                category: INVENTORY_CATEGORY_LABEL,
+                auditLogId: entry.Log_ID,
+            });
+            counts.Inventory += 1;
+            continue;
+        }
+
+        // BOOKING actions are intentionally excluded from weekly reports.
+        // (Removed per spec: bookings are not part of the labtech weekly audit.)
+
+        // Unknown combinations: skip.
+    }
+
+    // Carry-forward: tickets currently open for this user that we haven't
+    // already emitted (no TICKET_RESOLVED/TICKET_ASSIGNED audit entry in window).
+    for (const ticket of openTickets) {
+        if (handledTicketIds.has(ticket.Ticket_ID)) continue;
+        const title = ticket.Report_Problem
+            ? truncate(ticket.Report_Problem)
+            : `Ticket #${ticket.Ticket_ID}`;
         const task = {
-            title: ticket.Report_Problem,
-            description: locationParts.join(' - '),
-            category: ticket.Category ? ticket.Category.charAt(0) + ticket.Category.slice(1).toLowerCase() : 'Tickets',
+            title,
+            description: buildTicketDescription(ticket),
+            category: TICKET_CATEGORY_LABEL,
             ticketId: ticket.Ticket_ID,
         };
-
-        if (ticket.Status === 'RESOLVED') {
-            completed.push(task);
-        } else if (ticket.Status === 'IN_PROGRESS') {
+        if (ticket.Status === 'IN_PROGRESS') {
             inProgress.push(task);
         } else {
             pending.push(task);
         }
+        counts.Tickets += 1;
     }
 
     res.json({
         success: true,
-        data: { completed, inProgress, pending },
+        data: { completed, inProgress, pending, counts },
     });
 };
 
@@ -822,6 +1022,33 @@ const exportWeeklyReportsCsv = async (req, res) => {
     ], reports);
 };
 
+// DELETE /api/reports/:id - Delete own DRAFT report
+const deleteReport = async (req, res) => {
+    const reportId = parseInt(req.params.id);
+    if (isNaN(reportId)) {
+        return res.status(400).json({ success: false, error: 'Invalid report ID' });
+    }
+
+    const report = await prisma.weekly_Report.findUnique({
+        where: { Report_ID: reportId }
+    });
+
+    if (!report) {
+        return res.status(404).json({ success: false, error: 'Report not found' });
+    }
+
+    if (report.User_ID !== req.user.User_ID) {
+        return res.status(403).json({ success: false, error: 'You do not have permission to delete this report' });
+    }
+
+    if (report.Status !== 'DRAFT') {
+        return res.status(400).json({ success: false, error: 'Only draft reports can be deleted' });
+    }
+
+    await prisma.weekly_Report.delete({ where: { Report_ID: reportId } });
+    res.json({ success: true, data: { Report_ID: reportId } });
+};
+
 module.exports = {
     createReport,
     getReports,
@@ -830,6 +1057,7 @@ module.exports = {
     updateReport,
     submitReport,
     reviewReport,
+    deleteReport,
     getDashboardReportSummary,
     exportDashboardSummaryCsv,
     exportInventoryCsv,

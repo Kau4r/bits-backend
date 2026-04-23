@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const { authenticateToken } = require('../../middleware/auth');
 const { authorize } = require('../../middleware/authorize');
 const { validate, validateId, ticketSchemas } = require('../../middleware/validate');
@@ -9,8 +10,21 @@ const {
   getTicketCount,
   getTickets,
   updateTicket,
-  getTicketById
+  getTicketById,
+  createPublicTicket,
 } = require('./tickets.controller');
+
+// Rate limiter for the public report endpoint: 10 requests per 15 minutes per IP.
+const publicTicketLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { success: false, error: 'Too many reports from your device — please wait a bit.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Public (unauthenticated) ticket submission — MUST be before authenticateToken routes.
+router.post('/public', publicTicketLimiter, validate(ticketSchemas.createPublic), asyncHandler(createPublicTicket));
 
 // Create Ticket
 router.post('/', authenticateToken, validate(ticketSchemas.create), asyncHandler(createTicket));

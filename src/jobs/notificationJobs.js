@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const prisma = require('../lib/prisma');
 const NotificationService = require('../services/notificationService');
+const AuditLogger = require('../utils/auditLogger');
 
 // Check for bookings ending soon and send notifications
 const checkUpcomingBookings = async () => {
@@ -204,17 +205,73 @@ const checkRoomCapacity = async () => {
   }
 };
 
+/**
+ * Find borrowings whose Return_Date has passed, flip them to OVERDUE,
+ * and send a one-time notification to the borrower.
+ */
+const checkOverdueBorrowings = async () => {
+  try {
+    console.log('Running checkOverdueBorrowings job');
+
+    const now = new Date();
+
+    const overdue = await prisma.borrow_Item.findMany({
+      where: {
+        Status: { in: ['BORROWED', 'APPROVED'] },
+        Return_Date: { lt: now, not: null },
+      },
+      include: {
+        Item: { select: { Item_Code: true, Item_Type: true, Brand: true } },
+        Borrower: { select: { User_ID: true, First_Name: true, Last_Name: true } },
+      },
+    });
+
+    for (const b of overdue) {
+      try {
+        // Flip status to OVERDUE
+        await prisma.borrow_Item.update({
+          where: { Borrow_Item_ID: b.Borrow_Item_ID },
+          data: { Status: 'OVERDUE' },
+        });
+
+        const itemLabel = b.Item
+          ? `${b.Item.Brand || ''} ${b.Item.Item_Code || b.Item.Item_Type || ''}`.trim()
+          : 'your borrowed item';
+
+        await AuditLogger.logBorrowing(
+          b.Borrower_ID,
+          'ITEM_OVERDUE',
+          `${itemLabel} is overdue. It was due on ${b.Return_Date.toLocaleString()}. Please return it as soon as possible.`,
+          null,
+          b.Borrower_ID,
+        );
+      } catch (error) {
+        console.error(`Error handling overdue borrowing ${b.Borrow_Item_ID}:`, error);
+      }
+    }
+
+    if (overdue.length > 0) {
+      console.log(`Marked ${overdue.length} borrowing(s) as OVERDUE and notified borrowers`);
+    }
+  } catch (error) {
+    console.error('Error in checkOverdueBorrowings job:', error);
+  }
+};
+
 // Initialize scheduled jobs
 const initScheduledJobs = () => {
   // Check for upcoming bookings every minute
   cron.schedule('* * * * *', checkUpcomingBookings);
-  
+
   // Check for pending forms every 6 hours
   cron.schedule('0 */6 * * *', checkPendingForms);
-  
+
   // Check room capacity every 5 minutes
   cron.schedule('*/5 * * * *', checkRoomCapacity);
-  
+
+  // Check for overdue borrowings every 5 minutes
+  cron.schedule('*/5 * * * *', checkOverdueBorrowings);
+
   console.log('Scheduled jobs initialized');
 };
 
@@ -223,4 +280,5 @@ module.exports = {
   checkUpcomingBookings,
   checkPendingForms,
   checkRoomCapacity,
+  checkOverdueBorrowings,
 };

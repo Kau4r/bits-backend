@@ -436,10 +436,122 @@ const getTicketById = async (req, res) => {
   }
 };
 
+// ==================== PUBLIC (UNAUTHENTICATED) ENDPOINT ====================
+
+const VALID_ISSUE_TYPES = ['HARDWARE', 'SOFTWARE', 'NETWORK', 'OTHER'];
+const VALID_EQUIPMENT = ['MONITOR', 'KEYBOARD', 'MOUSE', 'SYSTEM_UNIT', 'HEADSET', 'OTHER'];
+
+// Module-scope cache for the system public-reporter user ID.
+let _publicReporterUserId = null;
+
+/**
+ * Get or create the system user used as Reported_By_ID for public (unauthenticated) tickets.
+ * The user is created once and cached in module scope.
+ */
+const getOrCreatePublicReporterUser = async () => {
+  if (_publicReporterUserId !== null) return _publicReporterUserId;
+
+  const existing = await prisma.user.findFirst({
+    where: { Username: 'public_reporter' },
+    select: { User_ID: true },
+  });
+
+  if (existing) {
+    _publicReporterUserId = existing.User_ID;
+    return _publicReporterUserId;
+  }
+
+  const created = await prisma.user.create({
+    data: {
+      Username: 'public_reporter',
+      First_Name: 'Public',
+      Middle_Name: '',
+      Last_Name: 'Reporter',
+      Email: 'public_reporter@bits.internal',
+      Password: 'SYSTEM_ACCOUNT_NO_LOGIN',
+      User_Role: 'STUDENT',
+      Is_Active: false,
+    },
+    select: { User_ID: true },
+  });
+
+  _publicReporterUserId = created.User_ID;
+  return _publicReporterUserId;
+};
+
+// POST /api/tickets/public — no auth required
+const createPublicTicket = async (req, res) => {
+  try {
+    const { reporterIdentifier, roomId, issueType, equipment, description, pcNumber } = req.body;
+
+    // Validated by Joi middleware before reaching here — only extra semantic checks below.
+
+    // Anti-spam: reject all-whitespace or URL-containing descriptions.
+    const trimmedDesc = description.trim();
+    if (!trimmedDesc) {
+      return res.status(400).json({ success: false, error: 'Description cannot be empty' });
+    }
+    if (/https?:\/\//i.test(trimmedDesc)) {
+      return res.status(400).json({ success: false, error: 'Description cannot contain URLs' });
+    }
+
+    // Validate room exists.
+    const room = await prisma.room.findUnique({
+      where: { Room_ID: roomId },
+      select: { Room_ID: true, Name: true },
+    });
+    if (!room) {
+      return res.status(400).json({ success: false, error: 'Invalid roomId: Room does not exist' });
+    }
+
+    // Map issueType to TicketCategory enum (NETWORK has no direct mapping → OTHER).
+    const categoryMap = {
+      HARDWARE: 'HARDWARE',
+      SOFTWARE: 'SOFTWARE',
+      NETWORK: 'OTHER',
+      OTHER: 'OTHER',
+    };
+    const category = categoryMap[issueType];
+
+    // Build the Report_Problem string.
+    const pcPart = pcNumber ? ` [PC: ${pcNumber}]` : '';
+    const reportProblem = `[PUBLIC] [${issueType}] [${equipment}]${pcPart} — ${trimmedDesc} — reporter: ${reporterIdentifier}`;
+
+    // Get or create the system reporter user.
+    const reporterUserId = await getOrCreatePublicReporterUser();
+
+    const ticket = await prisma.ticket.create({
+      data: {
+        Reported_By_ID: reporterUserId,
+        Report_Problem: reportProblem,
+        Room_ID: roomId,
+        Location: room.Name,
+        Category: category,
+        Status: 'PENDING',
+      },
+      select: { Ticket_ID: true },
+    });
+
+    await AuditLogger.logTicket(
+      reporterUserId,
+      'TICKET_CREATED',
+      ticket.Ticket_ID,
+      `Public ticket: ${reportProblem.substring(0, 80)}`,
+      ['LAB_TECH', 'LAB_HEAD']
+    );
+
+    return res.status(201).json({ success: true, data: { Ticket_ID: ticket.Ticket_ID } });
+  } catch (error) {
+    console.error('Error creating public ticket:', error);
+    return res.status(500).json({ success: false, error: 'Failed to create ticket' });
+  }
+};
+
 module.exports = {
   createTicket,
   getTicketCount,
   getTickets,
   updateTicket,
-  getTicketById
+  getTicketById,
+  createPublicTicket,
 };

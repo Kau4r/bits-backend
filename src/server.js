@@ -46,9 +46,11 @@ const generalLimiter = rateLimit({
 });
 
 // Strict rate limiting for authentication endpoints
+// Dev environments get a much larger budget so typos during login aren't punished.
+const isProduction = process.env.NODE_ENV === 'production';
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 login attempts per window
+  max: isProduction ? 10 : 100, // 10 attempts in prod, 100 in dev
   message: {
     success: false,
     error: 'Too many login attempts, please try again in 15 minutes'
@@ -131,6 +133,7 @@ app.use('/upload', require('./modules/upload/upload.routes'));
 app.use('/dashboard', require('./modules/dashboard/dashboard.routes'));
 app.use('/heartbeat', require('./modules/heartbeat/heartbeat.routes'));
 app.use('/reports', require('./modules/reports/reports.routes'));
+app.use('/semesters', require('./modules/semesters/semesters.routes'));
 
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

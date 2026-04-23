@@ -13,7 +13,8 @@ const {
   updateItem,
   deleteItem,
   bulkCreateItems,
-  importInventoryCsv
+  importInventoryCsv,
+  checkInventoryItem,
 } = require('./inventory.controller');
 
 const upload = multer({
@@ -62,5 +63,8 @@ router.post('/bulk', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH
 
 // Import inventory items from CSV
 router.post('/import-csv', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), uploadCsv, asyncHandler(importInventoryCsv));
+
+// Mark an item as audited (present) for the current semester
+router.post('/:id/check', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(checkInventoryItem));
 
 module.exports = router;

@@ -400,9 +400,135 @@ const getPendingCount = async (req, res) => {
     res.json({ success: true, data: { count } });
 };
 
+// POST /api/borrowing/walkin - Lab Tech creates a walk-in borrowing directly (status BORROWED)
+// Skips the PENDING/APPROVED dance used for faculty requests.
+const createWalkinBorrowing = async (req, res) => {
+    const { borrowerIdentifier, itemId, returnDate, purpose } = req.body;
+    const approver = req.user;
+
+    if (!borrowerIdentifier || !itemId) {
+        return res.status(400).json({
+            success: false,
+            error: 'borrowerIdentifier and itemId are required',
+        });
+    }
+
+    // Resolve the borrower: accept numeric User_ID, username, or email
+    const numericId = Number.parseInt(String(borrowerIdentifier), 10);
+    const identifierStr = String(borrowerIdentifier).trim();
+    let borrower = null;
+
+    if (!Number.isNaN(numericId) && String(numericId) === identifierStr) {
+        borrower = await prisma.user.findUnique({
+            where: { User_ID: numericId },
+        });
+    }
+
+    if (!borrower) {
+        borrower = await prisma.user.findFirst({
+            where: {
+                OR: [
+                    { Username: identifierStr },
+                    { Email: identifierStr },
+                ],
+            },
+        });
+    }
+
+    // Walk-in flow is lenient: if no user matches, we still record the borrowing
+    // against the approver (labtech) with the raw identifier stored in Purpose so
+    // unregistered borrowers can still be tracked. The schema requires a valid
+    // Borrower_ID FK, hence the labtech fallback.
+    const borrowerIsRegistered = !!borrower;
+
+    if (borrower && borrower.Is_Active === false) {
+        return res.status(400).json({
+            success: false,
+            error: 'That user is deactivated and cannot borrow items',
+        });
+    }
+
+    // Fetch and validate the item
+    const item = await prisma.item.findUnique({
+        where: { Item_ID: parseInt(itemId, 10) },
+    });
+
+    if (!item) {
+        return res.status(404).json({ success: false, error: 'Item not found' });
+    }
+
+    if (item.Status !== 'AVAILABLE') {
+        return res.status(400).json({
+            success: false,
+            error: `Item is not available (current status: ${item.Status})`,
+        });
+    }
+
+    // Default return 1 hour out if not provided
+    const now = new Date();
+    const returnAt = returnDate ? new Date(returnDate) : new Date(now.getTime() + 60 * 60 * 1000);
+
+    if (Number.isNaN(returnAt.getTime()) || returnAt.getTime() <= now.getTime()) {
+        return res.status(400).json({
+            success: false,
+            error: 'returnDate must be a valid future date/time',
+        });
+    }
+
+    // When the borrower isn't in the system, record the raw ID in Purpose so the
+    // labtech still has a paper trail.
+    const purposeWithLabel = borrowerIsRegistered
+        ? (purpose || 'Walk-in borrow')
+        : `[Walk-in ID: ${identifierStr}]${purpose ? ` ${purpose}` : ''}`;
+
+    const resolvedBorrowerId = borrower ? borrower.User_ID : approver.User_ID;
+
+    const borrowing = await prisma.borrow_Item.create({
+        data: {
+            Borrower_ID: resolvedBorrowerId,
+            Borrowee_ID: approver.User_ID,
+            Item_ID: item.Item_ID,
+            Requested_Item_Type: item.Item_Type,
+            Purpose: purposeWithLabel,
+            Borrow_Date: now,
+            Return_Date: returnAt,
+            Status: 'BORROWED',
+        },
+        include: {
+            Item: true,
+            Borrower: {
+                select: { User_ID: true, First_Name: true, Last_Name: true, Email: true, User_Role: true },
+            },
+        },
+    });
+
+    // Flip item status to BORROWED
+    await prisma.item.update({
+        where: { Item_ID: item.Item_ID },
+        data: { Status: 'BORROWED', User_ID: resolvedBorrowerId },
+    });
+
+    const itemLabel = `${item.Brand || ''} ${item.Item_Code || item.Item_Type || ''}`.trim();
+    const borrowerLabel = borrower
+        ? `${borrower.First_Name} ${borrower.Last_Name}`
+        : `walk-in ID ${identifierStr}`;
+
+    // Audit + notify the borrower when registered; otherwise only log.
+    await AuditLogger.logBorrowing(
+        approver.User_ID,
+        'ITEM_BORROWED',
+        `${approver.First_Name} ${approver.Last_Name} issued ${itemLabel} to ${borrowerLabel}. Return by ${returnAt.toLocaleString()}.`,
+        null,
+        borrowerIsRegistered ? borrower.User_ID : null,
+    );
+
+    res.status(201).json({ success: true, data: { message: 'Walk-in borrowing recorded', borrowing } });
+};
+
 module.exports = {
     getBorrowings,
     createBorrowing,
+    createWalkinBorrowing,
     approveBorrowing,
     rejectBorrowing,
     returnBorrowing,

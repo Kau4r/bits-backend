@@ -6,6 +6,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const {
     getBorrowings,
     createBorrowing,
+    createWalkinBorrowing,
     approveBorrowing,
     rejectBorrowing,
     returnBorrowing,
@@ -17,6 +18,13 @@ router.get('/', authenticateToken, asyncHandler(getBorrowings));
 
 // Request to borrow items
 router.post('/', authenticateToken, asyncHandler(createBorrowing));
+
+// Lab Tech walk-in: create a BORROWED record directly
+router.post('/walkin',
+    authenticateToken,
+    authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    asyncHandler(createWalkinBorrowing)
+);
 
 // Approve a borrow request
 router.patch('/:id/approve',

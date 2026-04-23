@@ -13,7 +13,16 @@ const VALID_FORM_DEPARTMENTS = [
 
 const FORM_DEPARTMENT_WORKFLOWS = {
     WRF: ['REQUESTOR', 'DEPARTMENT_HEAD', 'PPFO', 'COMPLETED'],
-    RIS: ['REQUESTOR', 'DEPARTMENT_HEAD', 'DEAN_OFFICE', 'TNS', 'PURCHASING', 'COMPLETED']
+    // Legacy RIS kept for any pre-migration rows; new forms should use RIS_E or RIS_NE.
+    RIS: ['REQUESTOR', 'DEPARTMENT_HEAD', 'DEAN_OFFICE', 'TNS', 'PURCHASING', 'COMPLETED'],
+    RIS_E: ['REQUESTOR', 'DEPARTMENT_HEAD', 'DEAN_OFFICE', 'TNS', 'PURCHASING', 'COMPLETED'],
+    RIS_NE: ['REQUESTOR', 'DEPARTMENT_HEAD', 'DEAN_OFFICE', 'PPFO', 'PURCHASING', 'COMPLETED']
+};
+
+const VALID_FORM_TYPES = ['WRF', 'RIS', 'RIS_E', 'RIS_NE'];
+const isRisFormType = (formType) => {
+    const t = String(formType || '').toUpperCase();
+    return t === 'RIS' || t === 'RIS_E' || t === 'RIS_NE';
 };
 
 const VALID_FORM_DOCUMENT_TYPES = [
@@ -209,14 +218,29 @@ const hasVisitedDepartment = (form, department) => {
     return visitedDepartments.has(department);
 };
 
+// Steps that do NOT require a fresh attachment before approval/transfer.
+// Mirrors the frontend `stepRequiresAttachment` helper in src/types/formtypes.ts.
+// REQUESTOR is included because the initial submission at this step is optional
+// when the department is one of the "early" signatory stages.
+const STEPS_WITHOUT_ATTACHMENT_REQUIREMENT = new Set([
+    'REQUESTOR',
+    'DEPARTMENT_HEAD',
+    'DEAN_OFFICE',
+    'COMPLETED'
+]);
+
+const stepRequiresAttachment = (department) => {
+    const dept = normalizeDepartment(department);
+    return !STEPS_WITHOUT_ATTACHMENT_REQUIREMENT.has(dept);
+};
+
 const hasCurrentStepAttachment = (form) => {
     const currentDept = normalizeDepartment(form?.Department);
 
-    // Requestor step: any attachment for this step counts (including the INITIAL upload).
-    if (currentDept === 'REQUESTOR') {
-        return (form.Attachments || []).some(a =>
-            normalizeDepartment(a.Department) === currentDept
-        );
+    // Early stages (REQUESTOR, DEPARTMENT_HEAD, DEAN_OFFICE) do not require an
+    // attachment to approve or transfer — they are signatory-only steps.
+    if (!stepRequiresAttachment(currentDept)) {
+        return true;
     }
 
     // Other steps: find the most recent arrival at this step (TRANSFERRED or RETURNED history entry).
@@ -264,7 +288,7 @@ const getRisCompletionState = (form) => {
     const isReceived = form.Is_Received === true;
 
     return {
-        applies: String(form.Form_Type || '').toUpperCase() === 'RIS',
+        applies: isRisFormType(form.Form_Type),
         requiredDocumentTypes: RIS_REQUIRED_COMPLETION_DOCUMENT_TYPES,
         missingDocumentTypes,
         missingDocumentLabels: missingDocumentTypes.map(type => DOCUMENT_TYPE_LABELS[type] || type),
@@ -421,8 +445,8 @@ const createForm = async (req, res) => {
         }
 
         // Validate form type
-        if (!['WRF', 'RIS'].includes(formTypeEnum)) {
-            return res.status(400).json({ success: false, error: 'Invalid form type. Must be WRF or RIS' });
+        if (!VALID_FORM_TYPES.includes(formTypeEnum)) {
+            return res.status(400).json({ success: false, error: `Invalid form type. Must be one of: ${VALID_FORM_TYPES.join(', ')}` });
         }
 
         // Convert and validate department before Prisma sees it, so invalid enum values return 400.
@@ -774,7 +798,7 @@ const transferForm = async (req, res) => {
             });
         }
 
-        if (String(existingForm.Form_Type || '').toUpperCase() === 'RIS' && departmentEnum === 'COMPLETED') {
+        if (isRisFormType(existingForm.Form_Type) && departmentEnum === 'COMPLETED') {
             const completionState = getRisCompletionState(existingForm);
             if (!completionState.canComplete) {
                 return res.status(400).json(buildRisCompletionError(existingForm));
@@ -837,7 +861,7 @@ const setFormReceived = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Form not found' });
         }
 
-        if (String(existingForm.Form_Type || '').toUpperCase() !== 'RIS') {
+        if (!isRisFormType(existingForm.Form_Type)) {
             return res.status(400).json({ success: false, error: 'Received indicator is only required for RIS forms' });
         }
 
