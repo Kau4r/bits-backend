@@ -92,11 +92,13 @@ const getDashboardMetrics = async (req, res) => {
                 countSafely(prisma.room, { where: { Status: 'MAINTENANCE' } })
             ]);
 
-            // 4. Form Stats
-            const [pendingForms, approvedForms, inReviewForms, submittedReports] = await Promise.all([
-                countSafely(prisma.form, { where: { Status: 'PENDING' } }),
-                countSafely(prisma.form, { where: { Status: 'APPROVED' } }),
-                countSafely(prisma.form, { where: { Status: 'IN_REVIEW' } }),
+            // 4. Form Stats — split Completed (Department=COMPLETED) from Approved (in-flight)
+            const [pendingForms, approvedForms, inReviewForms, completedForms, cancelledForms, submittedReports] = await Promise.all([
+                countSafely(prisma.form, { where: { Status: 'PENDING', Department: { not: 'COMPLETED' } } }),
+                countSafely(prisma.form, { where: { Status: 'APPROVED', Department: { not: 'COMPLETED' } } }),
+                countSafely(prisma.form, { where: { Status: 'IN_REVIEW', Department: { not: 'COMPLETED' } } }),
+                countSafely(prisma.form, { where: { Department: 'COMPLETED' } }),
+                countSafely(prisma.form, { where: { Status: 'CANCELLED' } }),
                 countSafely(prisma.weekly_Report, { where: { Status: 'SUBMITTED' } })
             ]);
 
@@ -122,6 +124,8 @@ const getDashboardMetrics = async (req, res) => {
                 pendingForms,
                 approvedForms,
                 inReviewForms,
+                completedForms,
+                cancelledForms,
                 submittedReports
             };
 
@@ -141,6 +145,13 @@ const getDashboardMetrics = async (req, res) => {
                     pending: pendingTickets,
                     completed: completedTickets,
                     unassigned: unassignedTickets
+                },
+                forms: {
+                    pending: pendingForms,
+                    inReview: inReviewForms,
+                    approved: approvedForms,
+                    completed: completedForms,
+                    cancelled: cancelledForms
                 },
                 inventory: {
                     total: totalItems,
@@ -205,23 +216,38 @@ const getDashboardMetrics = async (req, res) => {
                 countSafely(prisma.item, { where: { Status: 'DISPOSED' } })
             ]);
 
-            // 4. Pending Forms (Laboratory)
-            const [pendingForms, inReviewForms, approvedForms, draftReports, submittedReports] = await Promise.all([
+            // 4. Pending Forms (Laboratory) — Completed (Department=COMPLETED) is split out from Approved.
+            const [pendingForms, inReviewForms, approvedForms, completedForms, cancelledForms, draftReports, submittedReports] = await Promise.all([
                 countSafely(prisma.form, {
                     where: {
                         Status: 'PENDING',
+                        Department: { not: 'COMPLETED' },
                         Is_Archived: false
                     }
                 }),
                 countSafely(prisma.form, {
                     where: {
                         Status: 'IN_REVIEW',
+                        Department: { not: 'COMPLETED' },
                         Is_Archived: false
                     }
                 }),
                 countSafely(prisma.form, {
                     where: {
                         Status: 'APPROVED',
+                        Department: { not: 'COMPLETED' },
+                        Is_Archived: false
+                    }
+                }),
+                countSafely(prisma.form, {
+                    where: {
+                        Department: 'COMPLETED',
+                        Is_Archived: false
+                    }
+                }),
+                countSafely(prisma.form, {
+                    where: {
+                        Status: 'CANCELLED',
                         Is_Archived: false
                     }
                 }),
@@ -245,6 +271,8 @@ const getDashboardMetrics = async (req, res) => {
                 pendingForms,
                 inReviewForms,
                 approvedForms,
+                completedForms,
+                cancelledForms,
                 totalItems,
                 defectiveItems,
                 availableItems,
@@ -276,7 +304,9 @@ const getDashboardMetrics = async (req, res) => {
                 forms: {
                     pending: pendingForms,
                     inReview: inReviewForms,
-                    approved: approvedForms
+                    approved: approvedForms,
+                    completed: completedForms,
+                    cancelled: cancelledForms
                 },
                 inventory: {
                     total: totalItems,

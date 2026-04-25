@@ -7,31 +7,14 @@ const {
   parseImportedBoolean,
 } = require('../../utils/csvImport');
 const { readXlsxWorkbook } = require('../../utils/xlsxReader');
+const {
+  normalizeItemType,
+  normalizeBrand,
+  normalizeSerial,
+  buildSyntheticSerial,
+} = require('../../utils/inventoryNormalize');
 
 const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED', 'DISPOSED'];
-
-const normalizeItemType = (value = 'OTHER') => {
-  if (typeof value !== 'string') return null;
-
-  const normalized = value.trim().replace(/[\s-]+/g, '_').toUpperCase();
-  if (['GENERAL', '_', '__'].includes(normalized)) {
-    return 'OTHER';
-  }
-  if (normalized === 'SYSTEM_UNIT') {
-    return 'MINI_PC';
-  }
-  if (!normalized || normalized.length > 50 || !/^[A-Z0-9_]+$/.test(normalized)) {
-    return null;
-  }
-
-  return normalized;
-};
-
-const normalizeBrand = (value) => {
-  if (value === undefined || value === null) return null;
-  const normalized = String(value).trim().toUpperCase();
-  return normalized || null;
-};
 
 const parseRoomId = (value) => {
   if (value === undefined || value === null || value === '') return { value: null };
@@ -67,7 +50,7 @@ const buildImportedItem = (headers, row, defaultRoomId, userId) => {
       Item_Code: itemCode.trim(),
       Item_Type: normalizedItemType,
       Brand: normalizeBrand(getRowValue(headers, row, ['Brand', 'Model', 'Description'])),
-      Serial_Number: getRowValue(headers, row, ['Serial_Number', 'Serial Number', 'Serial', 'Asset Serial']) || null,
+      Serial_Number: normalizeSerial(getRowValue(headers, row, ['Serial_Number', 'Serial Number', 'Serial', 'Asset Serial'])),
       Status: status,
       Room_ID: roomIdResult.value,
       IsBorrowable: parseImportedBoolean(getRowValue(headers, row, ['IsBorrowable', 'Borrowable', 'Can Borrow']), false),
@@ -243,7 +226,7 @@ const createItem = async (req, res) => {
       Item_Code,
       Item_Type: normalizedItemType,
       Brand: normalizeBrand(Brand),
-      Serial_Number: Serial_Number || null,
+      Serial_Number: normalizeSerial(Serial_Number),
       Status,
       Created_At: currentTime,
       Updated_At: currentTime
@@ -306,7 +289,7 @@ const updateItem = async (req, res) => {
     }
 
     if (Brand !== undefined) updateData.Brand = normalizeBrand(Brand);
-    if (Serial_Number !== undefined) updateData.Serial_Number = Serial_Number || null;
+    if (Serial_Number !== undefined) updateData.Serial_Number = normalizeSerial(Serial_Number);
     if (Status !== undefined) {
       if (!VALID_ITEM_STATUSES.includes(Status)) {
         return res.status(400).json({ success: false, error: 'Invalid status' });
@@ -712,6 +695,35 @@ const importInventoryCsv = async (req, res) => {
     }
 
     const rowsToCreate = validCandidates.filter(row => row.status === 'valid');
+
+    // Auto-assign INT-{TYPE}-NNNN synthetic serials for items imported without
+    // a real serial. Group missing-serial rows by type, look up the highest
+    // existing sequence per type, then number forward.
+    const missingByType = new Map();
+    for (const row of rowsToCreate) {
+      if (!row.item.Serial_Number) {
+        const list = missingByType.get(row.item.Item_Type) || [];
+        list.push(row);
+        missingByType.set(row.item.Item_Type, list);
+      }
+    }
+
+    for (const [itemType, rows] of missingByType) {
+      const prefix = `INT-${itemType}-`;
+      const existing = await prisma.item.findMany({
+        where: { Item_Type: itemType, Serial_Number: { startsWith: prefix } },
+        select: { Serial_Number: true },
+      });
+      const maxSeq = existing.reduce((max, item) => {
+        const match = item.Serial_Number?.match(/(\d+)$/);
+        const n = match ? parseInt(match[1], 10) : 0;
+        return n > max ? n : max;
+      }, 0);
+      rows.forEach((row, idx) => {
+        row.item.Serial_Number = buildSyntheticSerial(itemType, maxSeq + idx + 1);
+      });
+    }
+
     const createdItems = rowsToCreate.length > 0
       ? await prisma.$transaction(rowsToCreate.map(row => prisma.item.create({ data: row.item })))
       : [];

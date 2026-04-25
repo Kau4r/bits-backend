@@ -309,6 +309,33 @@ class NotificationService {
     }
   }
 
+  // Mark a notification back as unread for a user. If the user never had a
+  // NotificationRead record, create one with Read_At = null so we can still
+  // track future archive state if needed.
+  static async markAsUnread(notificationId, userId) {
+    try {
+      return await prisma.NotificationRead.upsert({
+        where: {
+          User_ID_Log_ID: {
+            User_ID: userId,
+            Log_ID: notificationId
+          }
+        },
+        update: {
+          Read_At: null
+        },
+        create: {
+          User_ID: userId,
+          Log_ID: notificationId,
+          Read_At: null
+        }
+      });
+    } catch (error) {
+      console.error('Error marking notification as unread:', error);
+      throw error;
+    }
+  }
+
   static async archive(notificationId, userId) {
     const now = new Date();
     return await prisma.NotificationRead.upsert({

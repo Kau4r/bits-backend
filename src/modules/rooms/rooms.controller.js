@@ -160,7 +160,7 @@ const createRoom = async (req, res) => {
 
   const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB', 'OTHER'];
   const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
-  const { Name, Capacity, Room_Type, Lab_Type } = req.body;
+  const { Name, Capacity, Room_Type, Lab_Type, Is_Bookable } = req.body;
 
   const errors = [];
   if (!Name?.trim()) errors.push('Name is required');
@@ -194,8 +194,15 @@ const createRoom = async (req, res) => {
 
     const parsedCapacity = parseInt(Capacity, 10);
     const newRoom = await prisma.Room.create({
-      data: { Name: Name.trim(), Capacity: parsedCapacity, Room_Type: Room_Type || 'LECTURE', Lab_Type: Room_Type === 'LAB' ? Lab_Type : null, Status: 'AVAILABLE' },
-      select: { Room_ID: true, Name: true, Capacity: true, Room_Type: true, Lab_Type: true, Status: true, Created_At: true, Updated_At: true }
+      data: {
+        Name: Name.trim(),
+        Capacity: parsedCapacity,
+        Room_Type: Room_Type || 'LECTURE',
+        Lab_Type: Room_Type === 'LAB' ? Lab_Type : null,
+        Status: 'AVAILABLE',
+        ...(Is_Bookable !== undefined ? { Is_Bookable: Boolean(Is_Bookable) } : {}),
+      },
+      select: { Room_ID: true, Name: true, Capacity: true, Room_Type: true, Lab_Type: true, Status: true, Is_Bookable: true, Created_At: true, Updated_At: true }
     });
 
     // Audit Log
@@ -220,7 +227,7 @@ const updateRoom = async (req, res) => {
 
   const VALID_ROOM_TYPES = ['CONSULTATION', 'CONFERENCE', 'LECTURE', 'LAB', 'OTHER'];
   const VALID_LAB_TYPES = ['WINDOWS', 'MAC'];
-  const { Name, Capacity, Room_Type, Status, Lab_Type } = req.body;
+  const { Name, Capacity, Room_Type, Status, Lab_Type, Is_Bookable } = req.body;
 
   const updateData = {};
   const errors = [];
@@ -234,6 +241,7 @@ const updateRoom = async (req, res) => {
     else updateData.Room_Type = Room_Type;
   }
   if (Status !== undefined) updateData.Status = Status;
+  if (Is_Bookable !== undefined) updateData.Is_Bookable = Boolean(Is_Bookable);
 
   // Handle Lab_Type
   if (Lab_Type !== undefined) {

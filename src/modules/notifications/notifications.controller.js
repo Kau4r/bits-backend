@@ -71,6 +71,24 @@ const markAsRead = async (req, res) => {
   }
 };
 
+// Mark notification as unread (flip back from read → new for follow-up)
+const markAsUnread = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await NotificationService.markAsUnread(parseInt(id), req.user.User_ID);
+    res.json({
+      success: true,
+      data: { message: 'Notification marked as unread' },
+    });
+  } catch (error) {
+    console.error('Error marking notification as unread:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to mark notification as unread',
+    });
+  }
+};
+
 // Mark all notifications as read
 const markAllAsRead = async (req, res) => {
   try {
@@ -172,6 +190,7 @@ module.exports = {
   getNotifications,
   getUnreadCount,
   markAsRead,
+  markAsUnread,
   markAllAsRead,
   archiveNotification,
   restoreNotification,

@@ -54,6 +54,15 @@ const createBooking = async (req, res) => {
         const requestedStart = new Date(Start_Time);
         const requestedEnd = new Date(End_Time);
 
+        // Block bookings whose start time is already in the past.
+        if (Number.isNaN(requestedStart.getTime()) || requestedStart.getTime() <= Date.now()) {
+            return res.status(400).json({
+                success: false,
+                error: 'Bookings cannot start in the past',
+                details: 'Please pick a start time that is later than the current time.'
+            });
+        }
+
         // Block bookings on Sundays
         if (requestedStart.getDay() === 0) {
             return res.status(400).json({
@@ -74,6 +83,16 @@ const createBooking = async (req, res) => {
 
         if (!room) {
             return res.status(404).json({ success: false, error: 'Room not found' });
+        }
+
+        // Reject rooms that an admin has flagged as non-bookable
+        // (e.g. storage, control room, dept office, faculty office, green room).
+        if (room.Is_Bookable === false) {
+            return res.status(403).json({
+                success: false,
+                error: 'This room is not available for booking',
+                details: `${room.Name} has been marked as non-bookable by an administrator.`
+            });
         }
 
         const requestingUser = await prisma.user.findUnique({

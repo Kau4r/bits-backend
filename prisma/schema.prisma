@@ -180,6 +180,10 @@ model Room {
   Lab_Type         LabType?
   Capacity         Int
   Status           RoomStatus    @default(AVAILABLE)
+  // Whether this room appears in the booking flow. Storage rooms,
+  // control rooms, department office, faculty office, green room etc
+  // should be flipped to false via the sysad UI.
+  Is_Bookable      Boolean       @default(true)
   Current_Use_Type ScheduleType?
   Opened_By        Int?
   Opened_At        DateTime?

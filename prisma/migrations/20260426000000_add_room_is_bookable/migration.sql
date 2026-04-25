@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Room" ADD COLUMN "Is_Bookable" BOOLEAN NOT NULL DEFAULT true;

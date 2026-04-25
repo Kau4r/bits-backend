@@ -207,8 +207,13 @@ const approveBorrowing = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Assigned item not found' });
         }
 
-        // Verify item matches requested type
-        if (borrowing.Requested_Item_Type && item.Item_Type !== borrowing.Requested_Item_Type) {
+        // Verify item matches requested type. Compare case-insensitively to match
+        // the frontend's normalized filtering (resolveItemType in src/lib/utils.ts).
+        // If Requested_Item_Type is blank/null, skip the check — the lab tech is
+        // free-assigning an item to a request that didn't specify a type.
+        const normalize = (s) => (s || '').toString().trim().toUpperCase();
+        const requested = normalize(borrowing.Requested_Item_Type);
+        if (requested && requested !== normalize(item.Item_Type)) {
             return res.status(400).json({
                 success: false, error: `Item type mismatch. Requested: ${borrowing.Requested_Item_Type}, Provided: ${item.Item_Type}`
             });

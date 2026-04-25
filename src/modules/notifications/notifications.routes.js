@@ -6,6 +6,7 @@ const {
   getNotifications,
   getUnreadCount,
   markAsRead,
+  markAsUnread,
   markAllAsRead,
   archiveNotification,
   restoreNotification,
@@ -20,6 +21,9 @@ router.get('/unread-count', authenticateToken, asyncHandler(getUnreadCount));
 
 // Mark notification as read
 router.patch('/:id/read', authenticateToken, asyncHandler(markAsRead));
+
+// Mark notification as unread (flip back for follow-up)
+router.patch('/:id/unread', authenticateToken, asyncHandler(markAsUnread));
 
 // Mark all notifications as read
 router.post('/mark-all-read', authenticateToken, asyncHandler(markAllAsRead));
