@@ -188,6 +188,204 @@ const updateUser = async (req, res) => {
   }
 };
 
+// ============================================================================
+// Role-change failsafe endpoints
+//
+// Two-step flow: GET /users/:id/role-change-impact returns a list of in-flight
+// items that depend on the user's current role. Sysad reviews this, then
+// PATCH /users/:id/role applies the change in a transaction (audit logged) and
+// invalidates the user's existing JWTs by bumping Token_Valid_After.
+// ============================================================================
+
+const VALID_ROLES_ENUM = ['ADMIN', 'LAB_HEAD', 'LAB_TECH', 'FACULTY', 'SECRETARY', 'STUDENT'];
+
+const collectRoleChangeImpact = async (userId) => {
+  const [
+    activeAssignedTickets,
+    activeBorrowingsAsBorrower,
+    pendingFormsAsApprover,
+    pendingBookingsAsApprover,
+    futureBookingsAsRequester,
+  ] = await Promise.all([
+    prisma.ticket.findMany({
+      where: { Technician_ID: userId, Status: { not: 'RESOLVED' }, Archived: false },
+      select: { Ticket_ID: true, Status: true, Priority: true, Report_Problem: true, Created_At: true },
+    }),
+    prisma.borrow_Item.findMany({
+      where: {
+        Borrower_ID: userId,
+        Status: { in: ['BORROWED', 'OVERDUE', 'APPROVED'] },
+      },
+      select: { Borrow_Item_ID: true, Status: true, Return_Date: true, Item: { select: { Item_Code: true, Item_Type: true } } },
+    }),
+    prisma.form.findMany({
+      where: { Approver_ID: userId, Status: { in: ['PENDING', 'IN_REVIEW'] }, Is_Archived: false },
+      select: { Form_ID: true, Form_Code: true, Status: true, Department: true },
+    }),
+    prisma.booked_Room.findMany({
+      where: { Approved_By: userId, Status: 'PENDING' },
+      select: { Booked_Room_ID: true, Status: true, Start_Time: true, Room: { select: { Name: true } } },
+    }).catch(() => []),
+    prisma.booked_Room.findMany({
+      where: { User_ID: userId, Start_Time: { gt: new Date() }, Status: { in: ['APPROVED', 'PENDING'] } },
+      select: { Booked_Room_ID: true, Status: true, Start_Time: true, Room: { select: { Name: true } } },
+    }),
+  ]);
+
+  // Anything in this list is "blocking" — sysad must resolve before the change
+  // is allowed unless force=true. The frontend surfaces these prominently.
+  const blockers = [];
+  if (activeBorrowingsAsBorrower.length > 0) {
+    blockers.push({
+      kind: 'BORROWED_ITEMS',
+      message: `User has ${activeBorrowingsAsBorrower.length} unreturned item(s).`,
+    });
+  }
+  if (pendingFormsAsApprover.length > 0) {
+    blockers.push({
+      kind: 'PENDING_FORM_APPROVALS',
+      message: `User is the approver on ${pendingFormsAsApprover.length} in-flight form(s).`,
+    });
+  }
+
+  return {
+    activeAssignedTickets,
+    activeBorrowingsAsBorrower,
+    pendingFormsAsApprover,
+    pendingBookingsAsApprover,
+    futureBookingsAsRequester,
+    counts: {
+      tickets: activeAssignedTickets.length,
+      borrowings: activeBorrowingsAsBorrower.length,
+      formsAsApprover: pendingFormsAsApprover.length,
+      pendingBookingsAsApprover: pendingBookingsAsApprover.length,
+      futureBookingsAsRequester: futureBookingsAsRequester.length,
+    },
+    blockers,
+  };
+};
+
+// GET /users/:id/role-change-impact
+const getRoleChangeImpact = async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ success: false, error: 'Invalid user ID' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { User_ID: userId },
+      select: { User_ID: true, First_Name: true, Last_Name: true, User_Role: true, Is_Active: true },
+    });
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const impact = await collectRoleChangeImpact(userId);
+    res.json({ success: true, data: { user, impact } });
+  } catch (error) {
+    console.error('[Users] role-change-impact error:', error);
+    res.status(500).json({ success: false, error: 'Failed to compute role change impact' });
+  }
+};
+
+// PATCH /users/:id/role
+//   body: { newRole, reason, force? }
+const changeUserRole = async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    const { newRole, reason, force } = req.body || {};
+
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ success: false, error: 'Invalid user ID' });
+    }
+    if (!newRole || !VALID_ROLES_ENUM.includes(newRole)) {
+      return res.status(400).json({
+        success: false,
+        error: `newRole must be one of: ${VALID_ROLES_ENUM.join(', ')}`,
+      });
+    }
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+      return res.status(400).json({ success: false, error: 'Reason is required (min 5 chars)' });
+    }
+    if (req.user.User_ID === userId) {
+      return res.status(400).json({ success: false, error: 'You cannot change your own role' });
+    }
+
+    const target = await prisma.user.findUnique({ where: { User_ID: userId } });
+    if (!target) return res.status(404).json({ success: false, error: 'User not found' });
+
+    if (target.User_Role === newRole) {
+      return res.status(400).json({ success: false, error: 'User already has that role' });
+    }
+
+    // Failsafe: refuse if user has unresolved blockers, unless explicitly forced.
+    const impact = await collectRoleChangeImpact(userId);
+    if (impact.blockers.length > 0 && !force) {
+      return res.status(409).json({
+        success: false,
+        error: 'Role change blocked by in-flight items',
+        blockers: impact.blockers,
+        impact,
+        details: 'Resolve the blocking items, or pass force=true to override.',
+      });
+    }
+
+    const oldRole = target.User_Role;
+    const tokenValidAfter = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { User_ID: userId },
+        data: {
+          User_Role: newRole,
+          Token_Valid_After: tokenValidAfter,
+          Updated_At: tokenValidAfter,
+        },
+      });
+      // If demoting away from a role that holds tickets, unassign the user
+      // from active tickets so they can be reassigned.
+      const technicianRoles = new Set(['LAB_TECH', 'LAB_HEAD', 'ADMIN']);
+      if (technicianRoles.has(oldRole) && !technicianRoles.has(newRole)) {
+        await tx.ticket.updateMany({
+          where: { Technician_ID: userId, Status: { not: 'RESOLVED' } },
+          data: { Technician_ID: null },
+        });
+      }
+
+      await tx.audit_Log.create({
+        data: {
+          User_ID: req.user.User_ID,
+          Action: 'USER_ROLE_CHANGED',
+          Details: `${req.user.First_Name} ${req.user.Last_Name} changed ${target.First_Name} ${target.Last_Name}'s role from ${oldRole} to ${newRole}. Reason: ${reason.trim()}`,
+          Notification_Data: {
+            targetUserId: userId,
+            oldRole,
+            newRole,
+            reason: reason.trim(),
+            forced: !!force,
+            blockerCount: impact.blockers.length,
+          },
+        },
+      });
+    });
+
+    res.json({
+      success: true,
+      data: {
+        message: 'Role updated. The affected user will be required to log in again.',
+        userId,
+        oldRole,
+        newRole,
+        tokenValidAfter,
+        impactSnapshot: impact.counts,
+      },
+    });
+  } catch (error) {
+    console.error('[Users] changeUserRole error:', error);
+    res.status(500).json({ success: false, error: 'Failed to change user role' });
+  }
+};
+
 // Soft delete user (mark as inactive)
 const deleteUser = async (req, res) => {
   try {
@@ -350,6 +548,8 @@ module.exports = {
   getUsers,
   createUser,
   updateUser,
+  getRoleChangeImpact,
+  changeUserRole,
   deleteUser,
   getUserHistory,
   bulkCreateUsers

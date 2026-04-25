@@ -61,6 +61,19 @@ const authenticateToken = (req, res, next) => {
         });
       }
 
+      // Reject tokens issued *before* Token_Valid_After. This is bumped to
+      // now() whenever a sysad changes the user's role, so the old role's
+      // privileges die immediately instead of lingering until token expiry.
+      if (dbUser.Token_Valid_After && decoded.iat) {
+        const issuedAtMs = decoded.iat * 1000;
+        if (issuedAtMs < new Date(dbUser.Token_Valid_After).getTime()) {
+          return res.status(401).json({
+            success: false,
+            error: 'Session ended. Your role was changed — please log in again.'
+          });
+        }
+      }
+
       // Attach user to request object (excluding password)
       const { Password, ...safeUser } = dbUser;
       req.user = safeUser;

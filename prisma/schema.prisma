@@ -20,6 +20,10 @@ model User {
   Updated_At                  DateTime            @updatedAt
   Is_Active                   Boolean             @default(true)
   User_Role                   UserRole            @default(STUDENT)
+  // Bumped whenever a sysad changes this user's role. Any JWT issued *before*
+  // this timestamp is rejected by authenticateToken so the old role's
+  // privileges die immediately instead of waiting for token expiry.
+  Token_Valid_After           DateTime?
   Audit_Log                   Audit_Log[]
   ApprovedBookings            Booked_Room[]       @relation("ScheduleApprover")
   Booked_Room                 Booked_Room[]
