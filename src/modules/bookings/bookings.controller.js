@@ -212,7 +212,9 @@ const createBooking = async (req, res) => {
         }
 
         const isLabHead = normalizeRole(requestingUser.User_Role) === 'LAB_HEAD';
-        const isAutoApproved = secretaryPriority || isLabHead;
+        // Conference and consultation rooms must be reviewed by the secretary, even when the requester is a lab head.
+        const requiresSecretaryReview = SECRETARY_ALLOWED_ROOM_TYPES.has(room.Room_Type);
+        const isAutoApproved = secretaryPriority || (isLabHead && !requiresSecretaryReview);
         const bookingData = {
             User_ID: parseInt(User_ID),
             Room_ID: parseInt(Room_ID),
@@ -546,7 +548,7 @@ const updateBookingStatus = async (req, res) => {
         // Get the booking to check ownership and current status
         const existingBooking = await prisma.Booked_Room.findUnique({
             where: { Booked_Room_ID: parseInt(id) },
-            include: { User: true }
+            include: { User: true, Room: true }
         });
 
         if (!existingBooking) {
@@ -557,7 +559,9 @@ const updateBookingStatus = async (req, res) => {
         // - STAFF (SECRETARY, LAB_TECH, LAB_HEAD, ADMIN) can approve/reject/cancel any booking
         // - FACULTY can only CANCEL their OWN bookings
         const isOwner = existingBooking.User_ID === parseInt(approverId);
-        const isFacultyCancellingOwn = approver.User_Role === 'FACULTY' && status === 'CANCELLED' && isOwner;
+        const isOwnerCancelling = status === 'CANCELLED' && isOwner;
+        const isFacultyCancellingOwn = approver.User_Role === 'FACULTY' && isOwnerCancelling;
+        const approverRole = normalizeRole(approver.User_Role);
 
         if (!isStaff && !isFacultyCancellingOwn) {
             return res.status(403).json({
@@ -566,11 +570,28 @@ const updateBookingStatus = async (req, res) => {
             });
         }
 
-        // Only allow status changes for PENDING bookings, unless it's an ADMIN or owner cancelling
-        if (existingBooking.Status !== 'PENDING' && approver.User_Role !== 'ADMIN' && !isFacultyCancellingOwn) {
+        // Conference and consultation room approvals/rejections must be handled by the secretary.
+        const requiresSecretaryReview = SECRETARY_ALLOWED_ROOM_TYPES.has(existingBooking.Room?.Room_Type);
+        if (
+            requiresSecretaryReview
+            && (status === 'APPROVED' || status === 'REJECTED')
+            && approverRole !== 'SECRETARY'
+            && approverRole !== 'ADMIN'
+        ) {
+            return res.status(403).json({
+                success: false,
+                error: 'Forbidden',
+                details: 'Only the secretary can approve or reject conference and consultation room bookings.'
+            });
+        }
+
+        // Only allow status changes for PENDING bookings, unless cancelling (staff or owner) or ADMIN.
+        const isCancellation = status === 'CANCELLED';
+        const canActOnNonPending = approverRole === 'ADMIN' || isCancellation;
+        if (existingBooking.Status !== 'PENDING' && !canActOnNonPending) {
             return res.status(400).json({
                 error: 'Bad Request',
-                details: 'Only PENDING bookings can be updated',
+                details: 'Only PENDING bookings can be approved or rejected',
                 currentStatus: existingBooking.Status
             });
         }
@@ -634,38 +655,40 @@ const updateBookingStatus = async (req, res) => {
         }
 
         if (notificationType) {
-            // Log to audit trail
-            await AuditLogger.logBooking(
-                parseInt(approverId),
-                notificationType,
-                booking.Booked_Room_ID,
-                message,
-                null, // No role to notify
-                existingBooking.User_ID // Notify the requester (or actor for cancellation)
-            );
+            try {
+                await AuditLogger.logBooking(
+                    parseInt(approverId),
+                    notificationType,
+                    booking.Booked_Room_ID,
+                    message,
+                    null,
+                    existingBooking.User_ID
+                );
+            } catch (auditError) {
+                console.error('[Bookings] AuditLogger.logBooking failed in updateBookingStatus:', auditError);
+            }
 
-            // Broadcast real-time UI update to all relevant users
-            // For approvals/rejections, notify both the requester AND staff
-            // For cancellations, notify staff
-            if (status === 'CANCELLED') {
-                await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', booking, BOOKING_NOTIFICATION_ROLES);
-            } else {
-                // Approved or Rejected - notify the faculty who made the booking
-                NotificationManager.send(existingBooking.User_ID, {
-                    type: notificationType,
-                    category: 'BOOKING_UPDATE',
-                    timestamp: new Date().toISOString(),
-                    booking: {
-                        id: booking.Booked_Room_ID,
-                        roomId: booking.Room_ID,
-                        status: booking.Status,
-                        startTime: booking.Start_Time,
-                        endTime: booking.End_Time
-                    }
-                });
+            try {
+                if (status === 'CANCELLED') {
+                    await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', booking, BOOKING_NOTIFICATION_ROLES);
+                } else {
+                    NotificationManager.send(existingBooking.User_ID, {
+                        type: notificationType,
+                        category: 'BOOKING_UPDATE',
+                        timestamp: new Date().toISOString(),
+                        booking: {
+                            id: booking.Booked_Room_ID,
+                            roomId: booking.Room_ID,
+                            status: booking.Status,
+                            startTime: booking.Start_Time,
+                            endTime: booking.End_Time
+                        }
+                    });
 
-                // ALSO broadcast to booking managers so their calendars update too
-                await NotificationManager.broadcastBookingEvent(notificationType, booking, BOOKING_NOTIFICATION_ROLES);
+                    await NotificationManager.broadcastBookingEvent(notificationType, booking, BOOKING_NOTIFICATION_ROLES);
+                }
+            } catch (notifyError) {
+                console.error('[Bookings] NotificationManager broadcast failed in updateBookingStatus:', notifyError);
             }
         }
 
@@ -757,18 +780,24 @@ const deleteBooking = async (req, res) => {
             where: { Booked_Room_ID: parseInt(id) }
         });
 
-        // Log to audit trail
-        await AuditLogger.logBooking(
-            req.user.User_ID,
-            'BOOKING_CANCELLED',
-            existingBooking.Booked_Room_ID,
-            `Booking for ${existingBooking.Room.Name} was deleted.`,
-            null,
-            existingBooking.User_ID
-        );
+        try {
+            await AuditLogger.logBooking(
+                req.user.User_ID,
+                'BOOKING_CANCELLED',
+                existingBooking.Booked_Room_ID,
+                `Booking for ${existingBooking.Room.Name} was deleted.`,
+                null,
+                existingBooking.User_ID
+            );
+        } catch (auditError) {
+            console.error('[Bookings] AuditLogger.logBooking failed in deleteBooking:', auditError);
+        }
 
-        // Notify UI to refresh schedules
-        await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', existingBooking, BOOKING_NOTIFICATION_ROLES);
+        try {
+            await NotificationManager.broadcastBookingEvent('BOOKING_CANCELLED', existingBooking, BOOKING_NOTIFICATION_ROLES);
+        } catch (notifyError) {
+            console.error('[Bookings] NotificationManager broadcast failed in deleteBooking:', notifyError);
+        }
 
         res.json({ success: true, data: { message: 'Booking deleted successfully' } });
     } catch (error) {
