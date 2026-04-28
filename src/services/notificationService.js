@@ -166,11 +166,23 @@ class NotificationService {
       };
     }
 
+    // Actions whose notification is directed at a specific target user
+    // (the borrower, booker, etc.) — these should never appear in the actor's
+    // own feed, only in the target's. Without this guard, a lab tech who
+    // approves a borrow request sees their own "BORROW APPROVED" message.
+    const TARGETED_ACTIONS = [
+      'BORROW_APPROVED',
+      'BORROW_REJECTED',
+      'ITEM_READY_FOR_PICKUP',
+      'BOOKING_APPROVED',
+      'BOOKING_REJECTED',
+    ];
+
     // LAB_HEAD, LAB_TECH, ADMIN
     return {
       Is_Notification: true,
       OR: [
-        { User_ID: userId },
+        { User_ID: userId, Action: { notIn: TARGETED_ACTIONS } },
         { User_ID: null, Is_Notification: true },
         ...(userRole === 'LAB_HEAD' ? [{
           Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED', 'BORROW_REQUESTED'] }
