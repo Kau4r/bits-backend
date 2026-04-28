@@ -22,7 +22,7 @@ const getBorrowings = async (req, res) => {
     const borrowings = await prisma.borrow_Item.findMany({
         where: whereClause,
         include: {
-            Item: true,
+            Item: { include: { Room: true } },
             Borrower: {
                 select: {
                     User_ID: true,
