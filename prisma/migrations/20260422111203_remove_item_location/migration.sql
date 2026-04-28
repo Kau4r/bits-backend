@@ -5,4 +5,4 @@
 
 */
 -- AlterTable
-ALTER TABLE "Item" DROP COLUMN "Location";
+ALTER TABLE "Item" DROP COLUMN IF EXISTS "Location";
