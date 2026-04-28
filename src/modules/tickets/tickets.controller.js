@@ -517,10 +517,12 @@ const createPublicTicket = async (req, res) => {
     };
     const category = categoryMap[issueType];
 
-    // Build the Report_Problem string.
-    const equipmentPart = equipment ? ` [${equipment}]` : '';
-    const pcPart = pcNumber ? ` [PC: ${pcNumber}]` : '';
-    const reportProblem = `[PUBLIC] [${issueType}]${equipmentPart}${pcPart} — ${trimmedDesc} — reporter: ${reporterIdentifier}`;
+    // Build a structured Location like the authenticated path: "<head> — PC: x | Room: y".
+    // Equipment becomes the head; "Not detected" stands in for missing parts.
+    const head = equipment ? equipment : 'Issue';
+    const pcSegment = pcNumber ? `PC: ${pcNumber}` : 'PC: Not detected';
+    const roomSegment = `Room: ${room?.Name ?? 'Not detected'}`;
+    const locationString = `${head} — ${pcSegment} | ${roomSegment}`;
 
     // Get or create the system reporter user.
     const reporterUserId = await getOrCreatePublicReporterUser();
@@ -528,9 +530,10 @@ const createPublicTicket = async (req, res) => {
     const ticket = await prisma.ticket.create({
       data: {
         Reported_By_ID: reporterUserId,
-        Report_Problem: reportProblem,
+        Report_Problem: trimmedDesc,
+        Reporter_Identifier: reporterIdentifier?.trim() || null,
         Room_ID: roomId ?? null,
-        Location: room?.Name ?? null,
+        Location: locationString,
         Category: category,
         Status: 'PENDING',
       },
@@ -541,7 +544,7 @@ const createPublicTicket = async (req, res) => {
       reporterUserId,
       'TICKET_CREATED',
       ticket.Ticket_ID,
-      `Public ticket: ${reportProblem.substring(0, 80)}`,
+      `Public ticket from ${reporterIdentifier || 'public reporter'}: ${trimmedDesc.substring(0, 80)}`,
       ['LAB_TECH', 'LAB_HEAD']
     );
 

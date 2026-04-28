@@ -92,19 +92,20 @@ model Semester {
 }
 
 model Ticket {
-  Ticket_ID      Int             @id @default(autoincrement())
-  Created_At     DateTime        @default(now())
-  Updated_At     DateTime        @updatedAt
-  Archived       Boolean         @default(false)
-  Category       TicketCategory?
-  Item_ID        Int?
-  Location       String?
-  Priority       TicketPriority?
-  Report_Problem String
-  Reported_By_ID Int
-  Room_ID        Int?
-  Technician_ID  Int?
-  Status         TicketStatus    @default(PENDING)
+  Ticket_ID           Int             @id @default(autoincrement())
+  Created_At          DateTime        @default(now())
+  Updated_At          DateTime        @updatedAt
+  Archived            Boolean         @default(false)
+  Category            TicketCategory?
+  Item_ID             Int?
+  Location            String?
+  Priority            TicketPriority?
+  Report_Problem      String
+  Reported_By_ID      Int
+  Reporter_Identifier String?
+  Room_ID             Int?
+  Technician_ID       Int?
+  Status              TicketStatus    @default(PENDING)
   AuditLogs      Audit_Log[]     @relation("TicketAuditLogs")
   Item           Item?           @relation(fields: [Item_ID], references: [Item_ID])
   Reported_By    User            @relation("Ticket_User", fields: [Reported_By_ID], references: [User_ID])
