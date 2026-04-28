@@ -125,34 +125,17 @@ class NotificationService {
     return typeMap[notificationType] || 'SYSTEM';
   }
 
-  // Get notifications for a user
-  static async getUserNotifications(userId, options = {}) {
-    const { limit = 20, cursor, unreadOnly } = options;
-
-    // Get user role
-    const user = await prisma.User.findUnique({
-      where: { User_ID: userId },
-      select: { User_Role: true }
-    });
-
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    // Build role-specific query
-    let where;
-
-    if (user.User_Role === 'FACULTY') {
-      // Faculty ONLY sees approval/rejection notifications
-      where = {
+  // Build the role-specific where-clause used by list / count / mark-all queries.
+  // Keeping this in one place is the only way to guarantee the badge count
+  // matches the visible list — see getUnreadCount and markAllAsRead.
+  static _buildNotificationWhere(userRole, userId) {
+    if (userRole === 'FACULTY') {
+      return {
         Is_Notification: true,
         OR: [
-          // Booking approvals/rejections where faculty is the requester
           {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
-            Booked_Room: {
-              User_ID: userId
-            }
+            Booked_Room: { User_ID: userId }
           },
           {
             Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
@@ -161,7 +144,6 @@ class NotificationService {
               equals: userId
             }
           },
-          // Borrow request approvals/rejections (filtered by target user)
           {
             Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
             Notification_Data: {
@@ -171,36 +153,49 @@ class NotificationService {
           }
         ]
       };
-    } else if (user.User_Role === 'STUDENT') {
-      // Students see room availability notifications from staff
-      where = {
+    }
+
+    if (userRole === 'STUDENT') {
+      return {
         Is_Notification: true,
         OR: [
-          { User_ID: userId }, // Direct notifications
-          { User_ID: null, Is_Notification: true }, // System-wide notifications
-          // Room availability notifications for students
-          {
-            Action: { in: ['ROOM_AVAILABLE', 'ROOM_OPENED_FOR_STUDENTS'] }
-          }
-        ]
-      };
-    } else {
-      // Other roles (LAB_HEAD, LAB_TECH, ADMIN)
-      where = {
-        Is_Notification: true,
-        OR: [
-          { User_ID: userId }, // Direct notifications/actions by user
-          { User_ID: null, Is_Notification: true }, // System-wide notifications
-          // Role-Based Shared Notifications
-          ...(user.User_Role === 'LAB_HEAD' ? [{
-            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED', 'BORROW_REQUESTED'] }
-          }] : []),
-          ...(user.User_Role === 'LAB_TECH' ? [{
-            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'FORM_APPROVED', 'FORM_CANCELLED', 'FORM_REJECTED', 'BORROW_REQUESTED'] }
-          }] : []),
+          { User_ID: userId },
+          { User_ID: null, Is_Notification: true },
+          { Action: { in: ['ROOM_AVAILABLE', 'ROOM_OPENED_FOR_STUDENTS'] } }
         ]
       };
     }
+
+    // LAB_HEAD, LAB_TECH, ADMIN
+    return {
+      Is_Notification: true,
+      OR: [
+        { User_ID: userId },
+        { User_ID: null, Is_Notification: true },
+        ...(userRole === 'LAB_HEAD' ? [{
+          Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED', 'BORROW_REQUESTED'] }
+        }] : []),
+        ...(userRole === 'LAB_TECH' ? [{
+          Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'FORM_APPROVED', 'FORM_CANCELLED', 'FORM_REJECTED', 'BORROW_REQUESTED'] }
+        }] : []),
+      ]
+    };
+  }
+
+  // Get notifications for a user
+  static async getUserNotifications(userId, options = {}) {
+    const { limit = 20, cursor, unreadOnly } = options;
+
+    const user = await prisma.User.findUnique({
+      where: { User_ID: userId },
+      select: { User_Role: true }
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    const where = this._buildNotificationWhere(user.User_Role, userId);
 
     if (unreadOnly) {
       where.NotificationReads = {
@@ -376,7 +371,6 @@ class NotificationService {
     // 1. Get all unread notifications for this user (reusing getUserNotifications logic partly)
     // We need to fetch the IDs of all notifications visible to this user that are NOT read.
 
-    // Get user role
     const user = await prisma.User.findUnique({
       where: { User_ID: userId },
       select: { User_Role: true }
@@ -384,60 +378,7 @@ class NotificationService {
 
     if (!user) return;
 
-    // Build role-specific query (Duplicated logic from getUserNotifications for now, best to extract this)
-    let where;
-
-    if (user.User_Role === 'FACULTY') {
-      where = {
-        Is_Notification: true,
-        OR: [
-          {
-            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
-            Booked_Room: { User_ID: userId }
-          },
-          {
-            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
-            Notification_Data: {
-              path: ['targetUserId'],
-              equals: userId
-            }
-          },
-          // Borrow request approvals/rejections (filtered by target user)
-          {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
-            Notification_Data: {
-              path: ['targetUserId'],
-              equals: userId
-            }
-          }
-        ]
-      };
-    } else if (user.User_Role === 'STUDENT') {
-      where = {
-        Is_Notification: true,
-        OR: [
-          { User_ID: userId },
-          { User_ID: null, Is_Notification: true },
-          {
-            Action: { in: ['ROOM_AVAILABLE', 'ROOM_OPENED_FOR_STUDENTS'] }
-          }
-        ]
-      };
-    } else {
-      where = {
-        Is_Notification: true,
-        OR: [
-          { User_ID: userId },
-          { User_ID: null, Is_Notification: true },
-          ...(user.User_Role === 'LAB_HEAD' ? [{
-            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED'] }
-          }] : []),
-          ...(user.User_Role === 'LAB_TECH' ? [{
-            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED'] }
-          }] : []),
-        ]
-      };
-    }
+    const where = this._buildNotificationWhere(user.User_Role, userId);
 
     // Only get those that don't have a read record for this user
     where.NotificationReads = {
@@ -468,7 +409,6 @@ class NotificationService {
 
   // Get unread notification count for a user
   static async getUnreadCount(userId) {
-    // Get user role to build role-specific query
     const user = await prisma.User.findUnique({
       where: { User_ID: userId },
       select: { User_Role: true }
@@ -478,61 +418,7 @@ class NotificationService {
       return 0;
     }
 
-    // Build role-specific query (same logic as getUserNotifications)
-    let where;
-
-    if (user.User_Role === 'FACULTY') {
-      where = {
-        Is_Notification: true,
-        OR: [
-          {
-            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
-            Booked_Room: { User_ID: userId }
-          },
-          {
-            Action: { in: ['BOOKING_APPROVED', 'BOOKING_REJECTED'] },
-            Notification_Data: {
-              path: ['targetUserId'],
-              equals: userId
-            }
-          },
-          // Borrow request approvals/rejections (filtered by target user)
-          {
-            Action: { in: ['BORROW_APPROVED', 'BORROW_REJECTED', 'ITEM_READY_FOR_PICKUP'] },
-            Notification_Data: {
-              path: ['targetUserId'],
-              equals: userId
-            }
-          }
-        ]
-      };
-    } else if (user.User_Role === 'STUDENT') {
-      where = {
-        Is_Notification: true,
-        OR: [
-          { User_ID: userId },
-          { User_ID: null, Is_Notification: true },
-          {
-            Action: { in: ['ROOM_AVAILABLE', 'ROOM_OPENED_FOR_STUDENTS'] }
-          }
-        ]
-      };
-    } else {
-      // LAB_HEAD, LAB_TECH, ADMIN
-      where = {
-        Is_Notification: true,
-        OR: [
-          { User_ID: userId },
-          { User_ID: null, Is_Notification: true },
-          ...(user.User_Role === 'LAB_HEAD' ? [{
-            Action: { in: ['ROOM_BOOKED', 'FORM_SUBMITTED', 'FORM_TRANSFERRED', 'TICKET_CREATED'] }
-          }] : []),
-          ...(user.User_Role === 'LAB_TECH' ? [{
-            Action: { in: ['TICKET_CREATED', 'ITEM_BORROWED', 'COMPUTER_BORROWED', 'ITEM_RETURNED', 'COMPUTER_RETURNED'] }
-          }] : []),
-        ]
-      };
-    }
+    const where = this._buildNotificationWhere(user.User_Role, userId);
 
     // Exclude read notifications
     where.NotificationReads = {
