@@ -175,31 +175,38 @@ const createBooking = async (req, res) => {
             })
             : [];
 
+        // Multi-user pending policy: other users' PENDING bookings on the
+        // same slot are allowed to coexist (the approver picks one).
+        // The ONLY pending conflict that blocks creation is the requester's
+        // own overlapping pending booking — they should adjust the existing
+        // one instead of stacking duplicates.
         if (!secretaryPriority) {
-            const conflictingPendingBooking = await prisma.Booked_Room.findFirst({
+            const ownPendingBooking = await prisma.Booked_Room.findFirst({
                 where: {
                     Room_ID: parseInt(Room_ID),
+                    User_ID: parseInt(User_ID),
                     Status: 'PENDING',
                     Start_Time: { lt: requestedEnd },
                     End_Time: { gt: requestedStart }
                 },
                 include: {
-                    User: { select: { First_Name: true, Last_Name: true } }
+                    Room: { select: { Room_ID: true, Name: true } }
                 }
             });
 
-            if (conflictingPendingBooking) {
+            if (ownPendingBooking) {
                 return res.status(409).json({
                     success: false,
-                    error: 'A pending booking already exists for this time slot',
-                    conflictingBooking: {
-                        id: conflictingPendingBooking.Booked_Room_ID,
-                        status: conflictingPendingBooking.Status,
-                        startTime: conflictingPendingBooking.Start_Time,
-                        endTime: conflictingPendingBooking.End_Time,
-                        bookedBy: conflictingPendingBooking.User
-                            ? `${conflictingPendingBooking.User.First_Name} ${conflictingPendingBooking.User.Last_Name}`
-                            : 'Unknown'
+                    code: 'SELF_PENDING_CONFLICT',
+                    error: 'You already have a pending booking at this time. Adjust existing schedule?',
+                    details: 'Open your existing pending booking and edit it instead of creating a duplicate.',
+                    existingBooking: {
+                        id: ownPendingBooking.Booked_Room_ID,
+                        status: ownPendingBooking.Status,
+                        startTime: ownPendingBooking.Start_Time,
+                        endTime: ownPendingBooking.End_Time,
+                        roomId: ownPendingBooking.Room_ID,
+                        roomName: ownPendingBooking.Room?.Name
                     }
                 });
             }
@@ -439,6 +446,23 @@ const updateBooking = async (req, res) => {
             });
         }
 
+        // Approved bookings are locked: once a booking has been approved
+        // ("set / done"), the owner can no longer reschedule it. They must
+        // cancel and create a new request. Title/notes can still be edited.
+        const isReschedule = (
+            (Start_Time !== undefined && new Date(Start_Time).getTime() !== existingBooking.Start_Time.getTime())
+            || (End_Time !== undefined && new Date(End_Time).getTime() !== existingBooking.End_Time.getTime())
+            || (Room_ID !== undefined && parseInt(Room_ID) !== existingBooking.Room_ID)
+        );
+        if (existingBooking.Status === 'APPROVED' && isReschedule) {
+            return res.status(403).json({
+                success: false,
+                code: 'APPROVED_RESCHEDULE_BLOCKED',
+                error: 'Approved bookings cannot be rescheduled',
+                details: 'Cancel this booking and create a new one if you need to change the time or room.'
+            });
+        }
+
         // Build update data
         const updateData = {
             Updated_At: new Date(),
@@ -481,11 +505,13 @@ const updateBooking = async (req, res) => {
             });
         }
 
-        const conflictingBooking = await prisma.Booked_Room.findFirst({
+        // APPROVED conflicts (any user) still block — only one approved
+        // booking can occupy a slot.
+        const conflictingApproved = await prisma.Booked_Room.findFirst({
             where: {
                 Room_ID: newRoom,
                 Booked_Room_ID: { not: parseInt(id) },
-                Status: { in: ['APPROVED', 'PENDING'] },
+                Status: 'APPROVED',
                 Start_Time: { lt: newEnd },
                 End_Time: { gt: newStart }
             },
@@ -494,20 +520,50 @@ const updateBooking = async (req, res) => {
             }
         });
 
-        if (conflictingBooking) {
-            const statusMsg = conflictingBooking.Status === 'PENDING'
-                ? 'A pending booking already exists for this time slot'
-                : 'Room is already booked for the selected time';
+        if (conflictingApproved) {
             return res.status(409).json({
-                success: false, error: statusMsg,
+                success: false,
+                error: 'Room is already booked for the selected time',
                 conflictingBooking: {
-                    id: conflictingBooking.Booked_Room_ID,
-                    status: conflictingBooking.Status,
-                    startTime: conflictingBooking.Start_Time,
-                    endTime: conflictingBooking.End_Time,
-                    bookedBy: conflictingBooking.User
-                        ? `${conflictingBooking.User.First_Name} ${conflictingBooking.User.Last_Name}`
+                    id: conflictingApproved.Booked_Room_ID,
+                    status: conflictingApproved.Status,
+                    startTime: conflictingApproved.Start_Time,
+                    endTime: conflictingApproved.End_Time,
+                    bookedBy: conflictingApproved.User
+                        ? `${conflictingApproved.User.First_Name} ${conflictingApproved.User.Last_Name}`
                         : 'Unknown'
+                }
+            });
+        }
+
+        // PENDING conflicts only block when the owner has another pending
+        // booking on the same slot — the rest are competing requests by
+        // other users and are allowed to coexist.
+        const ownPendingConflict = await prisma.Booked_Room.findFirst({
+            where: {
+                Room_ID: newRoom,
+                User_ID: existingBooking.User_ID,
+                Booked_Room_ID: { not: parseInt(id) },
+                Status: 'PENDING',
+                Start_Time: { lt: newEnd },
+                End_Time: { gt: newStart }
+            },
+            include: { Room: { select: { Room_ID: true, Name: true } } }
+        });
+
+        if (ownPendingConflict) {
+            return res.status(409).json({
+                success: false,
+                code: 'SELF_PENDING_CONFLICT',
+                error: 'You already have a pending booking at this time. Adjust existing schedule?',
+                details: 'Open your existing pending booking and edit it instead of creating a duplicate.',
+                existingBooking: {
+                    id: ownPendingConflict.Booked_Room_ID,
+                    status: ownPendingConflict.Status,
+                    startTime: ownPendingConflict.Start_Time,
+                    endTime: ownPendingConflict.End_Time,
+                    roomId: ownPendingConflict.Room_ID,
+                    roomName: ownPendingConflict.Room?.Name
                 }
             });
         }
