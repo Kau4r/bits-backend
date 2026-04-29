@@ -517,12 +517,24 @@ const createPublicTicket = async (req, res) => {
     };
     const category = categoryMap[issueType];
 
-    // Build a structured Location like the authenticated path: "<head> — PC: x | Room: y".
-    // Equipment becomes the head; "Not detected" stands in for missing parts.
-    const head = equipment ? equipment : 'Issue';
-    const pcSegment = pcNumber ? `PC: ${pcNumber}` : 'PC: Not detected';
-    const roomSegment = `Room: ${room?.Name ?? 'Not detected'}`;
-    const locationString = `${head} — ${pcSegment} | ${roomSegment}`;
+    // Equipment + PC are folded into a single "[Equipment · PC X]" tag prefix on
+    // the description so the labtech UI can render them as a small chip without
+    // a schema change. Location stays null — the room comes from Room_ID via the
+    // ticket's Room relation; labtechs use Location only as a free-text override.
+    const equipmentLabel = {
+      MONITOR: 'Monitor',
+      KEYBOARD: 'Keyboard',
+      MOUSE: 'Mouse',
+      MINI_PC: 'Mini PC',
+      SYSTEM_UNIT: 'System Unit',
+      HEADSET: 'Headset',
+      OTHER: 'Other',
+    }[equipment] || null;
+    const tagParts = [];
+    if (equipmentLabel) tagParts.push(equipmentLabel);
+    if (pcNumber?.trim()) tagParts.push(pcNumber.trim());
+    const tagPrefix = tagParts.length > 0 ? `[${tagParts.join(' · ')}] ` : '';
+    const finalDescription = `${tagPrefix}${trimmedDesc}`;
 
     // Get or create the system reporter user.
     const reporterUserId = await getOrCreatePublicReporterUser();
@@ -530,10 +542,10 @@ const createPublicTicket = async (req, res) => {
     const ticket = await prisma.ticket.create({
       data: {
         Reported_By_ID: reporterUserId,
-        Report_Problem: trimmedDesc,
+        Report_Problem: finalDescription,
         Reporter_Identifier: reporterIdentifier?.trim() || null,
         Room_ID: roomId ?? null,
-        Location: locationString,
+        Location: null,
         Category: category,
         Status: 'PENDING',
       },
