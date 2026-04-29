@@ -97,7 +97,8 @@ app.use((req, res, next) => {
 });
 
 // Apply general rate limiting
-app.use('/', generalLimiter);
+// TEMPORARILY DISABLED — re-enable when done testing.
+// app.use('/', generalLimiter);
 
 // ==================== ROUTES ====================
 
@@ -114,7 +115,8 @@ app.get('/health', (req, res) => {
 });
 
 // Auth routes with stricter rate limiting
-app.use('/auth', authLimiter, require('./modules/auth/auth.routes'));
+// TEMPORARILY DISABLED — pass authLimiter back into the chain to re-enable.
+app.use('/auth', /* authLimiter, */ require('./modules/auth/auth.routes'));
 
 // API Routes
 app.use('/inventory', require('./modules/inventory/inventory.routes'));
