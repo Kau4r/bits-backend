@@ -68,7 +68,7 @@ Note: routes without `authorize()` are gated only by `authenticateToken`; the co
 | POST | /api/computers/import-csv | ADMIN, LAB_HEAD, LAB_TECH | Bulk import computers from CSV/XLSX |
 | POST | /api/computers | ADMIN, LAB_HEAD, LAB_TECH | Create a computer record |
 | PUT | /api/computers/:id | ADMIN, LAB_HEAD, LAB_TECH | Update a computer record |
-| DELETE | /api/computers/:id | ADMIN, LAB_HEAD | Delete a computer record |
+| DELETE | /api/computers/:id | LAB_HEAD, LAB_TECH | Delete a computer record |
 
 ---
 

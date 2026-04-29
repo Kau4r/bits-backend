@@ -37,6 +37,6 @@ router.get('/', authenticateToken, asyncHandler(getComputers));
 router.post('/import-csv', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), uploadCsv, asyncHandler(importComputersCsv));
 router.post('/', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(createComputer));
 router.put('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(updateComputer));
-router.delete('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(deleteComputer));
+router.delete('/:id', authenticateToken, authorize('LAB_HEAD', 'LAB_TECH'), asyncHandler(deleteComputer));
 
 module.exports = router;

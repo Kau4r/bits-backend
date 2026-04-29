@@ -82,11 +82,14 @@ const getItems = async (req, res) => {
         Replaces: true,
         Borrow_Item: true,
         Tickets: true,
-        Room: true
+        Room: true,
+        Computer: { select: { Computer_ID: true, Name: true, Room_ID: true } }
       },
       orderBy: { Created_At: 'desc' }
     });
-    res.json({ success: true, data: items });
+    // Frontend expects the join under `Computers`; expose it there.
+    const data = items.map(({ Computer, ...rest }) => ({ ...rest, Computers: Computer }));
+    res.json({ success: true, data });
   } catch (error) {
     console.error('Error fetching items:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch items' });
