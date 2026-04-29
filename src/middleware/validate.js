@@ -57,6 +57,53 @@ const bookingSchemas = {
 
     updateOccupancyStatus: Joi.object({
         status: Joi.string().valid('OPEN', 'NEAR_FULL', 'FULL').required()
+    }),
+
+    createSeries: Joi.object({
+        User_ID: Joi.number().integer().positive().required(),
+        Room_ID: Joi.number().integer().positive().required(),
+        Title: Joi.string().min(1).max(200).required(),
+        Purpose: Joi.string().max(500).allow('', null),
+        Notes: Joi.string().max(1000).allow('', null),
+        Recurrence_Rule: Joi.string()
+            .min(5)
+            .max(500)
+            .pattern(/FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)/)
+            .required(),
+        Anchor_Start: Joi.date().iso().required(),
+        Anchor_End: Joi.date().iso().greater(Joi.ref('Anchor_Start')).required(),
+        Excluded_Dates: Joi.array().items(Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/)).default([])
+    }),
+
+    seriesOverride: Joi.object({
+        Original_Start: Joi.date().iso().required(),
+        Start_Time: Joi.date().iso(),
+        End_Time: Joi.date().iso(),
+        Room_ID: Joi.number().integer().positive(),
+        Purpose: Joi.string().max(500).allow('', null),
+        Notes: Joi.string().max(500).allow('', null),
+        Status: Joi.string().valid('PENDING', 'APPROVED', 'CANCELLED')
+    }),
+
+    updateSeries: Joi.object({
+        Title: Joi.string().min(1).max(200),
+        Purpose: Joi.string().max(500).allow('', null),
+        Notes: Joi.string().max(1000).allow('', null),
+        Room_ID: Joi.number().integer().positive(),
+        Anchor_Start: Joi.date().iso(),
+        Anchor_End: Joi.date().iso(),
+        Excluded_Dates: Joi.array().items(Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/))
+    }).min(1),
+
+    seriesExclude: Joi.object({
+        Original_Start: Joi.date().iso().required()
+    }),
+
+    seriesDecision: Joi.object({
+        status: Joi.string().valid('APPROVED', 'REJECTED').required(),
+        notes: Joi.string().max(1000).allow('', null),
+        applyToSeries: Joi.boolean().default(false),
+        Original_Start: Joi.date().iso()
     })
 };
 

@@ -49,7 +49,8 @@ const getBorrowings = async (req, res) => {
 
 // POST /api/borrowing - Request to borrow items
 const createBorrowing = async (req, res) => {
-    const { itemType, purpose, borrowDate, expectedReturnDate, items } = req.body;
+    const { itemType, purpose, borrowDate, expectedReturnDate, items, roomId } = req.body;
+    const parsedRoomId = roomId ? parseInt(roomId, 10) : null;
     const user = req.user;
     const now = new Date();
 
@@ -73,6 +74,7 @@ const createBorrowing = async (req, res) => {
                 Purpose: purpose || '',
                 Borrow_Date: startDate,
                 Return_Date: retDate,
+                Room_ID: parsedRoomId,
                 Status: 'PENDING'
             }
         });
@@ -129,6 +131,7 @@ const createBorrowing = async (req, res) => {
                     Purpose: purpose || '',
                     Borrow_Date: startDate,
                     Return_Date: retDate,
+                    Room_ID: parsedRoomId,
                     Status: 'PENDING' // Start as PENDING, not BORROWED
                 },
                 include: { Item: true }
@@ -209,13 +212,27 @@ const approveBorrowing = async (req, res) => {
 
         // Verify item matches requested type. Compare case-insensitively to match
         // the frontend's normalized filtering (resolveItemType in src/lib/utils.ts).
-        // If Requested_Item_Type is blank/null, skip the check — the lab tech is
-        // free-assigning an item to a request that didn't specify a type.
+        // - Blank/null requested type: lab tech is free-assigning, skip check.
+        // - Either side "OTHER": the catch-all bucket. A request for OTHER may be
+        //   fulfilled with any real item, AND a request for a specific type may
+        //   be fulfilled from the OTHER pool (control room misc / generic spares).
         const normalize = (s) => (s || '').toString().trim().toUpperCase();
         const requested = normalize(borrowing.Requested_Item_Type);
-        if (requested && requested !== normalize(item.Item_Type)) {
+        const itemType = normalize(item.Item_Type);
+        const eitherIsOther = requested === 'OTHER' || itemType === 'OTHER';
+        if (requested && !eitherIsOther && requested !== itemType) {
             return res.status(400).json({
                 success: false, error: `Item type mismatch. Requested: ${borrowing.Requested_Item_Type}, Provided: ${item.Item_Type}`
+            });
+        }
+
+        // If the lab tech assigned a real item to an OTHER request, snap the
+        // request's recorded type to the actual item type so audit/history
+        // doesn't read "OTHER" forever.
+        if (requested === 'OTHER' && itemType !== 'OTHER') {
+            await prisma.borrow_Item.update({
+                where: { Borrow_Item_ID: borrowing.Borrow_Item_ID },
+                data: { Requested_Item_Type: item.Item_Type }
             });
         }
     } else if (assignedItemId && assignedItemId !== borrowing.Item_ID) {
@@ -408,7 +425,8 @@ const getPendingCount = async (req, res) => {
 // POST /api/borrowing/walkin - Lab Tech creates a walk-in borrowing directly (status BORROWED)
 // Skips the PENDING/APPROVED dance used for faculty requests.
 const createWalkinBorrowing = async (req, res) => {
-    const { borrowerIdentifier, itemId, returnDate, purpose } = req.body;
+    const { borrowerIdentifier, itemId, returnDate, purpose, roomId } = req.body;
+    const parsedWalkinRoomId = roomId ? parseInt(roomId, 10) : null;
     const approver = req.user;
 
     if (!borrowerIdentifier || !itemId) {
@@ -497,6 +515,7 @@ const createWalkinBorrowing = async (req, res) => {
             Purpose: purposeWithLabel,
             Borrow_Date: now,
             Return_Date: returnAt,
+            Room_ID: parsedWalkinRoomId,
             Status: 'BORROWED',
         },
         include: {

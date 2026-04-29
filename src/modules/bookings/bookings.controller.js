@@ -3,9 +3,12 @@ const NotificationService = require('../../services/notificationService');
 const NotificationManager = require('../../services/notificationManager');
 const AuditLogger = require('../../utils/auditLogger');
 const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
+const { buildVirtualOccurrences } = require('./bookingSeries.controller');
 
 const normalizeRole = (role = '') => String(role).toUpperCase();
-const BOOKING_MANAGER_ROLES = ['ADMIN', 'SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
+// Scheduling is owned by SECRETARY (conference/consultation) and LAB_HEAD/LAB_TECH
+// (lab/lecture). ADMIN is intentionally excluded — they don't manage day-to-day bookings.
+const BOOKING_MANAGER_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
 const BOOKING_NOTIFICATION_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
 
 const isSecretaryBooking = (user) => normalizeRole(user?.User_Role) === 'SECRETARY';
@@ -63,14 +66,6 @@ const createBooking = async (req, res) => {
             });
         }
 
-        // Block bookings on Sundays
-        if (requestedStart.getDay() === 0) {
-            return res.status(400).json({
-                error: 'Bookings are not allowed on Sundays',
-                details: 'Please select a different day of the week.'
-            });
-        }
-
         // Get room with active recurring schedules
         const room = await prisma.room.findUnique({
             where: { Room_ID: parseInt(Room_ID) },
@@ -104,14 +99,13 @@ const createBooking = async (req, res) => {
             return res.status(404).json({ success: false, error: 'User not found' });
         }
 
-        const secretaryPriority = isSecretaryBooking(requestingUser);
-
-        if (secretaryPriority && !SECRETARY_ALLOWED_ROOM_TYPES.has(room.Room_Type)) {
-            return res.status(403).json({
-                success: false,
-                error: 'Secretary bookings are limited to consultation and conference rooms'
-            });
-        }
+        const isSecretary = isSecretaryBooking(requestingUser);
+        const requiresSecretaryReview = SECRETARY_ALLOWED_ROOM_TYPES.has(room.Room_Type);
+        // Secretary "priority" (auto-approve + pre-empt pending) only applies on
+        // rooms the secretary owns (consultation/conference). On other rooms a
+        // secretary booking is just a regular request that lab head/lab tech
+        // must approve.
+        const secretaryPriority = isSecretary && requiresSecretaryReview;
 
         // Check if room is available for booking
         if (room.Status !== 'AVAILABLE') {
@@ -212,8 +206,11 @@ const createBooking = async (req, res) => {
         }
 
         const isLabHead = normalizeRole(requestingUser.User_Role) === 'LAB_HEAD';
-        // Conference and consultation rooms must be reviewed by the secretary, even when the requester is a lab head.
-        const requiresSecretaryReview = SECRETARY_ALLOWED_ROOM_TYPES.has(room.Room_Type);
+        // Auto-approve when the requester already has authority over this room type:
+        //   - secretary on conference/consultation rooms (secretaryPriority)
+        //   - lab head on lab/lecture/other rooms (those they oversee)
+        // Everyone else (including secretary on a lab room, lab head on CONF/CONS,
+        // lab tech on anything, faculty) goes through PENDING approval.
         const isAutoApproved = secretaryPriority || (isLabHead && !requiresSecretaryReview);
         const bookingData = {
             User_ID: parseInt(User_ID),
@@ -381,7 +378,32 @@ const getBookings = async (req, res) => {
             }
         });
 
-        res.json({ success: true, data: bookings });
+        // Layer in virtual occurrences from active recurring series. Overrides
+        // (Booked_Room rows tied to a Series_ID + Original_Start) are already
+        // returned above and the expander skips those slots, so there's no
+        // double-render.
+        const virtualWhere = {};
+        if (roomId) virtualWhere.Room_ID = parseInt(roomId, 10);
+        if (userId) virtualWhere.User_ID = parseInt(userId, 10);
+        const virtual = await buildVirtualOccurrences({
+            from: from || new Date(),
+            to: to || undefined,
+            where: virtualWhere
+        });
+
+        // Apply the same status filter to virtual occurrences (status is
+        // inherited from the parent series).
+        let filteredVirtual = virtual;
+        if (status) {
+            const statuses = String(status).split(',').map(s => s.trim());
+            filteredVirtual = virtual.filter(v => statuses.includes(v.Status));
+        }
+
+        const merged = [...bookings, ...filteredVirtual].sort((a, b) =>
+            new Date(b.Start_Time).getTime() - new Date(a.Start_Time).getTime()
+        );
+
+        res.json({ success: true, data: merged });
     } catch (error) {
         console.error('Error fetching room bookings:', error);
         res.status(500).json({ success: false, error: 'Failed to fetch room bookings' });
@@ -406,12 +428,14 @@ const updateBooking = async (req, res) => {
         }
 
         const isOwner = existingBooking.User_ID === req.user?.User_ID;
-        const canEditAnyBooking = requesterRole === 'ADMIN' || requesterRole === 'LAB_HEAD';
-        if (!isOwner && !canEditAnyBooking) {
+        // Only the booking's owner can edit its details. Lab heads/secretaries
+        // approve/reject via updateBookingStatus but never rewrite someone
+        // else's booking. Admin is not part of the scheduling workflow.
+        if (!isOwner) {
             return res.status(403).json({
                 success: false,
                 error: 'Forbidden',
-                details: 'You can only edit your own bookings unless you are a Lab Head or Admin.'
+                details: 'You can only edit your own bookings.'
             });
         }
 
@@ -442,13 +466,9 @@ const updateBooking = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Room not found' });
         }
 
-        if (requesterRole === 'SECRETARY' && !SECRETARY_ALLOWED_ROOM_TYPES.has(targetRoom.Room_Type)) {
-            return res.status(403).json({
-                success: false,
-                error: 'Secretary bookings are limited to consultation and conference rooms'
-            });
-        }
-
+        // Secretaries can edit their own bookings on any room type (their
+        // CONF/CONS bookings stay auto-approved; bookings they file on rooms
+        // they don't own remain PENDING and need labhead/labtech review).
         const activeSchedules = await prisma.Schedule.findMany({
             where: { Room_ID: newRoom, IsActive: true }
         });
@@ -576,7 +596,6 @@ const updateBookingStatus = async (req, res) => {
             requiresSecretaryReview
             && (status === 'APPROVED' || status === 'REJECTED')
             && approverRole !== 'SECRETARY'
-            && approverRole !== 'ADMIN'
         ) {
             return res.status(403).json({
                 success: false,
@@ -585,9 +604,9 @@ const updateBookingStatus = async (req, res) => {
             });
         }
 
-        // Only allow status changes for PENDING bookings, unless cancelling (staff or owner) or ADMIN.
+        // Only allow status changes for PENDING bookings, unless cancelling (staff or owner).
         const isCancellation = status === 'CANCELLED';
-        const canActOnNonPending = approverRole === 'ADMIN' || isCancellation;
+        const canActOnNonPending = isCancellation;
         if (existingBooking.Status !== 'PENDING' && !canActOnNonPending) {
             return res.status(400).json({
                 error: 'Bad Request',
@@ -839,16 +858,6 @@ const createBookingsWeekly = async (req, res) => {
             start: new Date(s.startTime),
             end: new Date(s.endTime)
         }));
-
-        for (const slot of normalizedSlots) {
-            if (slot.start.getDay() === 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Bookings are not allowed on Sundays',
-                    conflictingSlots: [{ index: slot.idx, reason: 'Sunday not allowed' }]
-                });
-            }
-        }
 
         // Detect internal overlaps within the submitted slots
         const sortedSlots = [...normalizedSlots].sort((a, b) => a.start - b.start);

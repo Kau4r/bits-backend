@@ -27,6 +27,7 @@ model User {
   Audit_Log                   Audit_Log[]
   ApprovedBookings            Booked_Room[]       @relation("ScheduleApprover")
   Booked_Room                 Booked_Room[]
+  Booking_Series              Booking_Series[]    @relation("SeriesOwner")
   LentItems                   Borrow_Item[]       @relation("BorroweeRelation")
   BorrowedItems               Borrow_Item[]       @relation("BorrowerRelation")
   Borrowing_Comp              Borrowing_Comp[]
@@ -201,6 +202,7 @@ model Room {
   Items            Item[]
   Opened_By_User   User?         @relation("RoomOpenedBy", fields: [Opened_By], references: [User_ID])
   Schedule         Schedule[]
+  Booking_Series   Booking_Series[]
   Tickets          Ticket[]
 }
 
@@ -225,26 +227,60 @@ model Schedule {
 }
 
 model Booked_Room {
-  Booked_Room_ID Int         @id @default(autoincrement())
+  Booked_Room_ID Int             @id @default(autoincrement())
   Room_ID        Int
   User_ID        Int
   Start_Time     DateTime
   End_Time       DateTime
-  Status         String      @default("PENDING")
-  Created_At     DateTime    @default(now())
-  Updated_At     DateTime    @updatedAt
+  Status         String          @default("PENDING")
+  Created_At     DateTime        @default(now())
+  Updated_At     DateTime        @updatedAt
   Purpose        String?
   Schedule_ID    Int?
   Approved_By    Int?
   Notes          String?
-  Queue_Status   QueueStatus @default(OPEN)
+  Queue_Status   QueueStatus     @default(OPEN)
+  // Series linkage. Series_ID points at the recurring rule that produced this row.
+  // Original_Start identifies which generated occurrence this row overrides
+  // (a moved/cancelled instance). One-off bookings keep both null.
+  Series_ID      Int?
+  Original_Start DateTime?
   Audit_Log      Audit_Log[]
-  Approver       User?       @relation("ScheduleApprover", fields: [Approved_By], references: [User_ID])
-  Room           Room        @relation(fields: [Room_ID], references: [Room_ID])
-  Schedule       Schedule?   @relation(fields: [Schedule_ID], references: [Schedule_ID])
-  User           User        @relation(fields: [User_ID], references: [User_ID])
+  Approver       User?           @relation("ScheduleApprover", fields: [Approved_By], references: [User_ID])
+  Room           Room            @relation(fields: [Room_ID], references: [Room_ID])
+  Schedule       Schedule?       @relation(fields: [Schedule_ID], references: [Schedule_ID])
+  User           User            @relation(fields: [User_ID], references: [User_ID])
+  Series         Booking_Series? @relation(fields: [Series_ID], references: [Series_ID], onDelete: Cascade)
 
+  @@index([Series_ID, Original_Start])
   @@map("Booked_Room")
+}
+
+// A recurring booking rule. Stores the RRULE string + anchor times once and
+// generates virtual occurrences on demand. Individual `Booked_Room` rows are
+// only persisted when an instance is overridden (moved, cancelled, edited
+// by itself) or when an exclusion is added to skip a date.
+model Booking_Series {
+  Series_ID       Int           @id @default(autoincrement())
+  Room_ID         Int
+  User_ID         Int           // owner (booker) of the series
+  Title           String
+  Purpose         String?       @db.VarChar(500)
+  Notes           String?       @db.VarChar(500)
+  Recurrence_Rule String                       // RFC-5545 RRULE (FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=...)
+  Anchor_Start    DateTime                     // first occurrence start (drives time-of-day for all instances)
+  Anchor_End      DateTime                     // first occurrence end
+  Excluded_Dates  String[]      @default([])   // YYYY-MM-DD list of skipped occurrences
+  Status          String        @default("APPROVED") // PENDING | APPROVED — approval applies to the whole series
+  Created_At      DateTime      @default(now())
+  Updated_At      DateTime      @updatedAt
+  Bookings        Booked_Room[]
+  Room            Room          @relation(fields: [Room_ID], references: [Room_ID])
+  User            User          @relation("SeriesOwner", fields: [User_ID], references: [User_ID])
+
+  @@index([Room_ID])
+  @@index([User_ID])
+  @@map("Booking_Series")
 }
 
 model Audit_Log {

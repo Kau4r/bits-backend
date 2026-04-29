@@ -15,9 +15,67 @@ const {
     updateOccupancyStatus,
     getActiveQueues
 } = require('./bookings.controller');
+const {
+    createBookingSeries,
+    updateBookingSeries,
+    deleteBookingSeries,
+    upsertSeriesOverride,
+    excludeSeriesDate,
+    decideSeriesStatus
+} = require('./bookingSeries.controller');
 
 // Create a new room booking
 router.post('/', authenticateToken, validate(bookingSchemas.create), asyncHandler(createBooking));
+
+// Create a recurring booking series (RFC-5545 RRULE driven). One row in
+// Booking_Series; occurrences are expanded virtually on read.
+router.post(
+    '/series',
+    authenticateToken,
+    validate(bookingSchemas.createSeries),
+    asyncHandler(createBookingSeries)
+);
+
+// Update an entire series ("edit all events"). Re-validates every occurrence
+// against existing schedules + bookings when anchor/room change.
+router.patch(
+    '/series/:id',
+    authenticateToken,
+    validate(bookingSchemas.updateSeries),
+    asyncHandler(updateBookingSeries)
+);
+
+// Cancel a series (cascades to its overrides via FK).
+router.delete('/series/:id', authenticateToken, asyncHandler(deleteBookingSeries));
+
+// Edit a single occurrence in a series — creates/updates an override row
+// keyed by (Series_ID, Original_Start). Other occurrences keep following the rule.
+router.post(
+    '/series/:id/overrides',
+    authenticateToken,
+    validate(bookingSchemas.seriesOverride),
+    asyncHandler(upsertSeriesOverride)
+);
+
+// Skip a single occurrence (single-instance delete). Adds the date to
+// Excluded_Dates and removes any existing override for that slot.
+router.post(
+    '/series/:id/exclude',
+    authenticateToken,
+    validate(bookingSchemas.seriesExclude),
+    asyncHandler(excludeSeriesDate)
+);
+
+// Approve or reject a recurring series. With applyToSeries=true the entire
+// series flips status; conflicting occurrences get auto-rejected as overrides
+// with a generated reason note. With applyToSeries=false only the occurrence
+// at Original_Start is decided (an override row is materialized).
+router.post(
+    '/series/:id/decision',
+    authenticateToken,
+    validate(bookingSchemas.seriesDecision),
+    asyncHandler(decideSeriesStatus)
+);
 
 // Create a full week of bookings for a single room (lab-tech weekly student-usage schedule)
 router.post(
