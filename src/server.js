@@ -125,6 +125,7 @@ app.use('/tickets', require('./modules/tickets/tickets.routes'));
 app.use('/rooms', require('./modules/rooms/rooms.routes'));
 app.use('/bookings', require('./modules/bookings/bookings.routes'));
 app.use('/computers', require('./modules/computers/computers.routes'));
+app.use('/computer-suggestions', require('./modules/computerSuggestions/computerSuggestions.routes'));
 
 app.use('/borrowing', require('./modules/borrowing/borrowing.routes'));
 app.use('/notifications', require('./modules/notifications/notifications.routes'));

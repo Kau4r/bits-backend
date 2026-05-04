@@ -99,13 +99,22 @@ const getItems = async (req, res) => {
 // Get available items by type (for computer assembly)
 const getAvailableItems = async (req, res) => {
   try {
-    const { type, status } = req.query;
+    const { type, status, computerId } = req.query;
+
+    // When computerId is supplied, treat items already attached to that
+    // computer as "available" — otherwise removing a component row in the
+    // edit dialog (without saving) hides the item from the re-add picker
+    // because it's still linked in the DB.
+    const parsedComputerId = computerId !== undefined && computerId !== ''
+      ? parseInt(computerId, 10)
+      : null;
+    const computerFilter = parsedComputerId !== null && !Number.isNaN(parsedComputerId)
+      ? { none: { Computer_ID: { not: parsedComputerId } } }
+      : { none: {} };
 
     const where = {
       Status: status || 'AVAILABLE',
-      Computer: {
-        none: {} // Not assigned to any computer
-      }
+      Computer: computerFilter,
     };
 
     if (type) {
@@ -769,9 +778,37 @@ const importInventoryCsv = async (req, res) => {
   }
 };
 
+// GET /inventory/item-types - Distinct Item_Type values present in the inventory.
+// Used by the labtech RoomDetailModal "Add Item Type" picker so the list of
+// available component types is data-driven instead of hardcoded.
+const getItemTypes = async (_req, res) => {
+  try {
+    const rows = await prisma.item.findMany({
+      distinct: ['Item_Type'],
+      select: { Item_Type: true },
+      orderBy: { Item_Type: 'asc' },
+    });
+
+    // Normalize SYSTEM_UNIT to MINI_PC so callers see one canonical type
+    // (matches inventory/getAvailableItems which already merges them).
+    const normalized = new Set();
+    for (const row of rows) {
+      const raw = (row.Item_Type || '').trim().toUpperCase();
+      if (!raw) continue;
+      normalized.add(raw === 'SYSTEM_UNIT' ? 'MINI_PC' : raw);
+    }
+
+    res.json({ success: true, data: [...normalized].sort() });
+  } catch (error) {
+    console.error('Error fetching item types:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch item types' });
+  }
+};
+
 module.exports = {
   getItems,
   getAvailableItems,
+  getItemTypes,
   getItemByCode,
   getItemById,
   createItem,

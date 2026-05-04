@@ -7,6 +7,7 @@ const asyncHandler = require('../../utils/asyncHandler');
 const {
   getItems,
   getAvailableItems,
+  getItemTypes,
   getItemByCode,
   getItemById,
   createItem,
@@ -44,6 +45,9 @@ router.get('/', asyncHandler(getItems));
 
 // Get available items by type (for computer assembly)
 router.get('/available', asyncHandler(getAvailableItems));
+
+// Get distinct item types currently present in inventory (for dynamic component pickers)
+router.get('/item-types', authenticateToken, asyncHandler(getItemTypes));
 
 // Get item by code
 router.get('/code/:itemCode', authenticateToken, authorize('LAB_HEAD', 'LAB_TECH'), asyncHandler(getItemByCode));

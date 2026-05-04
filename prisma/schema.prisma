@@ -352,6 +352,14 @@ model Borrowing_Comp {
   User              User     @relation(fields: [User_ID], references: [User_ID])
 }
 
+model Computer_Suggestion {
+  Suggestion_ID Int      @id @default(autoincrement())
+  Name          String   @unique
+  Item_Types    Json
+  Created_At    DateTime @default(now())
+  Updated_At    DateTime @updatedAt
+}
+
 model Computer {
   Computer_ID       Int                 @id @default(autoincrement())
   Name              String
