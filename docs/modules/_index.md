@@ -6,6 +6,7 @@
 | bookings | `src/modules/bookings/` | any auth; LAB_TECH/LAB_HEAD/ADMIN for write-restricted ops | Room booking CRUD, recurring series (RRULE), occupancy queues |
 | borrowing | `src/modules/borrowing/` | any auth; LAB_TECH/LAB_HEAD/ADMIN for staff ops | Equipment borrow requests, walk-in lending, approve/reject/return |
 | computers | `src/modules/computers/` | any auth (read); ADMIN/LAB_HEAD/LAB_TECH (write/delete) | Computer asset CRUD and CSV/XLSX bulk import |
+| computerSuggestions | `src/modules/computerSuggestions/` | any auth (read); ADMIN/LAB_HEAD/LAB_TECH (write) | Reusable PC component-bundle suggestions (item-type presets applied when adding a PC) |
 | dashboard | `src/modules/dashboard/` | any auth | Aggregated metrics for the dashboard home |
 | forms | `src/modules/forms/` | ADMIN/LAB_HEAD/LAB_TECH | Internal form tracking with attachments, archive, and transfer |
 | heartbeat | `src/modules/heartbeat/` | any auth; LAB_TECH/LAB_HEAD/ADMIN for read ops | Computer presence/session tracking via periodic heartbeats |

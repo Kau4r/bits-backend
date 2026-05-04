@@ -25,6 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const prisma = require('../src/lib/prisma');
 const { readXlsxWorkbook } = require('../src/utils/xlsxReader');
+const { NO_BRAND } = require('../src/utils/inventoryNormalize');
 
 const ASSET_CODE_RE = /^[A-Z][A-Z0-9]{1,4}-\d{2,4}-[A-Z0-9]+$/i;
 
@@ -138,8 +139,8 @@ const normalizeStatus = (s) => {
 
 const inferBrandAndSerial = (detail) => {
   const t = cleanText(detail);
-  if (!t) return { Brand: null, Serial_Number: null };
-  if (/\d/.test(t)) return { Brand: null, Serial_Number: t };
+  if (!t) return { Brand: NO_BRAND, Serial_Number: null };
+  if (/\d/.test(t)) return { Brand: NO_BRAND, Serial_Number: t };
   return { Brand: t.toUpperCase(), Serial_Number: null };
 };
 

@@ -526,7 +526,7 @@ class NotificationService {
     return this.createNotification({
       type: 'ITEM_BORROWED',
       title: 'Item Borrowed',
-      message: `You have borrowed ${item.Item_Code} (${item.Brand || 'No Brand'}).`,
+      message: `You have borrowed ${item.Item_Code} (${item.Brand || 'None'}).`,
       userId: user.User_ID,
       relatedId: item.Item_ID,
       relatedType: 'Item',

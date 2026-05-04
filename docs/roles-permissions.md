@@ -72,6 +72,17 @@ Note: routes without `authorize()` are gated only by `authenticateToken`; the co
 
 ---
 
+## computerSuggestions
+
+| Method | Path | Roles | Purpose |
+|---|---|---|---|
+| GET | /api/computer-suggestions | any auth | List PC component-bundle suggestions (lab-wide presets) |
+| POST | /api/computer-suggestions | ADMIN, LAB_HEAD, LAB_TECH | Create a suggestion (name + array of item types) |
+| PUT | /api/computer-suggestions/:id | ADMIN, LAB_HEAD, LAB_TECH | Update a suggestion |
+| DELETE | /api/computer-suggestions/:id | ADMIN, LAB_HEAD, LAB_TECH | Delete a suggestion |
+
+---
+
 ## dashboard
 
 | Method | Path | Roles | Purpose |
@@ -116,6 +127,7 @@ Note: routes without `authorize()` are gated only by `authenticateToken`; the co
 |---|---|---|---|
 | GET | /api/inventory | (public) | List all inventory items |
 | GET | /api/inventory/available | (public) | List available items by type (computer assembly) |
+| GET | /api/inventory/item-types | any auth | List distinct Item_Type values currently in inventory (powers the labtech RoomDetailModal Add Item Type picker) |
 | GET | /api/inventory/code/:itemCode | LAB_HEAD, LAB_TECH | Get item by item code |
 | GET | /api/inventory/:id | (public) | Get item by ID |
 | POST | /api/inventory | ADMIN, LAB_HEAD, LAB_TECH | Create an inventory item |

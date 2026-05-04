@@ -33,10 +33,14 @@ const normalizeItemType = (value = 'OTHER') => {
   return normalized;
 };
 
+// Canonical "no brand" string. Stored in the DB and rendered verbatim by the
+// frontend, so every row has a non-blank brand without per-call-site fallbacks.
+const NO_BRAND = 'None';
+
 const normalizeBrand = (value) => {
-  if (value === undefined || value === null) return null;
+  if (value === undefined || value === null) return NO_BRAND;
   const normalized = String(value).trim().toUpperCase();
-  if (!normalized || BRAND_SENTINELS.has(normalized)) return null;
+  if (!normalized || BRAND_SENTINELS.has(normalized)) return NO_BRAND;
   return normalized;
 };
 
@@ -61,13 +65,29 @@ const isSyntheticSerial = (value) => {
   return SYNTHETIC_SERIAL_REGEX.test(String(value).trim());
 };
 
+// True when the stored brand represents "no brand" (null, empty, or the
+// canonical NO_BRAND marker). Use this in place of `!brand` checks so the
+// canonical "None" string is treated as absent for label-building.
+const isNoBrand = (value) => {
+  if (value === undefined || value === null) return true;
+  const trimmed = String(value).trim();
+  return trimmed === '' || trimmed.toUpperCase() === NO_BRAND.toUpperCase();
+};
+
+// Returns the brand for display, or '' when the brand is "no brand". Handy for
+// label templates like `${displayBrand(item.Brand)} ${item.Item_Code}`.trim().
+const displayBrand = (value) => (isNoBrand(value) ? '' : String(value).trim());
+
 module.exports = {
   BRAND_SENTINELS,
   SERIAL_SENTINELS,
+  NO_BRAND,
   normalizeItemType,
   normalizeBrand,
   normalizeSerial,
   buildSyntheticSerial,
   isSyntheticSerial,
+  isNoBrand,
+  displayBrand,
   SYNTHETIC_SERIAL_REGEX,
 };

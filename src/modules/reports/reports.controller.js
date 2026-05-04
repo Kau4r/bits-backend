@@ -1,5 +1,6 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
+const { displayBrand } = require('../../utils/inventoryNormalize');
 
 const csvEscape = (value) => {
     if (value === null || value === undefined) return '';
@@ -465,7 +466,7 @@ const autoPopulate = async (req, res) => {
         const locationParts = [];
         if (ticket.Location) locationParts.push(ticket.Location);
         if (ticket.Room) locationParts.push(ticket.Room.Name);
-        if (ticket.Item) locationParts.push(`${ticket.Item.Brand || ''} ${ticket.Item.Item_Code || ''}`.trim());
+        if (ticket.Item) locationParts.push(`${displayBrand(ticket.Item.Brand)} ${ticket.Item.Item_Code || ''}`.trim());
         const prefix = ticket.Category
             ? `[${ticket.Category.charAt(0) + ticket.Category.slice(1).toLowerCase()}] `
             : '';

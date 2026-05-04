@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const prisma = require('../lib/prisma');
 const NotificationService = require('../services/notificationService');
 const AuditLogger = require('../utils/auditLogger');
+const { displayBrand } = require('../utils/inventoryNormalize');
 
 // Check for bookings ending soon and send notifications
 const checkUpcomingBookings = async () => {
@@ -235,7 +236,7 @@ const checkOverdueBorrowings = async () => {
         });
 
         const itemLabel = b.Item
-          ? `${b.Item.Brand || ''} ${b.Item.Item_Code || b.Item.Item_Type || ''}`.trim()
+          ? `${displayBrand(b.Item.Brand)} ${b.Item.Item_Code || b.Item.Item_Type || ''}`.trim()
           : 'your borrowed item';
 
         await AuditLogger.logBorrowing(

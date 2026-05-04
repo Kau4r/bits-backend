@@ -1,6 +1,7 @@
 const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
 const NotificationManager = require('../../services/notificationManager');
+const { displayBrand } = require('../../utils/inventoryNormalize');
 
 // GET /api/borrowing - List borrowing requests
 const getBorrowings = async (req, res) => {
@@ -532,7 +533,7 @@ const createWalkinBorrowing = async (req, res) => {
         data: { Status: 'BORROWED', User_ID: resolvedBorrowerId },
     });
 
-    const itemLabel = `${item.Brand || ''} ${item.Item_Code || item.Item_Type || ''}`.trim();
+    const itemLabel = `${displayBrand(item.Brand)} ${item.Item_Code || item.Item_Type || ''}`.trim();
     const borrowerLabel = borrower
         ? `${borrower.First_Name} ${borrower.Last_Name}`
         : `walk-in ID ${identifierStr}`;

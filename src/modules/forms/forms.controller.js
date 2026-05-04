@@ -190,26 +190,33 @@ const getTransferGate = (form, targetDepartment) => {
         };
     }
 
-    const { visitedDepartments, currentDepartment } = getVisitedWorkflowDepartments(form);
+    const currentDepartment = normalizeDepartment(form.Department);
 
     if (targetDepartment === currentDepartment) {
         return { allowed: true, noChange: true };
     }
 
-    if (visitedDepartments.has(targetDepartment)) {
+    // Forward target = workflow[currentIndex + 1]; backward target = workflow[currentIndex - 1].
+    // Even forms moved backward must walk through every subsequent step in order on the way forward,
+    // and can only step back one workflow position at a time.
+    const currentIndex = workflow.indexOf(currentDepartment);
+    const nextDepartment = currentIndex >= 0 && currentIndex < workflow.length - 1
+        ? workflow[currentIndex + 1]
+        : undefined;
+    const previousDepartment = currentIndex > 0 ? workflow[currentIndex - 1] : undefined;
+
+    if (targetDepartment === nextDepartment) {
         return { allowed: true };
     }
 
-    const nextRequiredDepartment = workflow.find(department => !visitedDepartments.has(department));
-
-    if (targetDepartment === nextRequiredDepartment) {
-        return { allowed: true };
+    if (targetDepartment === previousDepartment) {
+        return { allowed: true, isBackward: true };
     }
 
     return {
         allowed: false,
-        error: nextRequiredDepartment
-            ? `Cannot transfer to ${targetDepartment} before visiting ${nextRequiredDepartment}`
+        error: nextDepartment
+            ? `Cannot transfer to ${targetDepartment} — only ${nextDepartment} is allowed next`
             : `Cannot transfer to ${targetDepartment}`
     };
 };
@@ -797,28 +804,13 @@ const transferForm = async (req, res) => {
             return res.json({ success: true, data: existingForm });
         }
 
-        // Detect backward transfer: target department was already visited AND is not the next required step
-        const { visitedDepartments } = getVisitedWorkflowDepartments(existingForm);
-        const workflow = getWorkflowForFormType(existingForm.Form_Type);
-        const nextRequiredDepartment = workflow.find(d => !visitedDepartments.has(d));
-        const isBackwardTransfer = visitedDepartments.has(departmentEnum) && departmentEnum !== nextRequiredDepartment;
+        const isBackwardTransfer = !!transferGate.isBackward;
 
-        if (isBackwardTransfer) {
-            const trimmedReason = String(reason || '').trim();
-            if (!trimmedReason) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Reason required when returning a form to a previous step'
-                });
-            }
-        } else {
-            // Forward transfer: still requires APPROVED status
-            if (existingForm.Status !== 'APPROVED') {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Form must be approved before it can be transferred to another department'
-                });
-            }
+        if (!isBackwardTransfer && existingForm.Status !== 'APPROVED') {
+            return res.status(400).json({
+                success: false,
+                error: 'Form must be approved before it can be transferred to another department'
+            });
         }
 
         if (!isBackwardTransfer && departmentEnum === 'COMPLETED' && !hasCurrentStepAttachment(existingForm)) {
@@ -831,8 +823,6 @@ const transferForm = async (req, res) => {
             });
         }
 
-        const historyAction = isBackwardTransfer ? 'RETURNED' : 'TRANSFERRED';
-
         // Update form and add history entry
         const form = await prisma.form.update({
             where: { Form_ID: formId },
@@ -843,9 +833,9 @@ const transferForm = async (req, res) => {
                 History: {
                     create: {
                         Department: departmentEnum,
-                        Notes: notes || `${isBackwardTransfer ? 'Returned' : 'Transferred'} to ${departmentEnum}`,
+                        Notes: notes || `${isBackwardTransfer ? 'Moved back to' : 'Transferred to'} ${departmentEnum}`,
                         Performed_By: req.user.User_ID,
-                        Action: historyAction,
+                        Action: isBackwardTransfer ? 'RETURNED' : 'TRANSFERRED',
                         Reason: String(reason || '').trim() || null
                     }
                 }

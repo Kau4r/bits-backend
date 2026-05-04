@@ -6,6 +6,7 @@ const {
     parseCsvBuffer,
 } = require('../../utils/csvImport');
 const { readXlsxWorkbook } = require('../../utils/xlsxReader');
+const { normalizeBrand, displayBrand } = require('../../utils/inventoryNormalize');
 
 const VALID_COMPUTER_STATUSES = ['AVAILABLE', 'IN_USE', 'MAINTENANCE', 'DECOMMISSIONED'];
 const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED'];
@@ -318,7 +319,7 @@ const importComputerRow = async (tx, row, roomId, userId) => {
         itemsToCreate.push({
             Item_Code: item.itemCode,
             Item_Type: item.itemType,
-            Brand: item.brand || null,
+            Brand: normalizeBrand(item.brand),
             Serial_Number: item.serialNumber || null,
             Status: item.status || 'AVAILABLE',
             Room_ID: roomId,
@@ -452,13 +453,13 @@ const createComputer = async (req, res) => {
                     const foundItem = foundItems.find(item => item.Item_ID === itemId);
 
                     if (foundItem.Status !== 'AVAILABLE') {
-                        const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is not available`);
+                        const error = new Error(`${displayBrand(foundItem.Brand) || foundItem.Item_Code} is not available`);
                         error.statusCode = 400;
                         throw error;
                     }
 
                     if (foundItem.Computer.length > 0) {
-                        const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is already assigned to ${foundItem.Computer[0].Name}`);
+                        const error = new Error(`${displayBrand(foundItem.Brand) || foundItem.Item_Code} is already assigned to ${foundItem.Computer[0].Name}`);
                         error.statusCode = 400;
                         throw error;
                     }
@@ -479,7 +480,7 @@ const createComputer = async (req, res) => {
                     itemsToCreate.push({
                         Item_Code: itemCode,
                         Item_Type: item.itemType,
-                        Brand: item.brand || null,
+                        Brand: normalizeBrand(item.brand),
                         Serial_Number: item.serialNumber || null,
                         Status: 'AVAILABLE',
                         Room_ID: parsedRoomId,
@@ -653,13 +654,13 @@ const updateComputer = async (req, res) => {
                         const assignedComputer = foundItem.Computer.find(assigned => assigned.Computer_ID !== computerId);
 
                         if (assignedComputer) {
-                            const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is already assigned to ${assignedComputer.Name}`);
+                            const error = new Error(`${displayBrand(foundItem.Brand) || foundItem.Item_Code} is already assigned to ${assignedComputer.Name}`);
                             error.statusCode = 400;
                             throw error;
                         }
 
                         if (!existingItemIdSet.has(itemId) && foundItem.Status !== 'AVAILABLE') {
-                            const error = new Error(`${foundItem.Brand || foundItem.Item_Code} is not available`);
+                            const error = new Error(`${displayBrand(foundItem.Brand) || foundItem.Item_Code} is not available`);
                             error.statusCode = 400;
                             throw error;
                         }
