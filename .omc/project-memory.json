@@ -228,6 +228,12 @@
       "type": "file"
     },
     {
+      "path": "src/modules/reports/reports.controller.js",
+      "accessCount": 3,
+      "lastAccessed": 1778005396735,
+      "type": "file"
+    },
+    {
       "path": "prisma/schema.prisma",
       "accessCount": 2,
       "lastAccessed": 1777995323889,
@@ -249,12 +255,6 @@
       "path": "src/modules/dashboard/dashboard.controller.js",
       "accessCount": 2,
       "lastAccessed": 1777999068497,
-      "type": "file"
-    },
-    {
-      "path": "src/modules/reports/reports.controller.js",
-      "accessCount": 2,
-      "lastAccessed": 1777999077052,
       "type": "file"
     },
     {
