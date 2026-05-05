@@ -1,0 +1,328 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1777994891486,
+  "projectRoot": "/home/kau4r/Documents/Coding/bits-backend",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "express",
+        "version": "5.1.0",
+        "category": "backend"
+      },
+      {
+        "name": "jest",
+        "version": "30.3.0",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "cd /home/kau4r/Documents/Coding/bits-frontend && npx tsc --noEmit 2>&1 | head -30",
+    "testCommand": "npm test 2>&1 | tail -35",
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "start": "node src/index.js",
+      "dev": "nodemon src/index.js",
+      "test": "jest --verbose --forceExit",
+      "seed:rooms": "node scripts/seed-workbook-rooms.js",
+      "seed:inventory": "node scripts/seed-ay25-26-inventory.js"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 3,
+      "lastAccessed": 1777994891458,
+      "keyFiles": [
+        "inventory-import-workbook-plan.md",
+        "inventory-item-type-production-cleanup.md",
+        "roles-permissions.md"
+      ]
+    },
+    "prisma": {
+      "path": "prisma",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1777994891459,
+      "keyFiles": [
+        "schema.prisma",
+        "seed.js"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 3,
+      "lastAccessed": 1777994891469,
+      "keyFiles": [
+        "backfill-inventory-data.js",
+        "seed-ay25-26-inventory.js",
+        "seed-workbook-rooms.js"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1777994891475,
+      "keyFiles": [
+        "index.js",
+        "server.js"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 2,
+      "lastAccessed": 1777994891476,
+      "keyFiles": [
+        "app.js",
+        "setup.js"
+      ]
+    },
+    "uploads": {
+      "path": "uploads",
+      "purpose": null,
+      "fileCount": 37,
+      "lastAccessed": 1777994891477,
+      "keyFiles": [
+        "1769176175007-672845421.pdf",
+        "1772795637503-677293811.pdf",
+        "1773025322407-931882788.pdf",
+        "1776653742262-679141626.pdf",
+        "1776653746512-944982656.pdf"
+      ]
+    },
+    "prisma/migrations": {
+      "path": "prisma/migrations",
+      "purpose": "Database migrations",
+      "fileCount": 1,
+      "lastAccessed": 1777994891479,
+      "keyFiles": [
+        "migration_lock.toml"
+      ]
+    },
+    "src/lib": {
+      "path": "src/lib",
+      "purpose": "Library code",
+      "fileCount": 1,
+      "lastAccessed": 1777994891480,
+      "keyFiles": [
+        "prisma.js"
+      ]
+    },
+    "src/middleware": {
+      "path": "src/middleware",
+      "purpose": "Middleware",
+      "fileCount": 7,
+      "lastAccessed": 1777994891481,
+      "keyFiles": [
+        "auth.js",
+        "authLogging.js",
+        "authorize.js"
+      ]
+    },
+    "src/services": {
+      "path": "src/services",
+      "purpose": "Business logic services",
+      "fileCount": 4,
+      "lastAccessed": 1777994891482,
+      "keyFiles": [
+        "auditService.js",
+        "notificationManager.js",
+        "notificationService.js"
+      ]
+    },
+    "src/utils": {
+      "path": "src/utils",
+      "purpose": "Utility functions",
+      "fileCount": 8,
+      "lastAccessed": 1777994891483,
+      "keyFiles": [
+        "asyncHandler.js",
+        "auditLogger.js",
+        "csvImport.js"
+      ]
+    },
+    "tests/helpers": {
+      "path": "tests/helpers",
+      "purpose": "Helper functions",
+      "fileCount": 2,
+      "lastAccessed": 1777994891484,
+      "keyFiles": [
+        "auth.js",
+        "testData.js"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/modules/bookings/bookings.controller.js",
+      "accessCount": 17,
+      "lastAccessed": 1778001409650,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/borrowing/borrowing.controller.js",
+      "accessCount": 9,
+      "lastAccessed": 1778001371638,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/forms/forms.controller.js",
+      "accessCount": 9,
+      "lastAccessed": 1778001418046,
+      "type": "file"
+    },
+    {
+      "path": "src/server.js",
+      "accessCount": 6,
+      "lastAccessed": 1778003243574,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/computers/computers.controller.js",
+      "accessCount": 4,
+      "lastAccessed": 1778001292339,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/borrowing/borrowing.routes.js",
+      "accessCount": 3,
+      "lastAccessed": 1778001321152,
+      "type": "file"
+    },
+    {
+      "path": "prisma/schema.prisma",
+      "accessCount": 2,
+      "lastAccessed": 1777995323889,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/tickets/tickets.controller.js",
+      "accessCount": 2,
+      "lastAccessed": 1777999066118,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/inventory/inventory.controller.js",
+      "accessCount": 2,
+      "lastAccessed": 1777999067329,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/dashboard/dashboard.controller.js",
+      "accessCount": 2,
+      "lastAccessed": 1777999068497,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/reports/reports.controller.js",
+      "accessCount": 2,
+      "lastAccessed": 1777999077052,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/bookings/bookings.routes.js",
+      "accessCount": 2,
+      "lastAccessed": 1778001322677,
+      "type": "file"
+    },
+    {
+      "path": "src/index.js",
+      "accessCount": 2,
+      "lastAccessed": 1778003244142,
+      "type": "file"
+    },
+    {
+      "path": "docs/modules/_index.md",
+      "accessCount": 1,
+      "lastAccessed": 1777995255980,
+      "type": "file"
+    },
+    {
+      "path": "docs/roles-permissions.md",
+      "accessCount": 1,
+      "lastAccessed": 1777995256860,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/rooms/rooms.controller.js",
+      "accessCount": 1,
+      "lastAccessed": 1777995322914,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/tickets/tickets.routes.js",
+      "accessCount": 1,
+      "lastAccessed": 1777999065654,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/tickets/tickets.validation.js",
+      "accessCount": 1,
+      "lastAccessed": 1777999066245,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/computers/computers.routes.js",
+      "accessCount": 1,
+      "lastAccessed": 1777999066322,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/inventory/inventory.routes.js",
+      "accessCount": 1,
+      "lastAccessed": 1777999067128,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/reports/reports.routes.js",
+      "accessCount": 1,
+      "lastAccessed": 1777999075031,
+      "type": "file"
+    },
+    {
+      "path": "src/modules/forms/forms.routes.js",
+      "accessCount": 1,
+      "lastAccessed": 1777999075498,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

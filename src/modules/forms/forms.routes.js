@@ -3,6 +3,7 @@ const router = express.Router();
 const { authenticateToken } = require('../../middleware/auth');
 const { authorize } = require('../../middleware/authorize');
 const asyncHandler = require('../../utils/asyncHandler');
+const { validate, formSchemas } = require('../../middleware/validate');
 const {
     getForms,
     getFormById,
@@ -21,8 +22,8 @@ const canManageForms = authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH');
 
 router.get('/', authenticateToken, canManageForms, asyncHandler(getForms));
 router.get('/:id', authenticateToken, canManageForms, asyncHandler(getFormById));
-router.post('/', authenticateToken, canManageForms, asyncHandler(createForm));
-router.patch('/:id', authenticateToken, canManageForms, asyncHandler(updateForm));
+router.post('/', authenticateToken, canManageForms, validate(formSchemas.create), asyncHandler(createForm));
+router.patch('/:id', authenticateToken, canManageForms, validate(formSchemas.update), asyncHandler(updateForm));
 router.patch('/:id/archive', authenticateToken, canManageForms, asyncHandler(archiveForm));
 router.patch('/:id/unarchive', authenticateToken, canManageForms, asyncHandler(unarchiveForm));
 router.patch('/:id/received', authenticateToken, canManageForms, asyncHandler(setFormReceived));

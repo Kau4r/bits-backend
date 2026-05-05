@@ -50,7 +50,7 @@ describe('Users Routes', () => {
 
   describe('GET /users/me', () => {
     it('should return the authenticated user', async () => {
-      const res = await request(app).get('/users/me');
+      const res = await request(app).get('/api/users/me');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -68,7 +68,7 @@ describe('Users Routes', () => {
       ];
       prisma.user.findMany.mockResolvedValue(mockUsers);
 
-      const res = await request(app).get('/users');
+      const res = await request(app).get('/api/users');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -78,7 +78,7 @@ describe('Users Routes', () => {
     it('should filter by active status', async () => {
       prisma.user.findMany.mockResolvedValue([]);
 
-      const res = await request(app).get('/users?active=true');
+      const res = await request(app).get('/api/users?active=true');
 
       expect(res.status).toBe(200);
       expect(prisma.user.findMany).toHaveBeenCalledWith(
@@ -91,7 +91,7 @@ describe('Users Routes', () => {
     it('should filter by role', async () => {
       prisma.user.findMany.mockResolvedValue([]);
 
-      const res = await request(app).get('/users?role=ADMIN');
+      const res = await request(app).get('/api/users?role=ADMIN');
 
       expect(res.status).toBe(200);
       expect(prisma.user.findMany).toHaveBeenCalledWith(
@@ -104,7 +104,7 @@ describe('Users Routes', () => {
     it('should handle database errors', async () => {
       prisma.user.findMany.mockRejectedValue(new Error('DB error'));
 
-      const res = await request(app).get('/users');
+      const res = await request(app).get('/api/users');
 
       expect(res.status).toBe(500);
       expect(res.body.success).toBe(false);
@@ -129,7 +129,7 @@ describe('Users Routes', () => {
       });
 
       const res = await request(app)
-        .post('/users')
+        .post('/api/users')
         .send(newUser);
 
       expect(res.status).toBe(201);
@@ -141,7 +141,7 @@ describe('Users Routes', () => {
       prisma.User.findFirst.mockResolvedValue({ User_ID: 1, Email: 'existing@test.com' });
 
       const res = await request(app)
-        .post('/users')
+        .post('/api/users')
         .send({
           User_Role: 'STUDENT',
           First_Name: 'Dup',
@@ -157,7 +157,7 @@ describe('Users Routes', () => {
 
     it('should reject missing required fields', async () => {
       const res = await request(app)
-        .post('/users')
+        .post('/api/users')
         .send({ First_Name: 'Incomplete' });
 
       expect(res.status).toBe(400);
@@ -182,7 +182,7 @@ describe('Users Routes', () => {
       prisma.User.update.mockResolvedValue(updatedUser);
 
       const res = await request(app)
-        .put('/users/1')
+        .put('/api/users/1')
         .send({ First_Name: 'Johnny' });
 
       expect(res.status).toBe(200);
@@ -195,7 +195,7 @@ describe('Users Routes', () => {
       prisma.User.findUnique.mockResolvedValue(null);
 
       const res = await request(app)
-        .put('/users/999')
+        .put('/api/users/999')
         .send({ First_Name: 'Nobody' });
 
       expect(res.status).toBe(404);
@@ -217,7 +217,7 @@ describe('Users Routes', () => {
       prisma.User.update.mockResolvedValue({ ...activeUser, Is_Active: false });
       prisma.Audit_Log.create.mockResolvedValue({});
 
-      const res = await request(app).delete('/users/1');
+      const res = await request(app).delete('/api/users/1');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -227,7 +227,7 @@ describe('Users Routes', () => {
     it('should return 404 for non-existent or already inactive user', async () => {
       prisma.User.findFirst.mockResolvedValue(null);
 
-      const res = await request(app).delete('/users/999');
+      const res = await request(app).delete('/api/users/999');
 
       expect(res.status).toBe(404);
       expect(res.body.success).toBe(false);

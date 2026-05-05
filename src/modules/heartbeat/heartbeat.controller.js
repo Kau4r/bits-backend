@@ -221,7 +221,7 @@ const getStatus = async (req, res) => {
 
         return res.json({
             success: true,
-            room: summary[0] // Single room
+            data: summary[0]
         });
     }
 
@@ -230,7 +230,7 @@ const getStatus = async (req, res) => {
 
     res.json({
         success: true,
-        rooms: summary
+        data: summary
     });
 };
 

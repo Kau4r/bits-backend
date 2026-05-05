@@ -4,6 +4,7 @@ const router = express.Router();
 const { authenticateToken } = require('../../middleware/auth');
 const { authorize } = require('../../middleware/authorize');
 const asyncHandler = require('../../utils/asyncHandler');
+const { validate, inventorySchemas } = require('../../middleware/validate');
 const {
   getItems,
   getAvailableItems,
@@ -41,10 +42,10 @@ const uploadCsv = (req, res, next) => {
 };
 
 // Get all items
-router.get('/', asyncHandler(getItems));
+router.get('/', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH', 'FACULTY', 'SECRETARY'), asyncHandler(getItems));
 
 // Get available items by type (for computer assembly)
-router.get('/available', asyncHandler(getAvailableItems));
+router.get('/available', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH', 'FACULTY', 'SECRETARY'), asyncHandler(getAvailableItems));
 
 // Get distinct item types currently present in inventory (for dynamic component pickers)
 router.get('/item-types', authenticateToken, asyncHandler(getItemTypes));
@@ -53,13 +54,13 @@ router.get('/item-types', authenticateToken, asyncHandler(getItemTypes));
 router.get('/code/:itemCode', authenticateToken, authorize('LAB_HEAD', 'LAB_TECH'), asyncHandler(getItemByCode));
 
 // Get item by ID
-router.get('/:id', asyncHandler(getItemById));
+router.get('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH', 'FACULTY', 'SECRETARY'), asyncHandler(getItemById));
 
 // Create new item
-router.post('/', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(createItem));
+router.post('/', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), validate(inventorySchemas.create), asyncHandler(createItem));
 
 // Update item
-router.put('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(updateItem));
+router.put('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), validate(inventorySchemas.update), asyncHandler(updateItem));
 
 // Delete item (soft delete)
 router.delete('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(deleteItem));

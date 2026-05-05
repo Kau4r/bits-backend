@@ -41,19 +41,18 @@ const findManySafely = async (delegate, args = {}, fallback = []) => {
 };
 
 const getDashboardMetrics = async (req, res) => {
-    try {
-        const { User_Role, User_ID } = req.user;
+    const { User_Role, User_ID } = req.user;
 
-        // Response structure based on role
-        let metrics = {
-            role: User_Role,
-            counts: {},
-            distributions: {},
-            summaries: {},
-            recentActivity: [],
-        };
+    // Response structure based on role
+    let metrics = {
+        role: User_Role,
+        counts: {},
+        distributions: {},
+        summaries: {},
+        recentActivity: [],
+    };
 
-        if (User_Role === 'LAB_HEAD' || User_Role === 'ADMIN') {
+    if (User_Role === 'LAB_HEAD' || User_Role === 'ADMIN') {
             // --- LAB HEAD METRICS ---
 
             // 1. Pending Tickets (Needs Approval/Assignment)
@@ -325,11 +324,7 @@ const getDashboardMetrics = async (req, res) => {
             });
         }
 
-        res.json({ success: true, data: metrics });
-    } catch (error) {
-        console.error('Dashboard Metrics Error:', error);
-        res.status(500).json({ success: false, error: 'Failed to fetch dashboard metrics' });
-    }
+    res.json({ success: true, data: metrics });
 };
 
 module.exports = {

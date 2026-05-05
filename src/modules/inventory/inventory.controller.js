@@ -1,4 +1,5 @@
 const prisma = require('../../lib/prisma');
+const { AppError } = require('../../middleware/errorHandler');
 const AuditLogger = require('../../utils/auditLogger');
 const {
   getRowValue,
@@ -63,477 +64,433 @@ const buildImportedItem = (headers, row, defaultRoomId, userId) => {
 
 // Get all items
 const getItems = async (req, res) => {
-  try {
-    const { roomId, status } = req.query;
+  const { roomId, status } = req.query;
 
-    const where = {};
-    if (roomId) {
-      where.Room_ID = parseInt(roomId);
-    }
-    if (status) {
-      where.Status = status;
-    }
-
-    const items = await prisma.item.findMany({
-      where,
-      include: {
-        User: true,
-        ReplacedBy: true,
-        Replaces: true,
-        Borrow_Item: true,
-        Tickets: true,
-        Room: true,
-        Computer: { select: { Computer_ID: true, Name: true, Room_ID: true } }
-      },
-      orderBy: { Created_At: 'desc' }
-    });
-    // Frontend expects the join under `Computers`; expose it there.
-    const data = items.map(({ Computer, ...rest }) => ({ ...rest, Computers: Computer }));
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error fetching items:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch items' });
+  const where = {};
+  if (roomId) {
+    where.Room_ID = parseInt(roomId);
   }
+  if (status) {
+    where.Status = status;
+  }
+
+  const items = await prisma.item.findMany({
+    where,
+    include: {
+      User: true,
+      ReplacedBy: true,
+      Replaces: true,
+      Borrow_Item: true,
+      Tickets: true,
+      Room: true,
+      Computer: { select: { Computer_ID: true, Name: true, Room_ID: true } }
+    },
+    orderBy: { Created_At: 'desc' }
+  });
+  // Frontend expects the join under `Computers`; expose it there.
+  const data = items.map(({ Computer, ...rest }) => ({ ...rest, Computers: Computer }));
+  res.json({ success: true, data });
 };
 
 // Get available items by type (for computer assembly)
 const getAvailableItems = async (req, res) => {
-  try {
-    const { type, status, computerId } = req.query;
+  const { type, status, computerId } = req.query;
 
-    // When computerId is supplied, treat items already attached to that
-    // computer as "available" — otherwise removing a component row in the
-    // edit dialog (without saving) hides the item from the re-add picker
-    // because it's still linked in the DB.
-    const parsedComputerId = computerId !== undefined && computerId !== ''
-      ? parseInt(computerId, 10)
-      : null;
-    const computerFilter = parsedComputerId !== null && !Number.isNaN(parsedComputerId)
-      ? { none: { Computer_ID: { not: parsedComputerId } } }
-      : { none: {} };
+  // When computerId is supplied, treat items already attached to that
+  // computer as "available" — otherwise removing a component row in the
+  // edit dialog (without saving) hides the item from the re-add picker
+  // because it's still linked in the DB.
+  const parsedComputerId = computerId !== undefined && computerId !== ''
+    ? parseInt(computerId, 10)
+    : null;
+  const computerFilter = parsedComputerId !== null && !Number.isNaN(parsedComputerId)
+    ? { none: { Computer_ID: { not: parsedComputerId } } }
+    : { none: {} };
 
-    const where = {
-      Status: status || 'AVAILABLE',
-      Computer: computerFilter,
-    };
+  const where = {
+    Status: status || 'AVAILABLE',
+    Computer: computerFilter,
+  };
 
-    if (type) {
-      const normalizedType = normalizeItemType(type);
-      where.Item_Type = normalizedType === 'MINI_PC'
-        ? { in: ['MINI_PC', 'SYSTEM_UNIT'] }
-        : normalizedType;
-    }
-
-    const items = await prisma.item.findMany({
-      where,
-      select: {
-        Item_ID: true,
-        Item_Code: true,
-        Item_Type: true,
-        Brand: true,
-        Serial_Number: true,
-        Status: true,
-      },
-      orderBy: { Created_At: 'desc' }
-    });
-
-    res.json({ success: true, data: items });
-  } catch (error) {
-    console.error('Error fetching available items:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch available items' });
+  if (type) {
+    const normalizedType = normalizeItemType(type);
+    where.Item_Type = normalizedType === 'MINI_PC'
+      ? { in: ['MINI_PC', 'SYSTEM_UNIT'] }
+      : normalizedType;
   }
+
+  const items = await prisma.item.findMany({
+    where,
+    select: {
+      Item_ID: true,
+      Item_Code: true,
+      Item_Type: true,
+      Brand: true,
+      Serial_Number: true,
+      Status: true,
+    },
+    orderBy: { Created_At: 'desc' }
+  });
+
+  res.json({ success: true, data: items });
 };
 
 // Get item by code
 const getItemByCode = async (req, res) => {
   const { itemCode } = req.params;
-  try {
-    const item = await prisma.item.findUnique({
-      where: { Item_Code: itemCode },
-      include: { Room: true },
-    });
+  const item = await prisma.item.findUnique({
+    where: { Item_Code: itemCode },
+    include: { Room: true },
+  });
 
-    if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
+  if (!item) return res.status(404).json({ success: false, error: 'Item not found' });
 
-    res.json({ success: true, data: item });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
+  res.json({ success: true, data: item });
 };
 
 // Get item by ID
 const getItemById = async (req, res) => {
-  try {
-    const item = await prisma.item.findUnique({
-      where: { Item_ID: parseInt(req.params.id) },
-      include: {
-        User: {
-          select: {
-            User_ID: true,
-            First_Name: true,
-            Last_Name: true,
-            Email: true
-          }
-        },
-        Room: true,
-        ReplacedBy: true,
-        Replaces: true,
-        Borrow_Item: true,
-        Booking: true,
-        Room: true
-      }
-    })
-    if (!item) {
-      return res.status(404).json({ success: false, error: 'Item not found' })
-    }
-    res.json({ success: true, data: item })
-  } catch (error) {
-    console.error(`Error fetching item ${req.params.id}:`, error)
-    res.status(500).json({ success: false, error: 'Failed to fetch item' })
+  const itemId = parseInt(req.params.id, 10);
+  if (Number.isNaN(itemId) || itemId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid ID' });
   }
+  const item = await prisma.item.findUnique({
+    where: { Item_ID: itemId },
+    include: {
+      User: {
+        select: {
+          User_ID: true,
+          First_Name: true,
+          Last_Name: true,
+          Email: true
+        }
+      },
+      Room: true,
+      ReplacedBy: true,
+      Replaces: true,
+      Borrow_Item: true,
+      Booking: true,
+    }
+  });
+  if (!item) {
+    return res.status(404).json({ success: false, error: 'Item not found' });
+  }
+  res.json({ success: true, data: item });
 };
 
 // Create new item
 const createItem = async (req, res) => {
-  try {
+  const {
+    Item_Code,
+    Item_Type = 'OTHER',
+    Brand,
+    Serial_Number,
+    Status = 'AVAILABLE',
+    Room_ID
+  } = req.body;
 
-    const {
-      User_ID, // Optional if we use req.user.User_ID
-      Item_Code,
-      Item_Type = 'OTHER',
-      Brand,
-      Serial_Number,
-      Status = 'AVAILABLE',
-      Room_ID
-    } = req.body;
+  // Always use the authenticated user — never trust User_ID from the request body
+  const creatorId = req.user.User_ID;
 
-    // Use logged in user if User_ID not provided, or override if needed?
-    // Assuming we use the creating user as the 'Owner' or 'Creator'
-    const creatorId = User_ID || req.user.User_ID;
-
-    // Validate required fields
-    if (!Item_Code) {
-      return res.status(400).json({ success: false, error: 'Item_Code is required' });
-    }
-
-    // Check if item code is unique
-    const existingItem = await prisma.item.findFirst({
-      where: { Item_Code }
-    });
-
-    if (existingItem) {
-      return res.status(400).json({ success: false, error: 'Item with this code already exists' });
-    }
-
-    const normalizedItemType = normalizeItemType(Item_Type);
-    if (!normalizedItemType) {
-      return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
-    }
-
-    // Create the item
-    const currentTime = new Date();
-    const itemData = {
-      User: { connect: { User_ID: parseInt(creatorId) } },
-      Item_Code,
-      Item_Type: normalizedItemType,
-      Brand: normalizeBrand(Brand),
-      Serial_Number: normalizeSerial(Serial_Number),
-      Status,
-      Created_At: currentTime,
-      Updated_At: currentTime
-    };
-
-    // Add Room relation if provided
-    if (Room_ID) {
-      const room = await prisma.Room.findUnique({
-        where: { Room_ID: parseInt(Room_ID) }
-      });
-
-      if (!room) {
-        return res.status(400).json({ success: false, error: 'Room not found' });
-      }
-
-      itemData.Room = { connect: { Room_ID: parseInt(Room_ID) } };
-    }
-
-    const item = await prisma.item.create({
-      data: itemData
-    });
-
-    // Audit Log
-    await AuditLogger.log({
-      userId: req.user.User_ID,
-      action: 'ITEM_CREATED',
-      details: `Created item ${Item_Code} (${normalizedItemType})`,
-      logType: 'INVENTORY'
-    });
-
-    res.status(201).json({ success: true, data: item });
-  } catch (error) {
-    console.error('Error creating item:', error);
-    res.status(500).json({ success: false, error: 'Failed to create item' });
+  // Validate required fields
+  if (!Item_Code) {
+    return res.status(400).json({ success: false, error: 'Item_Code is required' });
   }
+
+  // Check if item code is unique
+  const existingItem = await prisma.item.findFirst({
+    where: { Item_Code }
+  });
+
+  if (existingItem) {
+    return res.status(400).json({ success: false, error: 'Item with this code already exists' });
+  }
+
+  const normalizedItemType = normalizeItemType(Item_Type);
+  if (!normalizedItemType) {
+    return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
+  }
+
+  if (Status && !VALID_ITEM_STATUSES.includes(Status)) {
+    return res.status(400).json({ success: false, error: `Invalid status: ${Status}` });
+  }
+
+  // Create the item
+  const currentTime = new Date();
+  const itemData = {
+    User: { connect: { User_ID: parseInt(creatorId) } },
+    Item_Code,
+    Item_Type: normalizedItemType,
+    Brand: normalizeBrand(Brand),
+    Serial_Number: normalizeSerial(Serial_Number),
+    Status,
+    Created_At: currentTime,
+    Updated_At: currentTime
+  };
+
+  // Add Room relation if provided
+  if (Room_ID) {
+    const parsedRoomId = parseInt(Room_ID, 10);
+    if (Number.isNaN(parsedRoomId) || parsedRoomId <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid room ID' });
+    }
+    const room = await prisma.room.findUnique({
+      where: { Room_ID: parsedRoomId }
+    });
+
+    if (!room) {
+      return res.status(400).json({ success: false, error: 'Room not found' });
+    }
+
+    itemData.Room = { connect: { Room_ID: parsedRoomId } };
+  }
+
+  const item = await prisma.item.create({
+    data: itemData
+  });
+
+  // Audit Log
+  await AuditLogger.log({
+    userId: req.user.User_ID,
+    action: 'ITEM_CREATED',
+    details: `Created item ${Item_Code} (${normalizedItemType})`,
+    logType: 'INVENTORY'
+  });
+
+  res.status(201).json({ success: true, data: item });
 };
 
 // Update item
 const updateItem = async (req, res) => {
-  try {
-
-    const itemId = parseInt(req.params.id);
-    const {
-      Item_Type,
-      Brand,
-      Serial_Number,
-      Status,
-      Room_ID,
-      IsBorrowable,
-    } = req.body;
-
-    const updateData = {};
-
-    if (Item_Type !== undefined) {
-      const normalizedItemType = normalizeItemType(Item_Type);
-      if (!normalizedItemType) {
-        return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
-      }
-      updateData.Item_Type = normalizedItemType;
-    }
-
-    if (Brand !== undefined) updateData.Brand = normalizeBrand(Brand);
-    if (Serial_Number !== undefined) updateData.Serial_Number = normalizeSerial(Serial_Number);
-    if (Status !== undefined) {
-      if (!VALID_ITEM_STATUSES.includes(Status)) {
-        return res.status(400).json({ success: false, error: 'Invalid status' });
-      }
-      updateData.Status = Status;
-    }
-    if (IsBorrowable !== undefined) updateData.IsBorrowable = Boolean(IsBorrowable);
-    if (Room_ID !== undefined) {
-      const parsedRoomId = Room_ID ? parseInt(Room_ID) : null;
-      if (Room_ID && Number.isNaN(parsedRoomId)) {
-        return res.status(400).json({ success: false, error: 'Invalid room ID' });
-      }
-      if (parsedRoomId) {
-        const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoomId } });
-        if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
-      }
-      updateData.Room_ID = parsedRoomId;
-    }
-
-    // Check if item exists
-    const existingItem = await prisma.item.findUnique({
-      where: { Item_ID: itemId }
-    });
-
-    if (!existingItem) {
-      return res.status(404).json({ success: false, error: 'Item not found' });
-    }
-
-    // Update the item
-    const updatedItem = await prisma.item.update({
-      where: { Item_ID: itemId },
-      data: updateData
-    });
-
-    // Audit Log
-    await AuditLogger.log({
-      userId: req.user.User_ID,
-      action: 'ITEM_UPDATED',
-      details: `Updated item ${existingItem.Item_Code}`,
-      logType: 'INVENTORY',
-      notificationData: { updates: updateData }
-    });
-
-    res.json({ success: true, data: updatedItem });
-  } catch (error) {
-    console.error(`Error updating item ${req.params.id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to update item' });
+  const itemId = parseInt(req.params.id, 10);
+  if (Number.isNaN(itemId) || itemId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid ID' });
   }
+  const {
+    Item_Type,
+    Brand,
+    Serial_Number,
+    Status,
+    Room_ID,
+    IsBorrowable,
+  } = req.body;
+
+  const updateData = {};
+
+  if (Item_Type !== undefined) {
+    const normalizedItemType = normalizeItemType(Item_Type);
+    if (!normalizedItemType) {
+      return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
+    }
+    updateData.Item_Type = normalizedItemType;
+  }
+
+  if (Brand !== undefined) updateData.Brand = normalizeBrand(Brand);
+  if (Serial_Number !== undefined) updateData.Serial_Number = normalizeSerial(Serial_Number);
+  if (Status !== undefined) {
+    if (!VALID_ITEM_STATUSES.includes(Status)) {
+      return res.status(400).json({ success: false, error: 'Invalid status' });
+    }
+    updateData.Status = Status;
+  }
+  if (IsBorrowable !== undefined) updateData.IsBorrowable = Boolean(IsBorrowable);
+  if (Room_ID !== undefined) {
+    const parsedRoomId = Room_ID ? parseInt(Room_ID) : null;
+    if (Room_ID && Number.isNaN(parsedRoomId)) {
+      return res.status(400).json({ success: false, error: 'Invalid room ID' });
+    }
+    if (parsedRoomId) {
+      const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoomId } });
+      if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
+    }
+    updateData.Room_ID = parsedRoomId;
+  }
+
+  // Check if item exists
+  const existingItem = await prisma.item.findUnique({
+    where: { Item_ID: itemId }
+  });
+
+  if (!existingItem) {
+    return res.status(404).json({ success: false, error: 'Item not found' });
+  }
+
+  // Update the item
+  const updatedItem = await prisma.item.update({
+    where: { Item_ID: itemId },
+    data: updateData
+  });
+
+  // Audit Log
+  await AuditLogger.log({
+    userId: req.user.User_ID,
+    action: 'ITEM_UPDATED',
+    details: `Updated item ${existingItem.Item_Code}`,
+    logType: 'INVENTORY',
+    notificationData: { updates: updateData }
+  });
+
+  res.json({ success: true, data: updatedItem });
 };
 
 // Delete item (soft delete)
 const deleteItem = async (req, res) => {
-
-  try {
-    const itemId = parseInt(req.params.id);
-
-    // Check if item exists
-    const existingItem = await prisma.item.findUnique({
-      where: { Item_ID: itemId }
-    });
-
-    if (!existingItem) {
-      return res.status(404).json({ success: false, error: 'Item not found' });
-    }
-
-    // Soft delete by updating status
-    const deletedItem = await prisma.item.update({
-      where: { Item_ID: itemId },
-      data: {
-        Status: 'DISPOSED',
-        Updated_At: new Date()
-      }
-    });
-
-    // Audit Log
-    await AuditLogger.log({
-      userId: req.user.User_ID,
-      action: 'ITEM_DELETED',
-      details: `Soft deleted item ${existingItem.Item_Code}`,
-      logType: 'INVENTORY'
-    });
-
-    res.json({ success: true, data: deletedItem });
-  } catch (error) {
-    console.error(`Error deleting item ${req.params.id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to delete item' });
+  const itemId = parseInt(req.params.id, 10);
+  if (Number.isNaN(itemId) || itemId <= 0) {
+    return res.status(400).json({ success: false, error: 'Invalid ID' });
   }
+
+  // Check if item exists
+  const existingItem = await prisma.item.findUnique({
+    where: { Item_ID: itemId }
+  });
+
+  if (!existingItem) {
+    return res.status(404).json({ success: false, error: 'Item not found' });
+  }
+
+  // Soft delete by updating status
+  const deletedItem = await prisma.item.update({
+    where: { Item_ID: itemId },
+    data: {
+      Status: 'DISPOSED',
+      Updated_At: new Date()
+    }
+  });
+
+  // Audit Log
+  await AuditLogger.log({
+    userId: req.user.User_ID,
+    action: 'ITEM_DELETED',
+    details: `Soft deleted item ${existingItem.Item_Code}`,
+    logType: 'INVENTORY'
+  });
+
+  res.json({ success: true, data: deletedItem });
 };
 
 // Bulk create inventory items
 const bulkCreateItems = async (req, res) => {
-  try {
-    const { items, User_ID } = req.body;
+  const { items } = req.body;
 
-    // Validating input
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, error: 'Expected an array of items in the request body' });
-    }
+  // Validate input
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ success: false, error: 'Expected an array of items in the request body' });
+  }
 
-    const currentYear = new Date().getFullYear();
-    const prefix = 'ITM';
+  const currentYear = new Date().getFullYear();
+  const prefix = 'ITM';
 
-    // First, get all unique item types and serial numbers in this batch
-    const invalidItem = items.find(item => !normalizeItemType(item.Item_Type || 'OTHER'));
-    if (invalidItem) {
-      return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
-    }
+  const invalidItem = items.find(item => !normalizeItemType(item.Item_Type || 'OTHER'));
+  if (invalidItem) {
+    return res.status(400).json({ success: false, error: 'Invalid Item_Type. Use letters, numbers, spaces, hyphens, or underscores only.' });
+  }
 
-    const itemTypes = [...new Set(items.map(item => normalizeItemType(item.Item_Type || 'OTHER')))];
-    const serialNumbers = items.map(item => item.Serial_Number).filter(Boolean);
+  const invalidStatusItem = items.find(item => item.Status && !VALID_ITEM_STATUSES.includes(item.Status));
+  if (invalidStatusItem) {
+    return res.status(400).json({ success: false, error: `Invalid status: ${invalidStatusItem.Status}` });
+  }
 
-    // Check for duplicate serial numbers in the current batch
-    const duplicateSerials = serialNumbers.filter((num, index) => serialNumbers.indexOf(num) !== index);
-    if (duplicateSerials.length > 0) {
-      return res.status(400).json({ success: false, error: 'Duplicate serial numbers found in request' });
-    }
+  const serialNumbers = items.map(item => item.Serial_Number).filter(Boolean);
 
-    // Check if any serial numbers already exist in the database
+  // Check for duplicate serial numbers in the current batch
+  const duplicateSerials = serialNumbers.filter((num, index) => serialNumbers.indexOf(num) !== index);
+  if (duplicateSerials.length > 0) {
+    return res.status(400).json({ success: false, error: 'Duplicate serial numbers found in request' });
+  }
+
+  const createdItems = await prisma.$transaction(async (tx) => {
+    // Validate serial number uniqueness inside the transaction
     if (serialNumbers.length > 0) {
-      const existingItems = await prisma.item.findMany({
-        where: {
-          Serial_Number: {
-            in: serialNumbers
-          }
-        },
-        select: {
-          Serial_Number: true
-        }
+      const existingItems = await tx.item.findMany({
+        where: { Serial_Number: { in: serialNumbers } },
+        select: { Serial_Number: true }
       });
-
       if (existingItems.length > 0) {
-        return res.status(400).json({ success: false, error: 'Some serial numbers already exist in the system' });
+        throw new AppError('Some serial numbers already exist in the system', 400);
       }
     }
 
-    // Get the highest number for each item type
-    const typeCounts = {};
+    // Validate Room FK inside the transaction
+    const roomIds = [...new Set(items.map(item => item.Room_ID).filter(Boolean).map(id => parseInt(id, 10)).filter(id => !Number.isNaN(id) && id > 0))];
+    if (roomIds.length > 0) {
+      const foundRooms = await tx.room.findMany({
+        where: { Room_ID: { in: roomIds } },
+        select: { Room_ID: true }
+      });
+      if (foundRooms.length !== roomIds.length) {
+        const foundIds = new Set(foundRooms.map(r => r.Room_ID));
+        const missing = roomIds.filter(id => !foundIds.has(id));
+        throw new AppError(`Unknown Room_ID(s): ${missing.join(', ')}`, 400);
+      }
+    }
 
-    // Find the highest number for each item type in the database
+    // Read latest item code per type inside the transaction
+    const itemTypes = [...new Set(items.map(item => normalizeItemType(item.Item_Type || 'OTHER')))];
+    const typeCounts = {};
     for (const itemType of itemTypes) {
       const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
-
-      const latestItem = await prisma.item.findFirst({
-        where: {
-          Item_Code: {
-            startsWith: `${typePrefix}-${currentYear}-`
-          }
-        },
-        orderBy: {
-          Item_Code: 'desc'
-        },
-        select: {
-          Item_Code: true
-        }
+      const latestItem = await tx.item.findFirst({
+        where: { Item_Code: { startsWith: `${typePrefix}-${currentYear}-` } },
+        orderBy: { Item_Code: 'desc' },
+        select: { Item_Code: true }
       });
-
-      // Initialize counter for this item type
       typeCounts[itemType] = 0;
       if (latestItem) {
-        const lastCode = latestItem.Item_Code;
-        const lastNumber = parseInt(lastCode.split('-').pop());
+        const lastNumber = parseInt(latestItem.Item_Code.split('-').pop());
         if (!isNaN(lastNumber)) {
           typeCounts[itemType] = lastNumber;
         }
       }
     }
 
-    // Track counts for the current batch
+    // Generate codes and create items
     const currentBatchCounts = {};
-
-    // Prepare item data with generated codes
-    const itemData = items.map(item => {
+    const created = [];
+    for (const item of items) {
       const itemType = normalizeItemType(item.Item_Type || 'OTHER');
       const typePrefix = itemType ? itemType.substring(0, 3).toUpperCase() : prefix;
 
-      // Initialize counter for this item type if not exists
       if (currentBatchCounts[itemType] === undefined) {
         currentBatchCounts[itemType] = typeCounts[itemType] || 0;
       }
-
-      // Increment counter for this item type
       currentBatchCounts[itemType]++;
-      const itemNumber = currentBatchCounts[itemType].toString().padStart(3, '0');
-      const itemCode = `${typePrefix}-${currentYear}-${itemNumber}`;
+      const itemCode = `${typePrefix}-${currentYear}-${currentBatchCounts[itemType].toString().padStart(3, '0')}`;
 
-      return {
-        Item_Code: itemCode,
-        Item_Type: itemType,
-        Brand: normalizeBrand(item.Brand),
-        Serial_Number: item.Serial_Number || null,
-        Status: item.Status || 'AVAILABLE',
-        Room_ID: item.Room_ID || null,
-        Created_At: new Date(),
-        Updated_At: new Date(),
-        User_ID: parseInt(User_ID || req.user.User_ID)
-      };
-    });
+      const created_item = await tx.item.create({
+        data: {
+          Item_Code: itemCode,
+          Item_Type: itemType,
+          Brand: normalizeBrand(item.Brand),
+          Serial_Number: item.Serial_Number || null,
+          Status: item.Status || 'AVAILABLE',
+          Room_ID: item.Room_ID ? parseInt(item.Room_ID, 10) : null,
+          Created_At: new Date(),
+          Updated_At: new Date(),
+          User_ID: req.user.User_ID
+        }
+      });
+      created.push(created_item);
+    }
+    return created;
+  });
 
-    // Use transaction to create all items
-    const createdItems = await prisma.$transaction(
-      itemData.map(item =>
-        prisma.item.create({ data: item })
-      )
-    );
+  // Audit Log
+  await AuditLogger.log({
+    userId: req.user.User_ID,
+    action: 'ITEM_CREATED',
+    details: `Bulk created ${createdItems.length} items`,
+    logType: 'INVENTORY'
+  });
 
-    // Audit Log
-    await AuditLogger.log({
-      userId: req.user.User_ID,
-      action: 'ITEM_CREATED',
-      details: `Bulk created ${createdItems.length} items`,
-      logType: 'INVENTORY'
-    });
-
-    res.status(201).json({
-      success: true,
-      data: {
-        message: `Successfully created ${createdItems.length} items`,
-        count: createdItems.length,
-        items: createdItems
-      }
-    });
-
-  } catch (error) {
-    console.error('Error in bulk item creation:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create items',
-      message: error?.message,
-      code: error?.code,
-      meta: error?.meta,
-    });
-  }
+  res.status(201).json({
+    success: true,
+    data: {
+      message: `Successfully created ${createdItems.length} items`,
+      count: createdItems.length,
+      items: createdItems
+    }
+  });
 };
 
 // POST /api/inventory/:id/check - Mark an item as audited (present) for the current semester
@@ -782,27 +739,22 @@ const importInventoryCsv = async (req, res) => {
 // Used by the labtech RoomDetailModal "Add Item Type" picker so the list of
 // available component types is data-driven instead of hardcoded.
 const getItemTypes = async (_req, res) => {
-  try {
-    const rows = await prisma.item.findMany({
-      distinct: ['Item_Type'],
-      select: { Item_Type: true },
-      orderBy: { Item_Type: 'asc' },
-    });
+  const rows = await prisma.item.findMany({
+    distinct: ['Item_Type'],
+    select: { Item_Type: true },
+    orderBy: { Item_Type: 'asc' },
+  });
 
-    // Normalize SYSTEM_UNIT to MINI_PC so callers see one canonical type
-    // (matches inventory/getAvailableItems which already merges them).
-    const normalized = new Set();
-    for (const row of rows) {
-      const raw = (row.Item_Type || '').trim().toUpperCase();
-      if (!raw) continue;
-      normalized.add(raw === 'SYSTEM_UNIT' ? 'MINI_PC' : raw);
-    }
-
-    res.json({ success: true, data: [...normalized].sort() });
-  } catch (error) {
-    console.error('Error fetching item types:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch item types' });
+  // Normalize SYSTEM_UNIT to MINI_PC so callers see one canonical type
+  // (matches inventory/getAvailableItems which already merges them).
+  const normalized = new Set();
+  for (const row of rows) {
+    const raw = (row.Item_Type || '').trim().toUpperCase();
+    if (!raw) continue;
+    normalized.add(raw === 'SYSTEM_UNIT' ? 'MINI_PC' : raw);
   }
+
+  res.json({ success: true, data: [...normalized].sort() });
 };
 
 module.exports = {

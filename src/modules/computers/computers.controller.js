@@ -356,72 +356,66 @@ const importComputerRow = async (tx, row, roomId, userId) => {
 
 // GET /api/computers - Fetch all computers (optionally filtered by roomId)
 const getComputers = async (req, res) => {
-    try {
-        const { roomId } = req.query;
+    const { roomId } = req.query;
 
-        const where = {};
-        if (roomId) {
-            const parsedRoomId = parseInt(roomId, 10);
-            if (Number.isNaN(parsedRoomId)) {
-                return res.status(400).json({ success: false, error: 'Invalid room ID' });
-            }
-            where.Room_ID = parsedRoomId;
+    const where = {};
+    if (roomId) {
+        const parsedRoomId = parseInt(roomId, 10);
+        if (Number.isNaN(parsedRoomId)) {
+            return res.status(400).json({ success: false, error: 'Invalid room ID' });
         }
-
-        const computers = await prisma.computer.findMany({
-            where,
-            include: buildComputerInclude(),
-            orderBy: [
-                { Room_ID: 'asc' },
-                { Created_At: 'asc' },
-                { Computer_ID: 'asc' },
-            ]
-        });
-
-        res.json({ success: true, data: decorateComputersForRoomDisplay(computers) });
-    } catch (error) {
-        console.error('Error fetching computers:', error);
-        res.status(500).json({ success: false, error: 'Failed to fetch computers' });
+        where.Room_ID = parsedRoomId;
     }
+
+    const computers = await prisma.computer.findMany({
+        where,
+        include: buildComputerInclude(),
+        orderBy: [
+            { Room_ID: 'asc' },
+            { Created_At: 'asc' },
+            { Computer_ID: 'asc' },
+        ]
+    });
+
+    res.json({ success: true, data: decorateComputersForRoomDisplay(computers) });
 };
 
 // POST /api/computers - Create a new computer
 const createComputer = async (req, res) => {
-    try {
-        const { name, roomId, status, items, isTeacher } = req.body;
-        const teacherFlag = Boolean(isTeacher);
+    const { name, roomId, status, items, isTeacher } = req.body;
+    const teacherFlag = Boolean(isTeacher);
 
-        if (!name || !name.trim()) {
-            return res.status(400).json({ success: false, error: 'Computer name is required' });
-        }
+    if (!name || !name.trim()) {
+        return res.status(400).json({ success: false, error: 'Computer name is required' });
+    }
 
-        const normalizedStatus = status || 'AVAILABLE';
-        if (!VALID_COMPUTER_STATUSES.includes(normalizedStatus)) {
-            return res.status(400).json({ success: false, error: 'Invalid computer status' });
-        }
+    const normalizedStatus = status || 'AVAILABLE';
+    if (!VALID_COMPUTER_STATUSES.includes(normalizedStatus)) {
+        return res.status(400).json({ success: false, error: 'Invalid computer status' });
+    }
 
-        const parsedRoomId = roomId === undefined || roomId === null || roomId === ''
-            ? null
-            : parseInt(roomId, 10);
+    const parsedRoomId = roomId === undefined || roomId === null || roomId === ''
+        ? null
+        : parseInt(roomId, 10);
 
-        if (parsedRoomId !== null && Number.isNaN(parsedRoomId)) {
-            return res.status(400).json({ success: false, error: 'Invalid room ID' });
-        }
+    if (parsedRoomId !== null && Number.isNaN(parsedRoomId)) {
+        return res.status(400).json({ success: false, error: 'Invalid room ID' });
+    }
 
-        const incomingItems = Array.isArray(items) ? items : [];
-        const itemIds = incomingItems
-            .filter(item => item?.itemId)
-            .map(item => parseInt(item.itemId, 10));
+    const incomingItems = Array.isArray(items) ? items : [];
+    const itemIds = incomingItems
+        .filter(item => item?.itemId)
+        .map(item => parseInt(item.itemId, 10));
 
-        if (itemIds.some(Number.isNaN)) {
-            return res.status(400).json({ success: false, error: 'Invalid item selected' });
-        }
+    if (itemIds.some(Number.isNaN)) {
+        return res.status(400).json({ success: false, error: 'Invalid item selected' });
+    }
 
-        if (new Set(itemIds).size !== itemIds.length) {
-            return res.status(400).json({ success: false, error: 'Duplicate component selected' });
-        }
+    if (new Set(itemIds).size !== itemIds.length) {
+        return res.status(400).json({ success: false, error: 'Duplicate component selected' });
+    }
 
-        const updatedComputer = await prisma.$transaction(async (tx) => {
+    const updatedComputer = await prisma.$transaction(async (tx) => {
             if (parsedRoomId !== null) {
                 const room = await tx.room.findUnique({ where: { Room_ID: parsedRoomId } });
                 if (!room) {
@@ -530,61 +524,52 @@ const createComputer = async (req, res) => {
             return computer;
         });
 
-        res.status(201).json({ success: true, data: updatedComputer });
-    } catch (error) {
-        const statusCode = error.statusCode || 500;
-        console.error('Error creating computer:', error);
-        res.status(statusCode).json({
-            success: false,
-            error: statusCode === 500 ? 'Failed to create computer' : error.message
-        });
-    }
+    res.status(201).json({ success: true, data: updatedComputer });
 };
 
 // PUT /api/computers/:id - Update a computer
 const updateComputer = async (req, res) => {
-    try {
-        const computerId = parseInt(req.params.id, 10);
-        const { name, roomId, status, items, isTeacher } = req.body;
+    const computerId = parseInt(req.params.id, 10);
+    const { name, roomId, status, items, isTeacher } = req.body;
 
-        if (Number.isNaN(computerId)) {
-            return res.status(400).json({ success: false, error: 'Invalid computer ID' });
+    if (Number.isNaN(computerId)) {
+        return res.status(400).json({ success: false, error: 'Invalid computer ID' });
+    }
+
+    const updateData = {};
+    if (name !== undefined) {
+        if (!name || !name.trim()) {
+            return res.status(400).json({ success: false, error: 'Computer name is required' });
         }
+        updateData.Name = name.trim();
+    }
 
-        const updateData = {};
-        if (name !== undefined) {
-            if (!name || !name.trim()) {
-                return res.status(400).json({ success: false, error: 'Computer name is required' });
-            }
-            updateData.Name = name.trim();
+    let parsedRoomId;
+    if (roomId !== undefined) {
+        parsedRoomId = roomId === null || roomId === ''
+            ? null
+            : parseInt(roomId, 10);
+
+        if (parsedRoomId !== null && Number.isNaN(parsedRoomId)) {
+            return res.status(400).json({ success: false, error: 'Invalid room ID' });
         }
+        updateData.Room_ID = parsedRoomId;
+    }
 
-        let parsedRoomId;
-        if (roomId !== undefined) {
-            parsedRoomId = roomId === null || roomId === ''
-                ? null
-                : parseInt(roomId, 10);
-
-            if (parsedRoomId !== null && Number.isNaN(parsedRoomId)) {
-                return res.status(400).json({ success: false, error: 'Invalid room ID' });
-            }
-            updateData.Room_ID = parsedRoomId;
+    if (status !== undefined) {
+        if (!VALID_COMPUTER_STATUSES.includes(status)) {
+            return res.status(400).json({ success: false, error: 'Invalid computer status' });
         }
+        updateData.Status = status;
+    }
 
-        if (status !== undefined) {
-            if (!VALID_COMPUTER_STATUSES.includes(status)) {
-                return res.status(400).json({ success: false, error: 'Invalid computer status' });
-            }
-            updateData.Status = status;
-        }
+    if (isTeacher !== undefined) {
+        updateData.Is_Teacher = Boolean(isTeacher);
+    }
 
-        if (isTeacher !== undefined) {
-            updateData.Is_Teacher = Boolean(isTeacher);
-        }
+    updateData.Updated_At = new Date();
 
-        updateData.Updated_At = new Date();
-
-        const updatedComputer = await prisma.$transaction(async (tx) => {
+    const updatedComputer = await prisma.$transaction(async (tx) => {
             const existingComputer = await tx.computer.findUnique({
                 where: { Computer_ID: computerId },
                 include: { Item: true }
@@ -707,105 +692,85 @@ const updateComputer = async (req, res) => {
             });
         });
 
-        res.json({ success: true, data: updatedComputer });
-    } catch (error) {
-        const statusCode = error.statusCode || 500;
-        console.error('Error updating computer:', error);
-        res.status(statusCode).json({
-            success: false,
-            error: statusCode === 500 ? 'Failed to update computer' : error.message
-        });
-    }
+    res.json({ success: true, data: updatedComputer });
 };
 
 // DELETE /api/computers/:id - Delete a computer
 const deleteComputer = async (req, res) => {
-    try {
-        const computerId = parseInt(req.params.id);
+    const computerId = parseInt(req.params.id, 10);
 
-        // First, get all items linked to this computer
-        const computer = await prisma.computer.findUnique({
-            where: { Computer_ID: computerId },
-            include: { Item: true }
-        });
+    if (Number.isNaN(computerId)) {
+        return res.status(400).json({ success: false, error: 'Invalid computer ID' });
+    }
 
-        // Disconnect items and set status back to AVAILABLE
-        if (computer && computer.Item.length > 0) {
-            await prisma.computer.update({
+    const computer = await prisma.computer.findUnique({
+        where: { Computer_ID: computerId },
+        include: { Item: true }
+    });
+
+    if (!computer) {
+        return res.status(404).json({ success: false, error: 'Computer not found' });
+    }
+
+    // Atomically restore items to AVAILABLE (clearing their Computer_ID) and delete the computer
+    await prisma.$transaction(async (tx) => {
+        if (computer.Item.length > 0) {
+            await tx.item.updateMany({
                 where: { Computer_ID: computerId },
-                data: {
-                    Item: {
-                        disconnect: computer.Item.map(item => ({ Item_ID: item.Item_ID }))
-                    }
-                }
-            });
-
-            // Update items status to AVAILABLE
-            await prisma.item.updateMany({
-                where: {
-                    Item_ID: { in: computer.Item.map(item => item.Item_ID) }
-                },
-                data: { Status: 'AVAILABLE' }
+                data: { Computer_ID: null, Status: 'AVAILABLE' }
             });
         }
+        await tx.computer.delete({ where: { Computer_ID: computerId } });
+    });
 
-        // Delete the computer
-        await prisma.computer.delete({
-            where: { Computer_ID: computerId }
-        });
-
-        res.json({ success: true, data: { message: 'Computer deleted successfully' } });
-    } catch (error) {
-        console.error('Error deleting computer:', error);
-        res.status(500).json({ success: false, error: 'Failed to delete computer' });
-    }
+    res.json({ success: true, data: { message: 'Computer deleted successfully' } });
 };
 
 // POST /api/computers/import-csv - Import room computers and components from CSV/XLSX
 const importComputersCsv = async (req, res) => {
-    try {
-        if (!req.file?.buffer) {
-            return res.status(400).json({ success: false, error: 'CSV or Excel file is required' });
+    if (!req.file?.buffer) {
+        return res.status(400).json({ success: false, error: 'CSV or Excel file is required' });
+    }
+
+    const parsedRoom = parseRequiredRoomId(req.body.roomId ?? req.query.roomId);
+    if (parsedRoom.error) return res.status(400).json({ success: false, error: parsedRoom.error });
+
+    const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoom.value } });
+    if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
+
+    const parsed = parseComputerImportFile(req.file, req.body.sheetName ?? req.query.sheetName);
+    if (parsed.headers.length === 0 || parsed.rows.length === 0) {
+        return res.status(400).json({ success: false, error: 'Import file must include headers and at least one data row' });
+    }
+
+    const candidateRows = parsed.rows.map(row => {
+        const imported = buildImportedComputer(parsed.headers, row);
+        return {
+            rowNumber: row.rowNumber,
+            computer: imported.computer,
+            computerName: imported.computer?.name || '',
+            status: imported.error ? 'invalid' : 'valid',
+            reason: imported.error || 'Ready to import',
+        };
+    });
+
+    const seenNames = new Set();
+    for (const row of candidateRows.filter(row => row.status === 'valid')) {
+        const key = row.computerName.toLowerCase();
+        if (seenNames.has(key)) {
+            row.status = 'duplicate';
+            row.reason = 'Duplicate computer name in CSV';
         }
+        seenNames.add(key);
+    }
 
-        const parsedRoom = parseRequiredRoomId(req.body.roomId ?? req.query.roomId);
-        if (parsedRoom.error) return res.status(400).json({ success: false, error: parsedRoom.error });
+    const createdComputers = [];
+    const validRows = candidateRows.filter(row => row.status === 'valid');
 
-        const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoom.value } });
-        if (!room) return res.status(400).json({ success: false, error: 'Room not found' });
-
-        const parsed = parseComputerImportFile(req.file, req.body.sheetName ?? req.query.sheetName);
-        if (parsed.headers.length === 0 || parsed.rows.length === 0) {
-            return res.status(400).json({ success: false, error: 'Import file must include headers and at least one data row' });
-        }
-
-        const candidateRows = parsed.rows.map(row => {
-            const imported = buildImportedComputer(parsed.headers, row);
-            return {
-                rowNumber: row.rowNumber,
-                computer: imported.computer,
-                computerName: imported.computer?.name || '',
-                status: imported.error ? 'invalid' : 'valid',
-                reason: imported.error || 'Ready to import',
-            };
-        });
-
-        const seenNames = new Set();
-        for (const row of candidateRows.filter(row => row.status === 'valid')) {
-            const key = row.computerName.toLowerCase();
-            if (seenNames.has(key)) {
-                row.status = 'duplicate';
-                row.reason = 'Duplicate computer name in CSV';
-            }
-            seenNames.add(key);
-        }
-
-        const createdComputers = [];
-        for (const row of candidateRows.filter(row => row.status === 'valid')) {
+    await prisma.$transaction(async (tx) => {
+        for (const row of validRows) {
             try {
-                const created = await prisma.$transaction(tx =>
-                    importComputerRow(tx, row, parsedRoom.value, req.user.User_ID)
-                );
+                const created = await importComputerRow(tx, row, parsedRoom.value, req.user.User_ID);
                 row.status = 'imported';
                 row.reason = 'Imported';
                 row.computerId = created.Computer_ID;
@@ -816,34 +781,30 @@ const importComputersCsv = async (req, res) => {
                 row.reason = error.message || 'Failed to import row';
             }
         }
+    });
 
-        candidateRows.forEach(row => {
-            delete row.computer;
-        });
+    candidateRows.forEach(row => {
+        delete row.computer;
+    });
 
-        const summary = {
-            totalRows: candidateRows.length,
-            imported: candidateRows.filter(row => row.status === 'imported').length,
-            skipped: candidateRows.filter(row => row.status === 'skipped').length,
-            invalid: candidateRows.filter(row => row.status === 'invalid').length,
-            duplicates: candidateRows.filter(row => row.status === 'duplicate').length,
-        };
+    const summary = {
+        totalRows: candidateRows.length,
+        imported: candidateRows.filter(row => row.status === 'imported').length,
+        skipped: candidateRows.filter(row => row.status === 'skipped').length,
+        invalid: candidateRows.filter(row => row.status === 'invalid').length,
+        duplicates: candidateRows.filter(row => row.status === 'duplicate').length,
+    };
 
-        res.json({
-            success: true,
-            data: {
-                summary,
-                rows: candidateRows,
-                computers: decorateComputersForRoomDisplay(createdComputers),
-                sourceType: parsed.sourceType,
-                sheetName: parsed.sheetName,
-            }
-        });
-    } catch (error) {
-        console.error('Error importing computers CSV:', error);
-        const statusCode = error.statusCode || 500;
-        res.status(statusCode).json({ success: false, error: statusCode === 500 ? 'Failed to import computers file' : error.message });
-    }
+    res.json({
+        success: true,
+        data: {
+            summary,
+            rows: candidateRows,
+            computers: decorateComputersForRoomDisplay(createdComputers),
+            sourceType: parsed.sourceType,
+            sheetName: parsed.sheetName,
+        }
+    });
 };
 
 module.exports = {

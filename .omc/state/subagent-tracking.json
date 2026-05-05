@@ -1,0 +1,71 @@
+{
+  "agents": [
+    {
+      "agent_id": "a3cf0048b7e749adf",
+      "agent_type": "Explore",
+      "started_at": "2026-05-05T15:34:12.203Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-05-05T15:34:30.403Z",
+      "duration_ms": 18200
+    },
+    {
+      "agent_id": "a71dad5710cc2bb3c",
+      "agent_type": "Explore",
+      "started_at": "2026-05-05T15:34:15.027Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-05-05T15:34:59.009Z",
+      "duration_ms": 43982
+    },
+    {
+      "agent_id": "af27375236e7db159",
+      "agent_type": "Explore",
+      "started_at": "2026-05-05T15:35:15.460Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-05-05T15:35:55.460Z",
+      "duration_ms": 40000
+    },
+    {
+      "agent_id": "a282d2470a04a30d9",
+      "agent_type": "Explore",
+      "started_at": "2026-05-05T15:35:18.056Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-05-05T15:35:49.305Z",
+      "duration_ms": 31249
+    },
+    {
+      "agent_id": "a0ac50c7127293d12",
+      "agent_type": "oh-my-claudecode:code-reviewer",
+      "started_at": "2026-05-05T16:37:30.151Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-05-05T16:41:09.063Z",
+      "duration_ms": 218912
+    },
+    {
+      "agent_id": "aeae75623f7de78fe",
+      "agent_type": "oh-my-claudecode:code-reviewer",
+      "started_at": "2026-05-05T16:37:32.253Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-05-05T16:41:10.254Z",
+      "duration_ms": 218001
+    },
+    {
+      "agent_id": "ad7830b23a424df92",
+      "agent_type": "oh-my-claudecode:code-reviewer",
+      "started_at": "2026-05-05T16:37:35.768Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-05-05T16:41:40.518Z",
+      "duration_ms": 244750
+    }
+  ],
+  "total_spawned": 7,
+  "total_completed": 7,
+  "total_failed": 0,
+  "last_updated": "2026-05-05T18:14:38.661Z"
+}

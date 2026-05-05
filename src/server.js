@@ -96,9 +96,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Apply general rate limiting
-// TEMPORARILY DISABLED — re-enable when done testing.
-// app.use('/', generalLimiter);
+// Apply general rate limiting (skipped in test environment)
+if (process.env.NODE_ENV !== 'test') {
+  app.use('/', generalLimiter);
+}
 
 // ==================== ROUTES ====================
 
@@ -114,29 +115,30 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Auth routes with stricter rate limiting
-// TEMPORARILY DISABLED — pass authLimiter back into the chain to re-enable.
-app.use('/auth', /* authLimiter, */ require('./modules/auth/auth.routes'));
+// Auth routes with stricter rate limiting (skipped in test environment)
+if (process.env.NODE_ENV !== 'test') {
+  app.use('/api/auth', authLimiter, require('./modules/auth/auth.routes'));
+} else {
+  app.use('/api/auth', require('./modules/auth/auth.routes'));
+}
 
 // API Routes
-app.use('/inventory', require('./modules/inventory/inventory.routes'));
-app.use('/users', require('./modules/users/users.routes'));
-app.use('/tickets', require('./modules/tickets/tickets.routes'));
-app.use('/rooms', require('./modules/rooms/rooms.routes'));
-app.use('/bookings', require('./modules/bookings/bookings.routes'));
-app.use('/computers', require('./modules/computers/computers.routes'));
-app.use('/computer-suggestions', require('./modules/computerSuggestions/computerSuggestions.routes'));
-
-app.use('/borrowing', require('./modules/borrowing/borrowing.routes'));
-app.use('/notifications', require('./modules/notifications/notifications.routes'));
-app.use('/forms', require('./modules/forms/forms.routes'));
-app.use('/maintenance', require('./modules/maintenance/maintenance.routes'));
-app.use('/schedules', require('./modules/schedules/schedules.routes'));
-app.use('/upload', require('./modules/upload/upload.routes'));
-app.use('/dashboard', require('./modules/dashboard/dashboard.routes'));
-app.use('/heartbeat', require('./modules/heartbeat/heartbeat.routes'));
-app.use('/reports', require('./modules/reports/reports.routes'));
-app.use('/semesters', require('./modules/semesters/semesters.routes'));
+app.use('/api/inventory', require('./modules/inventory/inventory.routes'));
+app.use('/api/users', require('./modules/users/users.routes'));
+app.use('/api/tickets', require('./modules/tickets/tickets.routes'));
+app.use('/api/rooms', require('./modules/rooms/rooms.routes'));
+app.use('/api/bookings', require('./modules/bookings/bookings.routes'));
+app.use('/api/computers', require('./modules/computers/computers.routes'));
+app.use('/api/computer-suggestions', require('./modules/computerSuggestions/computerSuggestions.routes'));
+app.use('/api/borrowing', require('./modules/borrowing/borrowing.routes'));
+app.use('/api/notifications', require('./modules/notifications/notifications.routes'));
+app.use('/api/forms', require('./modules/forms/forms.routes'));
+app.use('/api/maintenance', require('./modules/maintenance/maintenance.routes'));
+app.use('/api/schedules', require('./modules/schedules/schedules.routes'));
+app.use('/api/upload', require('./modules/upload/upload.routes'));
+app.use('/api/dashboard', require('./modules/dashboard/dashboard.routes'));
+app.use('/api/reports', require('./modules/reports/reports.routes'));
+app.use('/api/semesters', require('./modules/semesters/semesters.routes'));
 
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -184,7 +186,7 @@ wss.on('connection', async (ws, req) => {
       return;
     }
 
-    if (user.Is_Active === false) {
+    if (user.Is_Active !== true) {
       ws.close(4003, 'Account is deactivated');
       return;
     }

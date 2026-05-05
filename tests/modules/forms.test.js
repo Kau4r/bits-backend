@@ -86,7 +86,7 @@ describe('Form Routes', () => {
       prisma.Form.findUnique.mockResolvedValue(form);
 
       const res = await request(app)
-        .post('/forms')
+        .post('/api/forms')
         .send({
           creatorId: 9999,
           formType: 'WRF',
@@ -156,7 +156,7 @@ describe('Form Routes', () => {
       prisma.Form.findUnique.mockResolvedValue(form);
 
       const res = await request(app)
-        .post('/forms')
+        .post('/api/forms')
         .send({
           creatorId: 9999,
           formType: 'RIS',
@@ -215,7 +215,7 @@ describe('Form Routes', () => {
       prisma.Form.update.mockResolvedValue(form);
 
       const res = await request(app)
-        .post('/forms/1/transfer')
+        .post('/api/forms/1/transfer')
         .send({ department: 'PPFO', notes: 'Send to PPFO' });
 
       expect(res.status).toBe(200);
@@ -247,7 +247,7 @@ describe('Form Routes', () => {
       }));
 
       const res = await request(app)
-        .post('/forms/1/transfer')
+        .post('/api/forms/1/transfer')
         .send({ department: 'PPFO', notes: 'Skip Department Head' });
 
       expect(res.status).toBe(400);
@@ -266,7 +266,7 @@ describe('Form Routes', () => {
       }));
 
       const res = await request(app)
-        .post('/forms/1/transfer')
+        .post('/api/forms/1/transfer')
         .send({ department: 'PURCHASING' });
 
       expect(res.status).toBe(400);
@@ -276,7 +276,7 @@ describe('Form Routes', () => {
 
     it('rejects a legacy LABORATORY department with 400 instead of calling Prisma', async () => {
       const res = await request(app)
-        .post('/forms/1/transfer')
+        .post('/api/forms/1/transfer')
         .send({ department: 'LABORATORY' });
 
       expect(res.status).toBe(400);
@@ -312,7 +312,7 @@ describe('Form Routes', () => {
       }));
 
       const res = await request(app)
-        .post('/forms/1/transfer')
+        .post('/api/forms/1/transfer')
         .send({ department: 'COMPLETED' });
 
       expect(res.status).toBe(400);
@@ -365,7 +365,7 @@ describe('Form Routes', () => {
       }));
 
       const res = await request(app)
-        .post('/forms/1/transfer')
+        .post('/api/forms/1/transfer')
         .send({ department: 'COMPLETED', notes: 'Complete RIS' });
 
       expect(res.status).toBe(200);
@@ -396,7 +396,7 @@ describe('Form Routes', () => {
       prisma.Form.findUnique.mockResolvedValue(createdForm());
 
       const res = await request(app)
-        .patch('/forms/1')
+        .patch('/api/forms/1')
         .send({ status: 'ARCHIVED' });
 
       expect(res.status).toBe(400);
@@ -410,7 +410,7 @@ describe('Form Routes', () => {
       }));
 
       const res = await request(app)
-        .patch('/forms/1')
+        .patch('/api/forms/1')
         .send({ status: 'APPROVED' });
 
       expect(res.status).toBe(400);
@@ -424,7 +424,7 @@ describe('Form Routes', () => {
       prisma.Form.update.mockResolvedValue(approvedForm);
 
       const res = await request(app)
-        .patch('/forms/1')
+        .patch('/api/forms/1')
         .send({ status: 'APPROVED' });
 
       expect(res.status).toBe(200);
@@ -453,7 +453,7 @@ describe('Form Routes', () => {
       prisma.Form.update.mockResolvedValue(cancelledForm);
 
       const res = await request(app)
-        .patch('/forms/1')
+        .patch('/api/forms/1')
         .send({ status: 'CANCELLED' });
 
       expect(res.status).toBe(200);
@@ -496,7 +496,7 @@ describe('Form Routes', () => {
       }));
 
       const res = await request(app)
-        .patch('/forms/1/archive')
+        .patch('/api/forms/1/archive')
         .send();
 
       expect(res.status).toBe(200);
@@ -545,7 +545,7 @@ describe('Form Routes', () => {
       prisma.Form.update.mockResolvedValue(updatedForm);
 
       const res = await request(app)
-        .post('/forms/1/attachments')
+        .post('/api/forms/1/attachments')
         .send({
           fileName: 'ppfo-proof.pdf',
           fileUrl: 'https://example.test/uploads/ppfo-proof.pdf',
@@ -599,7 +599,7 @@ describe('Form Routes', () => {
       }));
 
       const res = await request(app)
-        .patch('/forms/1/received')
+        .patch('/api/forms/1/received')
         .send({ isReceived: true });
 
       expect(res.status).toBe(400);
@@ -644,7 +644,7 @@ describe('Form Routes', () => {
       });
 
       const res = await request(app)
-        .patch('/forms/1/received')
+        .patch('/api/forms/1/received')
         .send({ isReceived: true });
 
       expect(res.status).toBe(200);
@@ -663,7 +663,7 @@ describe('Form Routes', () => {
 
   describe('GET /forms', () => {
     it('rejects an invalid legacy department filter before calling Prisma', async () => {
-      const res = await request(app).get('/forms?department=LABORATORY');
+      const res = await request(app).get('/api/forms?department=LABORATORY');
 
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('Invalid department');
@@ -683,7 +683,7 @@ describe('Form Routes', () => {
       prisma.form.count.mockResolvedValue(3);
       prisma.audit_Log.findMany.mockResolvedValue([]);
 
-      const res = await request(app).get('/dashboard');
+      const res = await request(app).get('/api/dashboard');
 
       expect(res.status).toBe(200);
       expect(res.body.data.counts.pendingForms).toBe(3);

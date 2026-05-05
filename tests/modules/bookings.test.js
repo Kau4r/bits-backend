@@ -65,7 +65,7 @@ describe('Bookings Routes', () => {
       ];
       prisma.Booked_Room.findMany.mockResolvedValue(mockBookings);
 
-      const res = await request(app).get('/bookings');
+      const res = await request(app).get('/api/bookings');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -75,7 +75,7 @@ describe('Bookings Routes', () => {
     it('should filter by status', async () => {
       prisma.Booked_Room.findMany.mockResolvedValue([]);
 
-      const res = await request(app).get('/bookings?status=APPROVED');
+      const res = await request(app).get('/api/bookings?status=APPROVED');
 
       expect(res.status).toBe(200);
       expect(prisma.Booked_Room.findMany).toHaveBeenCalledWith(
@@ -88,7 +88,7 @@ describe('Bookings Routes', () => {
     it('should filter by roomId', async () => {
       prisma.Booked_Room.findMany.mockResolvedValue([]);
 
-      const res = await request(app).get('/bookings?roomId=1');
+      const res = await request(app).get('/api/bookings?roomId=1');
 
       expect(res.status).toBe(200);
       expect(prisma.Booked_Room.findMany).toHaveBeenCalledWith(
@@ -101,7 +101,7 @@ describe('Bookings Routes', () => {
     it('should handle database errors', async () => {
       prisma.Booked_Room.findMany.mockRejectedValue(new Error('DB error'));
 
-      const res = await request(app).get('/bookings');
+      const res = await request(app).get('/api/bookings');
 
       expect(res.status).toBe(500);
       expect(res.body.success).toBe(false);
@@ -139,7 +139,7 @@ describe('Bookings Routes', () => {
       prisma.Booked_Room.create.mockResolvedValue(mockCreatedBooking);
 
       const res = await request(app)
-        .post('/bookings')
+        .post('/api/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(201);
@@ -149,7 +149,7 @@ describe('Bookings Routes', () => {
 
     it('should reject booking with missing required fields', async () => {
       const res = await request(app)
-        .post('/bookings')
+        .post('/api/bookings')
         .send({ Room_ID: 1 }); // Missing User_ID, Start_Time, End_Time
 
       expect(res.status).toBe(400);
@@ -165,7 +165,7 @@ describe('Bookings Routes', () => {
       };
 
       const res = await request(app)
-        .post('/bookings')
+        .post('/api/bookings')
         .send(sundayBooking);
 
       expect(res.status).toBe(400);
@@ -176,7 +176,7 @@ describe('Bookings Routes', () => {
       prisma.room.findUnique.mockResolvedValue(null);
 
       const res = await request(app)
-        .post('/bookings')
+        .post('/api/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(404);
@@ -193,7 +193,7 @@ describe('Bookings Routes', () => {
       prisma.user.findUnique.mockResolvedValue({ User_ID: 1, User_Role: 'FACULTY' });
 
       const res = await request(app)
-        .post('/bookings')
+        .post('/api/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(403);
@@ -217,7 +217,7 @@ describe('Bookings Routes', () => {
       });
 
       const res = await request(app)
-        .post('/bookings')
+        .post('/api/bookings')
         .send(validBooking);
 
       expect(res.status).toBe(409);
@@ -269,7 +269,7 @@ describe('Bookings Routes', () => {
       prisma.Booked_Room.create.mockResolvedValue(createdBooking);
 
       const res = await request(app)
-        .post('/bookings')
+        .post('/api/bookings')
         .send(conferenceBooking);
 
       expect(res.status).toBe(201);
@@ -302,7 +302,7 @@ describe('Bookings Routes', () => {
       });
       prisma.Booked_Room.delete.mockResolvedValue({});
 
-      const res = await request(app).delete('/bookings/1');
+      const res = await request(app).delete('/api/bookings/1');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -311,7 +311,7 @@ describe('Bookings Routes', () => {
     it('should return 404 for non-existent booking', async () => {
       prisma.Booked_Room.findUnique.mockResolvedValue(null);
 
-      const res = await request(app).delete('/bookings/999');
+      const res = await request(app).delete('/api/bookings/999');
 
       expect(res.status).toBe(404);
       expect(res.body.success).toBe(false);

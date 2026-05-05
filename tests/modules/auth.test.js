@@ -64,7 +64,7 @@ describe('Auth Routes', () => {
       prisma.user.findFirst.mockResolvedValue(mockUser);
 
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({ username: 'test@example.com', password: 'correct-password' });
 
       expect(res.status).toBe(200);
@@ -88,7 +88,7 @@ describe('Auth Routes', () => {
       prisma.user.update.mockResolvedValue(mockUser); // For password migration
 
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({ email: 'legacy@example.com', password: 'plain-text-pass' });
 
       expect(res.status).toBe(200);
@@ -107,7 +107,7 @@ describe('Auth Routes', () => {
       prisma.user.findFirst.mockResolvedValue(mockUser);
 
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({ email: 'test@example.com', password: 'wrong-password' });
 
       expect(res.status).toBe(401);
@@ -119,7 +119,7 @@ describe('Auth Routes', () => {
       prisma.user.findFirst.mockResolvedValue(null);
 
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({ email: 'nobody@example.com', password: 'password' });
 
       expect(res.status).toBe(401);
@@ -136,7 +136,7 @@ describe('Auth Routes', () => {
       });
 
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({ email: 'inactive@example.com', password: 'password' });
 
       expect(res.status).toBe(401);
@@ -146,7 +146,7 @@ describe('Auth Routes', () => {
 
     it('should reject missing username/email', async () => {
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({ password: 'password' });
 
       expect(res.status).toBe(400);
@@ -155,7 +155,7 @@ describe('Auth Routes', () => {
 
     it('should reject missing password', async () => {
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({ email: 'test@example.com' });
 
       expect(res.status).toBe(400);
@@ -164,7 +164,7 @@ describe('Auth Routes', () => {
 
     it('should reject empty body', async () => {
       const res = await request(app)
-        .post('/auth/login')
+        .post('/api/auth/login')
         .send({});
 
       expect(res.status).toBe(400);
@@ -175,7 +175,7 @@ describe('Auth Routes', () => {
   describe('POST /auth/logout', () => {
     it('should logout successfully', async () => {
       const res = await request(app)
-        .post('/auth/logout');
+        .post('/api/auth/logout');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);

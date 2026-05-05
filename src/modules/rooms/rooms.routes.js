@@ -25,10 +25,10 @@ router.get('/public/lecture-rooms', asyncHandler(getPublicLectureRooms));
 router.get('/public/:roomId/schedule-7day', asyncHandler(getPublicRoomSchedule7Day));
 router.get('/public', asyncHandler(getPublicRooms));
 
-router.get('/', asyncHandler(getRooms));
+router.get('/', authenticateToken, asyncHandler(getRooms));
 router.get('/opened-labs', authenticateToken, authorize('STUDENT', 'LAB_HEAD', 'LAB_TECH', 'ADMIN'), asyncHandler(getOpenedLabs));
 router.get('/:id/audit-status', authenticateToken, authorize('LAB_HEAD', 'LAB_TECH', 'ADMIN'), asyncHandler(getRoomAuditStatus));
-router.get('/:id', asyncHandler(getRoomById));
+router.get('/:id', authenticateToken, asyncHandler(getRoomById));
 router.post('/', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(createRoom));
 router.put('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD'), asyncHandler(updateRoom));
 router.delete('/:id', authenticateToken, authorize('ADMIN'), asyncHandler(deleteRoom));

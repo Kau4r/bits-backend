@@ -123,317 +123,298 @@ const canAccessTicket = (user, ticket) => {
 
 // Create Ticket
 const createTicket = async (req, res) => {
-  try {
-    const reporterResult = parseRequiredId(req.body.Reported_By_ID ?? req.user?.User_ID, 'Reported_By_ID');
-    if (reporterResult.error) return sendValidationError(res, reporterResult.error);
+  const reporterResult = parseRequiredId(req.body.Reported_By_ID ?? req.user?.User_ID, 'Reported_By_ID');
+  if (reporterResult.error) return sendValidationError(res, reporterResult.error);
 
-    if (req.user && !isTicketManagerRole(req.user.User_Role) && reporterResult.value !== req.user.User_ID) {
-      return res.status(403).json({ success: false, error: 'You can only create tickets for your own account' });
-    }
-
-    const problemResult = normalizeRequiredText(req.body.Report_Problem, 'Report_Problem');
-    if (problemResult.error) return sendValidationError(res, problemResult.error);
-
-    const statusResult = normalizeOptionalEnum(req.body.Status, 'Status', VALID_STATUSES);
-    const priorityResult = normalizeOptionalEnum(req.body.Priority, 'Priority', VALID_PRIORITIES);
-    const categoryResult = normalizeOptionalEnum(req.body.Category, 'Category', VALID_CATEGORIES);
-    const roomResult = parseOptionalId(req.body.Room_ID, 'Room_ID');
-    const itemResult = parseOptionalId(req.body.Item_ID, 'Item_ID');
-    const locationResult = normalizeOptionalText(req.body.Location);
-
-    for (const result of [statusResult, priorityResult, categoryResult, roomResult, itemResult]) {
-      if (result.error) return sendValidationError(res, result.error);
-    }
-
-    const roomError = await validateRoom(roomResult.value);
-    if (roomError) return sendValidationError(res, roomError);
-
-    const itemError = await validateItem(itemResult.value);
-    if (itemError) return sendValidationError(res, itemError);
-
-    const ticketStatus = statusResult.value || 'PENDING';
-    const ticket = await prisma.ticket.create({
-      data: {
-        Reported_By_ID: reporterResult.value,
-        Report_Problem: problemResult.value,
-        ...(locationResult.provided ? { Location: locationResult.value } : {}),
-        ...(itemResult.provided ? { Item_ID: itemResult.value } : {}),
-        ...(roomResult.provided ? { Room_ID: roomResult.value } : {}),
-        Status: ticketStatus,
-        Archived: ticketStatus === 'RESOLVED',
-        ...(priorityResult.provided ? { Priority: priorityResult.value } : {}),
-        ...(categoryResult.provided ? { Category: categoryResult.value } : {}),
-      },
-      include: ticketInclude,
-    });
-
-    const ticketDetails = `New ticket reported: ${problemResult.value.substring(0, 50)}${problemResult.value.length > 50 ? '...' : ''}`;
-
-    await AuditLogger.logTicket(
-      reporterResult.value,
-      'TICKET_CREATED',
-      ticket.Ticket_ID,
-      ticketDetails,
-      ['LAB_TECH', 'LAB_HEAD']
-    );
-
-    res.status(201).json({ success: true, data: ticket });
-  } catch (error) {
-    console.error('Error creating ticket:', error);
-    res.status(500).json({ success: false, error: 'Failed to create ticket' });
+  if (req.user && !isTicketManagerRole(req.user.User_Role) && reporterResult.value !== req.user.User_ID) {
+    return res.status(403).json({ success: false, error: 'You can only create tickets for your own account' });
   }
+
+  const problemResult = normalizeRequiredText(req.body.Report_Problem, 'Report_Problem');
+  if (problemResult.error) return sendValidationError(res, problemResult.error);
+
+  const statusResult = normalizeOptionalEnum(req.body.Status, 'Status', VALID_STATUSES);
+  const priorityResult = normalizeOptionalEnum(req.body.Priority, 'Priority', VALID_PRIORITIES);
+  const categoryResult = normalizeOptionalEnum(req.body.Category, 'Category', VALID_CATEGORIES);
+  const roomResult = parseOptionalId(req.body.Room_ID, 'Room_ID');
+  const itemResult = parseOptionalId(req.body.Item_ID, 'Item_ID');
+  const locationResult = normalizeOptionalText(req.body.Location);
+
+  for (const result of [statusResult, priorityResult, categoryResult, roomResult, itemResult]) {
+    if (result.error) return sendValidationError(res, result.error);
+  }
+
+  const roomError = await validateRoom(roomResult.value);
+  if (roomError) return sendValidationError(res, roomError);
+
+  const itemError = await validateItem(itemResult.value);
+  if (itemError) return sendValidationError(res, itemError);
+
+  const ticketStatus = statusResult.value || 'PENDING';
+  const ticket = await prisma.ticket.create({
+    data: {
+      Reported_By_ID: reporterResult.value,
+      Report_Problem: problemResult.value,
+      ...(locationResult.provided ? { Location: locationResult.value } : {}),
+      ...(itemResult.provided ? { Item_ID: itemResult.value } : {}),
+      ...(roomResult.provided ? { Room_ID: roomResult.value } : {}),
+      Status: ticketStatus,
+      Archived: ticketStatus === 'RESOLVED',
+      ...(priorityResult.provided ? { Priority: priorityResult.value } : {}),
+      ...(categoryResult.provided ? { Category: categoryResult.value } : {}),
+    },
+    include: ticketInclude,
+  });
+
+  const ticketDetails = `New ticket reported: ${problemResult.value.substring(0, 50)}${problemResult.value.length > 50 ? '...' : ''}`;
+
+  await AuditLogger.logTicket(
+    reporterResult.value,
+    'TICKET_CREATED',
+    ticket.Ticket_ID,
+    ticketDetails,
+    ['LAB_TECH', 'LAB_HEAD']
+  );
+
+  res.status(201).json({ success: true, data: ticket });
 };
 
 // Get ticket count by status
 const getTicketCount = async (req, res) => {
-  try {
-    const { status } = req.query;
-    const where = { Archived: false };
+  const { status } = req.query;
+  const where = { Archived: false };
 
-    if (status) {
-      const statusResult = normalizeOptionalEnum(status, 'status', VALID_STATUSES);
-      if (statusResult.error) return sendValidationError(res, statusResult.error);
-      where.Status = statusResult.value;
-    }
-
-    const count = await prisma.ticket.count({ where });
-    res.json({ success: true, data: { count } });
-  } catch (error) {
-    console.error('Error counting tickets:', error);
-    res.status(500).json({ success: false, error: 'Failed to count tickets' });
+  if (status) {
+    const statusResult = normalizeOptionalEnum(status, 'status', VALID_STATUSES);
+    if (statusResult.error) return sendValidationError(res, statusResult.error);
+    where.Status = statusResult.value;
   }
+
+  const count = await prisma.ticket.count({ where });
+  res.json({ success: true, data: { count } });
 };
 
 // Get all tickets (optionally filter by status)
 const getTickets = async (req, res) => {
-  try {
-    const { status, technicianId, excludeStatus, unassigned } = req.query;
-    const where = {};
+  const { status, technicianId, excludeStatus, unassigned } = req.query;
+  const where = {};
 
-    if (status) {
-      const statusResult = normalizeOptionalEnum(status, 'status', VALID_STATUSES);
-      if (statusResult.error) return sendValidationError(res, statusResult.error);
-      where.Status = statusResult.value;
-    }
-
-    if (technicianId) {
-      const techResult = parseRequiredId(technicianId, 'technicianId');
-      if (techResult.error) return sendValidationError(res, techResult.error);
-      where.Technician_ID = techResult.value;
-    }
-
-    if (unassigned === 'true') where.Technician_ID = null;
-
-    if (excludeStatus) {
-      const statusResult = normalizeOptionalEnum(excludeStatus, 'excludeStatus', VALID_STATUSES);
-      if (statusResult.error) return sendValidationError(res, statusResult.error);
-      where.Status = { not: statusResult.value };
-    }
-
-    const tickets = await prisma.ticket.findMany({
-      where,
-      include: {
-        ...ticketInclude,
-        AuditLogs: true,
-      },
-      orderBy: { Created_At: 'desc' },
-    });
-
-    res.json({ success: true, data: tickets });
-  } catch (error) {
-    console.error('Error fetching tickets:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch tickets' });
+  if (status) {
+    const statusResult = normalizeOptionalEnum(status, 'status', VALID_STATUSES);
+    if (statusResult.error) return sendValidationError(res, statusResult.error);
+    where.Status = statusResult.value;
   }
+
+  if (technicianId && unassigned === 'true') {
+    // unassigned=true wins over technicianId when both are provided
+    where.Technician_ID = null;
+  } else if (technicianId) {
+    const techResult = parseRequiredId(technicianId, 'technicianId');
+    if (techResult.error) return sendValidationError(res, techResult.error);
+    where.Technician_ID = techResult.value;
+  } else if (unassigned === 'true') {
+    where.Technician_ID = null;
+  }
+
+  if (status && excludeStatus) {
+    // status filter wins; excludeStatus is ignored when both are provided
+    // where.Status already set above — nothing more to do
+  } else if (excludeStatus) {
+    const statusResult = normalizeOptionalEnum(excludeStatus, 'excludeStatus', VALID_STATUSES);
+    if (statusResult.error) return sendValidationError(res, statusResult.error);
+    where.Status = { not: statusResult.value };
+  }
+
+  const tickets = await prisma.ticket.findMany({
+    where,
+    include: {
+      ...ticketInclude,
+      AuditLogs: true,
+    },
+    orderBy: { Created_At: 'desc' },
+  });
+
+  res.json({ success: true, data: tickets });
 };
 
 // Update ticket details/status/assignment/archive state
 const updateTicket = async (req, res) => {
-  try {
-    const idResult = parseRequiredId(req.params.id, 'Ticket_ID');
-    if (idResult.error) return sendValidationError(res, idResult.error);
+  const idResult = parseRequiredId(req.params.id, 'Ticket_ID');
+  if (idResult.error) return sendValidationError(res, idResult.error);
 
-    const statusResult = normalizeOptionalEnum(req.body.Status, 'Status', VALID_STATUSES);
-    const priorityResult = normalizeOptionalEnum(req.body.Priority, 'Priority', VALID_PRIORITIES);
-    const categoryResult = normalizeOptionalEnum(req.body.Category, 'Category', VALID_CATEGORIES);
-    const archiveResult = normalizeOptionalBoolean(req.body.Archived, 'Archived');
-    const technicianResult = parseOptionalId(req.body.Technician_ID, 'Technician_ID');
-    const itemResult = parseOptionalId(req.body.Item_ID, 'Item_ID');
-    const roomResult = parseOptionalId(req.body.Room_ID, 'Room_ID');
-    const problemResult = req.body.Report_Problem === undefined
-      ? { provided: false, value: undefined }
-      : { provided: true, ...normalizeRequiredText(req.body.Report_Problem, 'Report_Problem') };
-    const locationResult = normalizeOptionalText(req.body.Location);
+  const statusResult = normalizeOptionalEnum(req.body.Status, 'Status', VALID_STATUSES);
+  const priorityResult = normalizeOptionalEnum(req.body.Priority, 'Priority', VALID_PRIORITIES);
+  const categoryResult = normalizeOptionalEnum(req.body.Category, 'Category', VALID_CATEGORIES);
+  const archiveResult = normalizeOptionalBoolean(req.body.Archived, 'Archived');
+  const technicianResult = parseOptionalId(req.body.Technician_ID, 'Technician_ID');
+  const itemResult = parseOptionalId(req.body.Item_ID, 'Item_ID');
+  const roomResult = parseOptionalId(req.body.Room_ID, 'Room_ID');
+  const problemResult = req.body.Report_Problem === undefined
+    ? { provided: false, value: undefined }
+    : { provided: true, ...normalizeRequiredText(req.body.Report_Problem, 'Report_Problem') };
+  const locationResult = normalizeOptionalText(req.body.Location);
 
-    for (const result of [statusResult, priorityResult, categoryResult, archiveResult, technicianResult, itemResult, roomResult, problemResult]) {
-      if (result.error) return sendValidationError(res, result.error);
-    }
-
-    const existingTicket = await prisma.ticket.findUnique({
-      where: { Ticket_ID: idResult.value }
-    });
-
-    if (!existingTicket) {
-      return res.status(404).json({ success: false, error: 'Ticket not found' });
-    }
-
-    const roomError = await validateRoom(roomResult.value);
-    if (roomError) return sendValidationError(res, roomError);
-
-    const itemError = await validateItem(itemResult.value);
-    if (itemError) return sendValidationError(res, itemError);
-
-    const requestedTechnicianId = technicianResult.value;
-    const nextTechnicianId = technicianResult.provided ? requestedTechnicianId : existingTicket.Technician_ID;
-    const isAssigningTicket = technicianResult.provided && requestedTechnicianId !== null && requestedTechnicianId !== existingTicket.Technician_ID;
-    const isUnassigningTicket = technicianResult.provided && requestedTechnicianId === null;
-
-    let nextStatus = statusResult.provided ? statusResult.value : existingTicket.Status;
-    if (isAssigningTicket && !statusResult.provided && existingTicket.Status === 'PENDING') {
-      nextStatus = 'IN_PROGRESS';
-    }
-    if (isUnassigningTicket && !statusResult.provided) {
-      nextStatus = 'PENDING';
-    }
-
-    const hasStatusUpdate = nextStatus !== existingTicket.Status;
-    const hasPriorityUpdate = priorityResult.provided && priorityResult.value !== existingTicket.Priority;
-    const hasCategoryUpdate = categoryResult.provided && categoryResult.value !== existingTicket.Category;
-    const hasReportProblemUpdate = problemResult.provided && problemResult.value !== existingTicket.Report_Problem;
-    const hasLocationUpdate = locationResult.provided && locationResult.value !== (existingTicket.Location ?? null);
-    const hasItemUpdate = itemResult.provided && itemResult.value !== (existingTicket.Item_ID ?? null);
-    const hasRoomUpdate = roomResult.provided && roomResult.value !== (existingTicket.Room_ID ?? null);
-    const isUnassignReset = isUnassigningTicket && nextStatus === 'PENDING';
-    const isResolvingTicket = nextStatus === 'RESOLVED' && existingTicket.Status !== 'RESOLVED';
-
-    const requiresAssignedTechnician = (hasStatusUpdate && !isUnassignReset) ||
-      hasPriorityUpdate ||
-      hasCategoryUpdate ||
-      hasReportProblemUpdate ||
-      hasLocationUpdate ||
-      hasItemUpdate ||
-      hasRoomUpdate;
-
-    if (requiresAssignedTechnician && !nextTechnicianId) {
-      return sendValidationError(res, 'Assign the ticket to a Lab Tech before updating details or status');
-    }
-
-    if (requestedTechnicianId) {
-      const validation = await validateLabTechAssignment(requestedTechnicianId);
-      if (validation.error) return sendValidationError(res, validation.error);
-    } else if (requiresAssignedTechnician && nextTechnicianId) {
-      const validation = await validateLabTechAssignment(nextTechnicianId);
-      if (validation.error) return sendValidationError(res, validation.error);
-    }
-
-    const updateData = {};
-    if (hasStatusUpdate || statusResult.provided || isUnassigningTicket || isAssigningTicket) updateData.Status = nextStatus;
-    if (priorityResult.provided) updateData.Priority = priorityResult.value;
-    if (categoryResult.provided) updateData.Category = categoryResult.value;
-    if (archiveResult.provided) updateData.Archived = archiveResult.value;
-    if (isResolvingTicket) updateData.Archived = true;
-    if (technicianResult.provided) updateData.Technician_ID = requestedTechnicianId;
-    if (problemResult.provided) updateData.Report_Problem = problemResult.value;
-    if (locationResult.provided) updateData.Location = locationResult.value;
-    if (itemResult.provided) updateData.Item_ID = itemResult.value;
-    if (roomResult.provided) updateData.Room_ID = roomResult.value;
-
-    if (Object.keys(updateData).length === 0) {
-      return sendValidationError(res, 'No ticket update fields provided');
-    }
-
-    const updatedTicket = await prisma.ticket.update({
-      where: { Ticket_ID: idResult.value },
-      data: updateData,
-      include: ticketInclude,
-    });
-
-    let notificationSent = false;
-
-    if (isAssigningTicket && updatedTicket.Technician) {
-      await AuditLogger.logTicket(
-        req.user ? req.user.User_ID : existingTicket.Reported_By_ID,
-        'TICKET_ASSIGNED',
-        updatedTicket.Ticket_ID,
-        `Ticket assigned to ${updatedTicket.Technician.First_Name} ${updatedTicket.Technician.Last_Name}`,
-        ['LAB_TECH', 'LAB_HEAD'],
-        requestedTechnicianId
-      );
-      notificationSent = true;
-    }
-
-    if (isResolvingTicket) {
-      await AuditLogger.logTicket(
-        req.user ? req.user.User_ID : existingTicket.Technician_ID || existingTicket.Reported_By_ID,
-        'TICKET_RESOLVED',
-        updatedTicket.Ticket_ID,
-        `Ticket resolved: ${updatedTicket.Report_Problem.substring(0, 30)}...`,
-        ['LAB_TECH', 'LAB_HEAD'],
-        updatedTicket.Reported_By_ID
-      );
-      notificationSent = true;
-    }
-
-    if (archiveResult.provided && archiveResult.value !== existingTicket.Archived) {
-      await AuditLogger.logTicket(
-        req.user ? req.user.User_ID : existingTicket.Reported_By_ID,
-        archiveResult.value ? 'TICKET_ARCHIVED' : 'TICKET_UPDATED',
-        updatedTicket.Ticket_ID,
-        archiveResult.value ? 'Ticket archived' : 'Ticket restored',
-        ['LAB_TECH', 'LAB_HEAD']
-      );
-      notificationSent = true;
-    }
-
-    const hasOtherChanges = hasStatusUpdate ||
-      hasPriorityUpdate ||
-      hasCategoryUpdate ||
-      hasReportProblemUpdate ||
-      hasLocationUpdate ||
-      hasItemUpdate ||
-      hasRoomUpdate ||
-      isUnassigningTicket;
-
-    if (!notificationSent && hasOtherChanges) {
-      await AuditLogger.logTicket(
-        req.user ? req.user.User_ID : existingTicket.Reported_By_ID,
-        'TICKET_UPDATED',
-        updatedTicket.Ticket_ID,
-        'Ticket updated via System',
-        ['LAB_TECH', 'LAB_HEAD']
-      );
-    }
-
-    res.json({ success: true, data: updatedTicket });
-  } catch (error) {
-    console.error(`Error updating ticket ${req.params.id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to update ticket' });
+  for (const result of [statusResult, priorityResult, categoryResult, archiveResult, technicianResult, itemResult, roomResult, problemResult]) {
+    if (result.error) return sendValidationError(res, result.error);
   }
+
+  const existingTicket = await prisma.ticket.findUnique({
+    where: { Ticket_ID: idResult.value }
+  });
+
+  if (!existingTicket) {
+    return res.status(404).json({ success: false, error: 'Ticket not found' });
+  }
+
+  const roomError = await validateRoom(roomResult.value);
+  if (roomError) return sendValidationError(res, roomError);
+
+  const itemError = await validateItem(itemResult.value);
+  if (itemError) return sendValidationError(res, itemError);
+
+  const requestedTechnicianId = technicianResult.value;
+  const nextTechnicianId = technicianResult.provided ? requestedTechnicianId : existingTicket.Technician_ID;
+  const isAssigningTicket = technicianResult.provided && requestedTechnicianId !== null && requestedTechnicianId !== existingTicket.Technician_ID;
+  const isUnassigningTicket = technicianResult.provided && requestedTechnicianId === null;
+
+  let nextStatus = statusResult.provided ? statusResult.value : existingTicket.Status;
+  if (isAssigningTicket && !statusResult.provided && existingTicket.Status === 'PENDING') {
+    nextStatus = 'IN_PROGRESS';
+  }
+  if (isUnassigningTicket && !statusResult.provided) {
+    nextStatus = 'PENDING';
+  }
+
+  const hasStatusUpdate = nextStatus !== existingTicket.Status;
+  const hasPriorityUpdate = priorityResult.provided && priorityResult.value !== existingTicket.Priority;
+  const hasCategoryUpdate = categoryResult.provided && categoryResult.value !== existingTicket.Category;
+  const hasReportProblemUpdate = problemResult.provided && problemResult.value !== existingTicket.Report_Problem;
+  const hasLocationUpdate = locationResult.provided && locationResult.value !== (existingTicket.Location ?? null);
+  const hasItemUpdate = itemResult.provided && itemResult.value !== (existingTicket.Item_ID ?? null);
+  const hasRoomUpdate = roomResult.provided && roomResult.value !== (existingTicket.Room_ID ?? null);
+  const isUnassignReset = isUnassigningTicket && nextStatus === 'PENDING';
+  const isResolvingTicket = nextStatus === 'RESOLVED' && existingTicket.Status !== 'RESOLVED';
+
+  const requiresAssignedTechnician = (hasStatusUpdate && !isUnassignReset) ||
+    hasPriorityUpdate ||
+    hasCategoryUpdate ||
+    hasReportProblemUpdate ||
+    hasLocationUpdate ||
+    hasItemUpdate ||
+    hasRoomUpdate;
+
+  if (requiresAssignedTechnician && !nextTechnicianId) {
+    return sendValidationError(res, 'Assign the ticket to a Lab Tech before updating details or status');
+  }
+
+  if (requestedTechnicianId) {
+    const validation = await validateLabTechAssignment(requestedTechnicianId);
+    if (validation.error) return sendValidationError(res, validation.error);
+  } else if (requiresAssignedTechnician && nextTechnicianId) {
+    const validation = await validateLabTechAssignment(nextTechnicianId);
+    if (validation.error) return sendValidationError(res, validation.error);
+  }
+
+  const updateData = {};
+  if (hasStatusUpdate || statusResult.provided || isUnassigningTicket || isAssigningTicket) updateData.Status = nextStatus;
+  if (priorityResult.provided) updateData.Priority = priorityResult.value;
+  if (categoryResult.provided) updateData.Category = categoryResult.value;
+  if (archiveResult.provided) updateData.Archived = archiveResult.value;
+  if (isResolvingTicket) updateData.Archived = true;
+  if (technicianResult.provided) updateData.Technician_ID = requestedTechnicianId;
+  if (problemResult.provided) updateData.Report_Problem = problemResult.value;
+  if (locationResult.provided) updateData.Location = locationResult.value;
+  if (itemResult.provided) updateData.Item_ID = itemResult.value;
+  if (roomResult.provided) updateData.Room_ID = roomResult.value;
+
+  if (Object.keys(updateData).length === 0) {
+    return sendValidationError(res, 'No ticket update fields provided');
+  }
+
+  const updatedTicket = await prisma.ticket.update({
+    where: { Ticket_ID: idResult.value },
+    data: updateData,
+    include: ticketInclude,
+  });
+
+  let notificationSent = false;
+
+  if (isAssigningTicket && updatedTicket.Technician) {
+    await AuditLogger.logTicket(
+      req.user ? req.user.User_ID : existingTicket.Reported_By_ID,
+      'TICKET_ASSIGNED',
+      updatedTicket.Ticket_ID,
+      `Ticket assigned to ${updatedTicket.Technician.First_Name} ${updatedTicket.Technician.Last_Name}`,
+      ['LAB_TECH', 'LAB_HEAD'],
+      requestedTechnicianId
+    );
+    notificationSent = true;
+  }
+
+  if (isResolvingTicket) {
+    await AuditLogger.logTicket(
+      req.user ? req.user.User_ID : existingTicket.Technician_ID || existingTicket.Reported_By_ID,
+      'TICKET_RESOLVED',
+      updatedTicket.Ticket_ID,
+      `Ticket resolved: ${updatedTicket.Report_Problem.substring(0, 30)}...`,
+      ['LAB_TECH', 'LAB_HEAD'],
+      updatedTicket.Reported_By_ID
+    );
+    notificationSent = true;
+  }
+
+  if (archiveResult.provided && archiveResult.value !== existingTicket.Archived) {
+    await AuditLogger.logTicket(
+      req.user ? req.user.User_ID : existingTicket.Reported_By_ID,
+      archiveResult.value ? 'TICKET_ARCHIVED' : 'TICKET_UPDATED',
+      updatedTicket.Ticket_ID,
+      archiveResult.value ? 'Ticket archived' : 'Ticket restored',
+      ['LAB_TECH', 'LAB_HEAD']
+    );
+    notificationSent = true;
+  }
+
+  const hasOtherChanges = hasStatusUpdate ||
+    hasPriorityUpdate ||
+    hasCategoryUpdate ||
+    hasReportProblemUpdate ||
+    hasLocationUpdate ||
+    hasItemUpdate ||
+    hasRoomUpdate ||
+    isUnassigningTicket;
+
+  if (!notificationSent && hasOtherChanges) {
+    await AuditLogger.logTicket(
+      req.user ? req.user.User_ID : existingTicket.Reported_By_ID,
+      'TICKET_UPDATED',
+      updatedTicket.Ticket_ID,
+      'Ticket updated via System',
+      ['LAB_TECH', 'LAB_HEAD']
+    );
+  }
+
+  res.json({ success: true, data: updatedTicket });
 };
 
 // Get single ticket
 const getTicketById = async (req, res) => {
-  try {
-    const idResult = parseRequiredId(req.params.id, 'Ticket_ID');
-    if (idResult.error) return sendValidationError(res, idResult.error);
+  const idResult = parseRequiredId(req.params.id, 'Ticket_ID');
+  if (idResult.error) return sendValidationError(res, idResult.error);
 
-    const ticket = await prisma.ticket.findUnique({
-      where: { Ticket_ID: idResult.value },
-      include: ticketInclude,
-    });
+  const ticket = await prisma.ticket.findUnique({
+    where: { Ticket_ID: idResult.value },
+    include: ticketInclude,
+  });
 
-    if (!ticket) {
-      return res.status(404).json({ success: false, error: 'Ticket not found' });
-    }
-
-    if (!canAccessTicket(req.user, ticket)) {
-      return res.status(403).json({ success: false, error: 'You do not have permission to view this ticket' });
-    }
-
-    res.json({ success: true, data: ticket });
-  } catch (error) {
-    console.error(`Error fetching ticket ${req.params.id}:`, error);
-    res.status(500).json({ success: false, error: 'Failed to fetch ticket' });
+  if (!ticket) {
+    return res.status(404).json({ success: false, error: 'Ticket not found' });
   }
+
+  if (!canAccessTicket(req.user, ticket)) {
+    return res.status(403).json({ success: false, error: 'You do not have permission to view this ticket' });
+  }
+
+  res.json({ success: true, data: ticket });
 };
 
 // ==================== PUBLIC (UNAUTHENTICATED) ENDPOINT ====================
@@ -481,90 +462,85 @@ const getOrCreatePublicReporterUser = async () => {
 
 // POST /api/tickets/public — no auth required
 const createPublicTicket = async (req, res) => {
-  try {
-    const { reporterIdentifier, roomId, issueType, equipment, description, pcNumber } = req.body;
+  const { reporterIdentifier, roomId, issueType, equipment, description, pcNumber } = req.body;
 
-    // Validated by Joi middleware before reaching here — only extra semantic checks below.
+  // Validated by Joi middleware before reaching here — only extra semantic checks below.
 
-    // Anti-spam: reject all-whitespace or URL-containing descriptions.
-    const trimmedDesc = description.trim();
-    if (!trimmedDesc) {
-      return res.status(400).json({ success: false, error: 'Description cannot be empty' });
-    }
-    if (/https?:\/\//i.test(trimmedDesc)) {
-      return res.status(400).json({ success: false, error: 'Description cannot contain URLs' });
-    }
-
-    // Validate room exists when a specific room was chosen. Null/omitted roomId
-    // means the reporter explicitly said the issue isn't tied to a specific room.
-    let room = null;
-    if (roomId != null) {
-      room = await prisma.room.findUnique({
-        where: { Room_ID: roomId },
-        select: { Room_ID: true, Name: true },
-      });
-      if (!room) {
-        return res.status(400).json({ success: false, error: 'Invalid roomId: Room does not exist' });
-      }
-    }
-
-    // Map issueType to TicketCategory enum (NETWORK has no direct mapping → OTHER).
-    const categoryMap = {
-      HARDWARE: 'HARDWARE',
-      SOFTWARE: 'SOFTWARE',
-      NETWORK: 'OTHER',
-      OTHER: 'OTHER',
-    };
-    const category = categoryMap[issueType];
-
-    // Equipment + PC are folded into a single "[Equipment · PC X]" tag prefix on
-    // the description so the labtech UI can render them as a small chip without
-    // a schema change. Location stays null — the room comes from Room_ID via the
-    // ticket's Room relation; labtechs use Location only as a free-text override.
-    const equipmentLabel = {
-      MONITOR: 'Monitor',
-      KEYBOARD: 'Keyboard',
-      MOUSE: 'Mouse',
-      MINI_PC: 'Mini PC',
-      SYSTEM_UNIT: 'System Unit',
-      HEADSET: 'Headset',
-      OTHER: 'Other',
-    }[equipment] || null;
-    const tagParts = [];
-    if (equipmentLabel) tagParts.push(equipmentLabel);
-    if (pcNumber?.trim()) tagParts.push(pcNumber.trim());
-    const tagPrefix = tagParts.length > 0 ? `[${tagParts.join(' · ')}] ` : '';
-    const finalDescription = `${tagPrefix}${trimmedDesc}`;
-
-    // Get or create the system reporter user.
-    const reporterUserId = await getOrCreatePublicReporterUser();
-
-    const ticket = await prisma.ticket.create({
-      data: {
-        Reported_By_ID: reporterUserId,
-        Report_Problem: finalDescription,
-        Reporter_Identifier: reporterIdentifier?.trim() || null,
-        Room_ID: roomId ?? null,
-        Location: null,
-        Category: category,
-        Status: 'PENDING',
-      },
-      select: { Ticket_ID: true },
-    });
-
-    await AuditLogger.logTicket(
-      reporterUserId,
-      'TICKET_CREATED',
-      ticket.Ticket_ID,
-      `Public ticket from ${reporterIdentifier || 'public reporter'}: ${trimmedDesc.substring(0, 80)}`,
-      ['LAB_TECH', 'LAB_HEAD']
-    );
-
-    return res.status(201).json({ success: true, data: { Ticket_ID: ticket.Ticket_ID } });
-  } catch (error) {
-    console.error('Error creating public ticket:', error);
-    return res.status(500).json({ success: false, error: 'Failed to create ticket' });
+  // Anti-spam: reject all-whitespace or URL-containing descriptions.
+  const trimmedDesc = description.trim();
+  if (!trimmedDesc) {
+    return res.status(400).json({ success: false, error: 'Description cannot be empty' });
   }
+  if (/https?:\/\//i.test(trimmedDesc)) {
+    return res.status(400).json({ success: false, error: 'Description cannot contain URLs' });
+  }
+
+  // Validate room exists when a specific room was chosen. Null/omitted roomId
+  // means the reporter explicitly said the issue isn't tied to a specific room.
+  let room = null;
+  if (roomId != null) {
+    room = await prisma.room.findUnique({
+      where: { Room_ID: roomId },
+      select: { Room_ID: true, Name: true },
+    });
+    if (!room) {
+      return res.status(400).json({ success: false, error: 'Invalid roomId: Room does not exist' });
+    }
+  }
+
+  // Map issueType to TicketCategory enum (NETWORK has no direct mapping → OTHER).
+  const categoryMap = {
+    HARDWARE: 'HARDWARE',
+    SOFTWARE: 'SOFTWARE',
+    NETWORK: 'OTHER',
+    OTHER: 'OTHER',
+  };
+  const category = categoryMap[issueType];
+
+  // Equipment + PC are folded into a single "[Equipment · PC X]" tag prefix on
+  // the description so the labtech UI can render them as a small chip without
+  // a schema change. Location stays null — the room comes from Room_ID via the
+  // ticket's Room relation; labtechs use Location only as a free-text override.
+  const equipmentLabel = {
+    MONITOR: 'Monitor',
+    KEYBOARD: 'Keyboard',
+    MOUSE: 'Mouse',
+    MINI_PC: 'Mini PC',
+    SYSTEM_UNIT: 'System Unit',
+    HEADSET: 'Headset',
+    OTHER: 'Other',
+  }[equipment] || null;
+  const tagParts = [];
+  if (equipmentLabel) tagParts.push(equipmentLabel);
+  if (pcNumber?.trim()) tagParts.push(pcNumber.trim());
+  const tagPrefix = tagParts.length > 0 ? `[${tagParts.join(' · ')}] ` : '';
+  const finalDescription = `${tagPrefix}${trimmedDesc}`;
+
+  // Get or create the system reporter user.
+  const reporterUserId = await getOrCreatePublicReporterUser();
+
+  const ticket = await prisma.ticket.create({
+    data: {
+      Reported_By_ID: reporterUserId,
+      Report_Problem: finalDescription,
+      Reporter_Identifier: reporterIdentifier?.trim() || null,
+      Room_ID: roomId ?? null,
+      Location: null,
+      Category: category,
+      Status: 'PENDING',
+    },
+    select: { Ticket_ID: true },
+  });
+
+  await AuditLogger.logTicket(
+    reporterUserId,
+    'TICKET_CREATED',
+    ticket.Ticket_ID,
+    `Public ticket from ${reporterIdentifier || 'public reporter'}: ${trimmedDesc.substring(0, 80)}`,
+    ['LAB_TECH', 'LAB_HEAD']
+  );
+
+  return res.status(201).json({ success: true, data: { Ticket_ID: ticket.Ticket_ID } });
 };
 
 module.exports = {

@@ -30,6 +30,9 @@ pids
 /prisma/*.db
 /prisma/*.db-journal
 
+# Claude Code
+.claude/worktrees/
+
 # IDE
 .idea/
 .vscode/

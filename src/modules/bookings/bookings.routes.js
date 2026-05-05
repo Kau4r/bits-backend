@@ -96,7 +96,7 @@ router.get('/', authenticateToken, asyncHandler(getBookings));
 router.patch('/:id', authenticateToken, asyncHandler(updateBooking));
 
 // Update room booking status
-router.patch('/:id/status', authenticateToken, validate(bookingSchemas.updateStatus), asyncHandler(updateBookingStatus));
+router.patch('/:id/status', authenticateToken, authorize('SECRETARY', 'LAB_HEAD', 'LAB_TECH', 'ADMIN', 'FACULTY'), validate(bookingSchemas.updateStatus), asyncHandler(updateBookingStatus));
 
 // Update queue occupancy status (OPEN / NEAR_FULL / FULL) — lab staff only.
 router.patch(

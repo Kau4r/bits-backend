@@ -1,5 +1,4 @@
 const prisma = require('../../lib/prisma');
-const NotificationService = require('../../services/notificationService');
 const NotificationManager = require('../../services/notificationManager');
 const AuditLogger = require('../../utils/auditLogger');
 const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
@@ -47,10 +46,10 @@ const notifyRejectedBooking = async (actorId, rejectedBooking, reason) => {
 
 // Create a new room booking
 const createBooking = async (req, res) => {
-    try {
-        const { User_ID, Room_ID, Start_Time, End_Time, Purpose } = req.body;
+        const { Room_ID, Start_Time, End_Time, Purpose } = req.body;
+        const User_ID = req.user.User_ID;
 
-        if (!User_ID || !Room_ID || !Start_Time || !End_Time) {
+        if (!Room_ID || !Start_Time || !End_Time) {
             return res.status(400).json({ success: false, error: 'Missing required fields' });
         }
 
@@ -90,16 +89,7 @@ const createBooking = async (req, res) => {
             });
         }
 
-        const requestingUser = await prisma.user.findUnique({
-            where: { User_ID: parseInt(User_ID) },
-            select: { User_Role: true }
-        });
-
-        if (!requestingUser) {
-            return res.status(404).json({ success: false, error: 'User not found' });
-        }
-
-        const isSecretary = isSecretaryBooking(requestingUser);
+        const isSecretary = isSecretaryBooking(req.user);
         const requiresSecretaryReview = SECRETARY_ALLOWED_ROOM_TYPES.has(room.Room_Type);
         // Secretary "priority" (auto-approve + pre-empt pending) only applies on
         // rooms the secretary owns (consultation/conference). On other rooms a
@@ -212,7 +202,7 @@ const createBooking = async (req, res) => {
             }
         }
 
-        const isLabHead = normalizeRole(requestingUser.User_Role) === 'LAB_HEAD';
+        const isLabHead = normalizeRole(req.user.User_Role) === 'LAB_HEAD';
         // Auto-approve when the requester already has authority over this room type:
         //   - secretary on conference/consultation rooms (secretaryPriority)
         //   - lab head on lab/lecture/other rooms (those they oversee)
@@ -333,93 +323,94 @@ const createBooking = async (req, res) => {
             data: booking,
             meta: { rejectedBookings: rejectedBookings.length }
         });
-
-    } catch (error) {
-        console.error('Booking error:', error);
-        res.status(500).json({ success: false, error: 'Failed to create booking' });
-    }
 };
 
 // Get all room bookings
 const getBookings = async (req, res) => {
-    try {
-        const { status, roomId, userId, from, to } = req.query;
+    const { status, roomId, userId, from, to } = req.query;
 
-        const where = {};
-        // Support comma-separated statuses (e.g., "PENDING,APPROVED")
-        if (status) {
-            const statuses = status.split(',').map(s => s.trim());
-            where.Status = statuses.length > 1 ? { in: statuses } : statuses[0];
-        }
-        if (roomId) where.Room_ID = parseInt(roomId);
-        if (userId) where.User_ID = parseInt(userId);
+    const STAFF_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH', 'ADMIN'];
+    const isStaff = STAFF_ROLES.includes(req.user.User_Role);
 
-        // Support date-range filtering on Start_Time: ?from=ISO&to=ISO
-        if (from || to) {
-            where.Start_Time = {};
-            if (from) where.Start_Time.gte = new Date(from);
-            if (to) where.Start_Time.lt = new Date(to);
-        }
+    const where = {};
+    // Support comma-separated statuses (e.g., "PENDING,APPROVED")
+    if (status) {
+        const statuses = status.split(',').map(s => s.trim());
+        where.Status = statuses.length > 1 ? { in: statuses } : statuses[0];
+    }
+    if (roomId) where.Room_ID = parseInt(roomId);
+    if (userId) where.User_ID = parseInt(userId);
 
-        const bookings = await prisma.Booked_Room.findMany({
-            where,
-            include: {
-                Room: true,
-                User: {
-                    select: {
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                Approver: {
-                    select: {
-                        First_Name: true,
-                        Last_Name: true,
-                        User_Role: true
-                    }
+    if (!isStaff) {
+        // Students and Faculty only see their own bookings
+        where.User_ID = req.user.User_ID;
+    }
+
+    // Support date-range filtering on Start_Time: ?from=ISO&to=ISO
+    if (from || to) {
+        where.Start_Time = {};
+        if (from) where.Start_Time.gte = new Date(from);
+        if (to) where.Start_Time.lt = new Date(to);
+    }
+
+    const bookings = await prisma.Booked_Room.findMany({
+        where,
+        include: {
+            Room: true,
+            User: {
+                select: {
+                    User_ID: true,
+                    First_Name: true,
+                    Last_Name: true
                 }
             },
-            orderBy: {
-                Start_Time: 'desc'
+            Approver: {
+                select: {
+                    First_Name: true,
+                    Last_Name: true,
+                    User_Role: true
+                }
             }
-        });
-
-        // Layer in virtual occurrences from active recurring series. Overrides
-        // (Booked_Room rows tied to a Series_ID + Original_Start) are already
-        // returned above and the expander skips those slots, so there's no
-        // double-render.
-        const virtualWhere = {};
-        if (roomId) virtualWhere.Room_ID = parseInt(roomId, 10);
-        if (userId) virtualWhere.User_ID = parseInt(userId, 10);
-        const virtual = await buildVirtualOccurrences({
-            from: from || new Date(),
-            to: to || undefined,
-            where: virtualWhere
-        });
-
-        // Apply the same status filter to virtual occurrences (status is
-        // inherited from the parent series).
-        let filteredVirtual = virtual;
-        if (status) {
-            const statuses = String(status).split(',').map(s => s.trim());
-            filteredVirtual = virtual.filter(v => statuses.includes(v.Status));
+        },
+        orderBy: {
+            Start_Time: 'desc'
         }
+    });
 
-        const merged = [...bookings, ...filteredVirtual].sort((a, b) =>
-            new Date(b.Start_Time).getTime() - new Date(a.Start_Time).getTime()
-        );
-
-        res.json({ success: true, data: merged });
-    } catch (error) {
-        console.error('Error fetching room bookings:', error);
-        res.status(500).json({ success: false, error: 'Failed to fetch room bookings' });
+    // Layer in virtual occurrences from active recurring series. Overrides
+    // (Booked_Room rows tied to a Series_ID + Original_Start) are already
+    // returned above and the expander skips those slots, so there's no
+    // double-render.
+    const virtualWhere = {};
+    if (roomId) virtualWhere.Room_ID = parseInt(roomId, 10);
+    if (!isStaff) {
+        virtualWhere.User_ID = req.user.User_ID;
+    } else if (userId) {
+        virtualWhere.User_ID = parseInt(userId, 10);
     }
+    const virtual = await buildVirtualOccurrences({
+        from: from || new Date(),
+        to: to || undefined,
+        where: virtualWhere
+    });
+
+    // Apply the same status filter to virtual occurrences (status is
+    // inherited from the parent series).
+    let filteredVirtual = virtual;
+    if (status) {
+        const statuses = String(status).split(',').map(s => s.trim());
+        filteredVirtual = virtual.filter(v => statuses.includes(v.Status));
+    }
+
+    const merged = [...bookings, ...filteredVirtual].sort((a, b) =>
+        new Date(b.Start_Time).getTime() - new Date(a.Start_Time).getTime()
+    );
+
+    res.json({ success: true, data: merged });
 };
 
 // Update room booking details (time, room, purpose)
 const updateBooking = async (req, res) => {
-    try {
         const { id } = req.params;
         const { Start_Time, End_Time, Room_ID, Purpose, Notes } = req.body;
         const requesterRole = normalizeRole(req.user?.User_Role);
@@ -592,34 +583,19 @@ const updateBooking = async (req, res) => {
         });
 
         res.json({ success: true, data: booking });
-    } catch (error) {
-        console.error('Error updating booking:', error);
-        res.status(500).json({ success: false, error: 'Failed to update booking' });
-    }
 };
 
 // Update room booking status
 const updateBookingStatus = async (req, res) => {
-    try {
         const { id } = req.params;
-        const { status, approverId, notes } = req.body;
+        const { status, notes } = req.body;
 
         if (!status || !['APPROVED', 'REJECTED', 'CANCELLED'].includes(status)) {
             return res.status(400).json({ success: false, error: 'Invalid status' });
         }
 
-        // Get the approver's user information
-        const approver = await prisma.user.findUnique({
-            where: { User_ID: parseInt(approverId) },
-            select: { User_Role: true }
-        });
-
-        if (!approver) {
-            return res.status(404).json({ success: false, error: 'Approver not found' });
-        }
-
         // Check if user has permission to change booking status
-        const isStaff = BOOKING_MANAGER_ROLES.includes(approver.User_Role);
+        const isStaff = BOOKING_MANAGER_ROLES.includes(req.user.User_Role);
 
         // Get the booking to check ownership and current status
         const existingBooking = await prisma.Booked_Room.findUnique({
@@ -634,10 +610,10 @@ const updateBookingStatus = async (req, res) => {
         // Permission logic:
         // - STAFF (SECRETARY, LAB_TECH, LAB_HEAD, ADMIN) can approve/reject/cancel any booking
         // - FACULTY can only CANCEL their OWN bookings
-        const isOwner = existingBooking.User_ID === parseInt(approverId);
+        const isOwner = existingBooking.User_ID === req.user.User_ID;
         const isOwnerCancelling = status === 'CANCELLED' && isOwner;
-        const isFacultyCancellingOwn = approver.User_Role === 'FACULTY' && isOwnerCancelling;
-        const approverRole = normalizeRole(approver.User_Role);
+        const isFacultyCancellingOwn = req.user.User_Role === 'FACULTY' && isOwnerCancelling;
+        const approverRole = normalizeRole(req.user.User_Role);
 
         if (!isStaff && !isFacultyCancellingOwn) {
             return res.status(403).json({
@@ -665,6 +641,7 @@ const updateBookingStatus = async (req, res) => {
         const canActOnNonPending = isCancellation;
         if (existingBooking.Status !== 'PENDING' && !canActOnNonPending) {
             return res.status(400).json({
+                success: false,
                 error: 'Bad Request',
                 details: 'Only PENDING bookings can be approved or rejected',
                 currentStatus: existingBooking.Status
@@ -674,7 +651,7 @@ const updateBookingStatus = async (req, res) => {
         const updateData = {
             Status: status,
             Updated_At: new Date(),
-            ...(status === 'APPROVED' && { Approved_By: parseInt(approverId) }),
+            ...(status === 'APPROVED' && { Approved_By: req.user.User_ID }),
             ...(notes && { Notes: notes })
         };
 
@@ -732,7 +709,7 @@ const updateBookingStatus = async (req, res) => {
         if (notificationType) {
             try {
                 await AuditLogger.logBooking(
-                    parseInt(approverId),
+                    req.user.User_ID,
                     notificationType,
                     booking.Booked_Room_ID,
                     message,
@@ -768,15 +745,10 @@ const updateBookingStatus = async (req, res) => {
         }
 
         res.json({ success: true, data: booking });
-    } catch (error) {
-        console.error('Error updating room booking status:', error);
-        res.status(500).json({ success: false, error: 'Failed to update room booking status' });
-    }
 };
 
 // Get available rooms for a time period
 const getAvailableRooms = async (req, res) => {
-    try {
         const { startTime, endTime, capacity } = req.query;
 
         if (!startTime || !endTime) {
@@ -819,15 +791,10 @@ const getAvailableRooms = async (req, res) => {
         );
 
         res.json({ success: true, data: availableRooms });
-    } catch (error) {
-        console.error('Error finding available rooms:', error);
-        res.status(500).json({ success: false, error: 'Failed to find available rooms' });
-    }
 };
 
 // Delete a booking
 const deleteBooking = async (req, res) => {
-    try {
         const { id } = req.params;
 
         // Get the booking to check ownership
@@ -875,16 +842,11 @@ const deleteBooking = async (req, res) => {
         }
 
         res.json({ success: true, data: { message: 'Booking deleted successfully' } });
-    } catch (error) {
-        console.error('Error deleting booking:', error);
-        res.status(500).json({ success: false, error: 'Failed to delete booking' });
-    }
 };
 
 // Create multiple bookings for a full week in a single atomic transaction
 // All-or-nothing: if ANY slot conflicts, no bookings are created.
 const createBookingsWeekly = async (req, res) => {
-    try {
         const { roomId, purpose, slots } = req.body;
 
         const parsedRoomId = parseInt(roomId);
@@ -930,70 +892,78 @@ const createBookingsWeekly = async (req, res) => {
             }
         }
 
-        const conflictingSlots = [];
+        // Conflict scan and creates run inside a single transaction to prevent TOCTOU races.
+        let created;
+        try {
+            created = await prisma.$transaction(async (tx) => {
+                const conflictingSlots = [];
 
-        for (const slot of normalizedSlots) {
-            const conflictingSchedule = findScheduleConflict(room.Schedule, slot.start, slot.end);
-            if (conflictingSchedule) {
-                conflictingSlots.push({
-                    index: slot.idx,
-                    startTime: slot.start.toISOString(),
-                    endTime: slot.end.toISOString(),
-                    reason: `Conflicts with ${conflictingSchedule.Title || 'class'} from ${formatScheduleTime(conflictingSchedule.Start_Time)} to ${formatScheduleTime(conflictingSchedule.End_Time)}`
-                });
-                continue;
-            }
+                for (const slot of normalizedSlots) {
+                    const conflictingSchedule = findScheduleConflict(room.Schedule, slot.start, slot.end);
+                    if (conflictingSchedule) {
+                        conflictingSlots.push({
+                            index: slot.idx,
+                            startTime: slot.start.toISOString(),
+                            endTime: slot.end.toISOString(),
+                            reason: `Conflicts with ${conflictingSchedule.Title || 'class'} from ${formatScheduleTime(conflictingSchedule.Start_Time)} to ${formatScheduleTime(conflictingSchedule.End_Time)}`
+                        });
+                        continue;
+                    }
 
-            const conflictingBooking = await prisma.Booked_Room.findFirst({
-                where: {
-                    Room_ID: parsedRoomId,
-                    Status: { in: ['APPROVED', 'PENDING'] },
-                    Start_Time: { lt: slot.end },
-                    End_Time: { gt: slot.start }
-                },
-                include: {
-                    User: { select: { First_Name: true, Last_Name: true } }
+                    const conflictingBooking = await tx.Booked_Room.findFirst({
+                        where: {
+                            Room_ID: parsedRoomId,
+                            Status: { in: ['APPROVED', 'PENDING'] },
+                            Start_Time: { lt: slot.end },
+                            End_Time: { gt: slot.start }
+                        },
+                        include: { User: { select: { First_Name: true, Last_Name: true } } }
+                    });
+
+                    if (conflictingBooking) {
+                        conflictingSlots.push({
+                            index: slot.idx,
+                            startTime: slot.start.toISOString(),
+                            endTime: slot.end.toISOString(),
+                            reason: `Conflicts with existing ${conflictingBooking.Status.toLowerCase()} booking`,
+                            conflictingBookingId: conflictingBooking.Booked_Room_ID
+                        });
+                    }
                 }
-            });
 
-            if (conflictingBooking) {
-                conflictingSlots.push({
-                    index: slot.idx,
-                    startTime: slot.start.toISOString(),
-                    endTime: slot.end.toISOString(),
-                    reason: `Conflicts with existing ${conflictingBooking.Status.toLowerCase()} booking`,
-                    conflictingBookingId: conflictingBooking.Booked_Room_ID
+                if (conflictingSlots.length > 0) {
+                    const err = new Error('slot_conflict');
+                    err.conflictingSlots = conflictingSlots;
+                    throw err;
+                }
+
+                const now = new Date();
+                return await Promise.all(normalizedSlots.map(slot => tx.Booked_Room.create({
+                    data: {
+                        User_ID: req.user.User_ID,
+                        Room_ID: parsedRoomId,
+                        Start_Time: slot.start,
+                        End_Time: slot.end,
+                        Status: 'APPROVED',
+                        Purpose: purpose || 'Student Usage',
+                        Notes: 'Weekly student usage schedule set by Lab Tech',
+                        Approved_By: req.user.User_ID,
+                        Created_At: now,
+                        Updated_At: now
+                    },
+                    include: { Room: true }
+                })));
+            });
+        } catch (err) {
+            if (err.message === 'slot_conflict') {
+                return res.status(409).json({
+                    success: false,
+                    error: 'One or more slots conflict with existing schedules or bookings',
+                    conflictingSlots: err.conflictingSlots
                 });
             }
+            throw err;
         }
-
-        if (conflictingSlots.length > 0) {
-            return res.status(409).json({
-                success: false,
-                error: 'One or more slots conflict with existing schedules or bookings',
-                conflictingSlots
-            });
-        }
-
-        // All slots are conflict-free. Create them atomically.
-        const now = new Date();
-        const created = await prisma.$transaction(
-            normalizedSlots.map(slot => prisma.Booked_Room.create({
-                data: {
-                    User_ID: req.user.User_ID,
-                    Room_ID: parsedRoomId,
-                    Start_Time: slot.start,
-                    End_Time: slot.end,
-                    Status: 'APPROVED',
-                    Purpose: purpose || 'Student Usage',
-                    Notes: 'Weekly student usage schedule set by Lab Tech',
-                    Approved_By: req.user.User_ID,
-                    Created_At: now,
-                    Updated_At: now
-                },
-                include: { Room: true }
-            }))
-        );
 
         const createdIds = created.map(b => b.Booked_Room_ID);
 
@@ -1038,10 +1008,6 @@ const createBookingsWeekly = async (req, res) => {
             success: true,
             data: { createdIds, createdBookings }
         });
-    } catch (error) {
-        console.error('Weekly booking error:', error);
-        res.status(500).json({ success: false, error: 'Failed to create weekly bookings' });
-    }
 };
 
 // Update the queue occupancy status on a Booked_Room (OPEN / NEAR_FULL / FULL).

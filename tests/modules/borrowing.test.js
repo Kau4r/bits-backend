@@ -72,7 +72,7 @@ describe('Borrowing Routes', () => {
       });
 
       const res = await request(app)
-        .patch('/borrowing/1/approve')
+        .patch('/api/borrowing/1/approve')
         .send({ assignedItemId: 10 });
 
       expect(res.status).toBe(200);
@@ -114,7 +114,7 @@ describe('Borrowing Routes', () => {
       });
 
       const res = await request(app)
-        .patch('/borrowing/1/reject')
+        .patch('/api/borrowing/1/reject')
         .send({ reason: 'Not available' });
 
       expect(res.status).toBe(200);

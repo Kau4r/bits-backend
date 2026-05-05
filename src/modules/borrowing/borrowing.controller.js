@@ -15,8 +15,11 @@ const getBorrowings = async (req, res) => {
         whereClause.Status = status.toUpperCase();
     }
 
-    // Filter by role: 'borrower' shows user's own requests, 'approver' shows all pending
-    if (role === 'borrower') {
+    // Non-staff are always scoped to their own borrowings regardless of the role param.
+    const isStaff = ['LAB_TECH', 'LAB_HEAD', 'ADMIN'].includes(user.User_Role);
+    if (!isStaff) {
+        whereClause.Borrower_ID = user.User_ID;
+    } else if (role === 'borrower') {
         whereClause.Borrower_ID = user.User_ID;
     }
 
@@ -66,6 +69,11 @@ const createBorrowing = async (req, res) => {
     // Support both new (itemType) and legacy (items array) formats
     if (itemType) {
         // NEW: Faculty requests by item TYPE only
+        if (parsedRoomId) {
+            const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoomId } });
+            if (!room) return res.status(404).json({ success: false, error: 'Room not found' });
+        }
+
         const borrowing = await prisma.borrow_Item.create({
             data: {
                 Borrower_ID: user.User_ID,
@@ -149,7 +157,6 @@ const createBorrowing = async (req, res) => {
             borrowings.push(borrowing);
 
         } catch (err) {
-            console.error(`Error processing item ${itemReq.itemId}:`, err);
             errors.push(`Failed to process item ${itemReq.itemId}: ${err.message}`);
         }
     }
@@ -254,22 +261,26 @@ const approveBorrowing = async (req, res) => {
         });
     }
 
-    // Approve and mark as borrowed, assign the item
-    const updatedBorrowing = await prisma.borrow_Item.update({
-        where: { Borrow_Item_ID: parseInt(id) },
-        data: {
-            Status: 'BORROWED',
-            Item_ID: itemId,
-            Borrowee_ID: approver.User_ID // Lab Tech who approved
-        },
-        include: { Item: true, Borrower: true }
-    });
-
-    // Update item status
-    await prisma.item.update({
-        where: { Item_ID: itemId },
-        data: { Status: 'BORROWED' }
-    });
+    // Approve and mark as borrowed — both writes in one transaction to prevent double-issue
+    let updatedBorrowing;
+    try {
+        [updatedBorrowing] = await prisma.$transaction([
+            prisma.borrow_Item.update({
+                where: { Borrow_Item_ID: parseInt(id, 10) },
+                data: { Status: 'BORROWED', Item_ID: itemId, Borrowee_ID: approver.User_ID },
+                include: { Item: true, Borrower: true }
+            }),
+            prisma.item.update({
+                where: { Item_ID: itemId, Status: 'AVAILABLE' },
+                data: { Status: 'BORROWED' }
+            })
+        ]);
+    } catch (txErr) {
+        if (txErr.code === 'P2025') {
+            return res.status(409).json({ success: false, error: 'Item is no longer available' });
+        }
+        throw txErr;
+    }
 
     // Log the approval
     const itemName = item.Name || item.Item_Type || item.Item_Code;
@@ -384,21 +395,18 @@ const returnBorrowing = async (req, res) => {
         });
     }
 
-    // Update borrowing record
-    await prisma.borrow_Item.update({
-        where: { Borrow_Item_ID: parseInt(id) },
-        data: {
-            Status: 'RETURNED',
-            Return_Date: new Date()
-        }
-    });
-
-    // Update item status based on condition
+    // Update both borrowing record and item status atomically
     const newItemStatus = condition === 'DEFECTIVE' ? 'DEFECTIVE' : 'AVAILABLE';
-    await prisma.item.update({
-        where: { Item_ID: borrowing.Item_ID },
-        data: { Status: newItemStatus }
-    });
+    await prisma.$transaction([
+        prisma.borrow_Item.update({
+            where: { Borrow_Item_ID: parseInt(id, 10) },
+            data: { Status: 'RETURNED', Return_Date: new Date() }
+        }),
+        prisma.item.update({
+            where: { Item_ID: borrowing.Item_ID },
+            data: { Status: newItemStatus }
+        })
+    ]);
 
     // Log the return
     const itemName = borrowing.Item.Name || borrowing.Item.Item_Code;
@@ -530,7 +538,7 @@ const createWalkinBorrowing = async (req, res) => {
     // Flip item status to BORROWED
     await prisma.item.update({
         where: { Item_ID: item.Item_ID },
-        data: { Status: 'BORROWED', User_ID: resolvedBorrowerId },
+        data: { Status: 'BORROWED' },
     });
 
     const itemLabel = `${displayBrand(item.Brand)} ${item.Item_Code || item.Item_Type || ''}`.trim();

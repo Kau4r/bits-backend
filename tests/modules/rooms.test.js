@@ -42,7 +42,7 @@ describe('Room Routes', () => {
         { Room_ID: 3, Name: 'LB 1', Room_Type: 'LAB', Schedule: [] },
       ]);
 
-      const res = await request(app).get('/rooms');
+      const res = await request(app).get('/api/rooms');
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -86,7 +86,7 @@ describe('Room Queue Availability', () => {
     });
 
     const res = await request(app)
-      .post('/rooms/1/student-availability')
+      .post('/api/rooms/1/student-availability')
       .send(requestBody);
 
     expect(res.status).toBe(409);
@@ -129,7 +129,7 @@ describe('Room Queue Availability', () => {
     prisma.Booked_Room.create.mockResolvedValue(createdQueueBooking);
 
     const res = await request(app)
-      .post('/rooms/1/student-availability')
+      .post('/api/rooms/1/student-availability')
       .send(requestBody);
 
     expect(res.status).toBe(201);

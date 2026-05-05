@@ -3,6 +3,8 @@ const router = express.Router();
 const { authenticateToken } = require('../../middleware/auth');
 const { authorize } = require('../../middleware/authorize');
 const asyncHandler = require('../../utils/asyncHandler');
+const { validate } = require('../../middleware/validate');
+const { borrowingSchemas } = require('./borrowing.validation');
 const {
     getBorrowings,
     createBorrowing,
@@ -17,12 +19,13 @@ const {
 router.get('/', authenticateToken, asyncHandler(getBorrowings));
 
 // Request to borrow items
-router.post('/', authenticateToken, asyncHandler(createBorrowing));
+router.post('/', authenticateToken, validate(borrowingSchemas.create), asyncHandler(createBorrowing));
 
 // Lab Tech walk-in: create a BORROWED record directly
 router.post('/walkin',
     authenticateToken,
     authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    validate(borrowingSchemas.walkin),
     asyncHandler(createWalkinBorrowing)
 );
 
@@ -41,7 +44,7 @@ router.patch('/:id/reject',
 );
 
 // Return a borrowed item
-router.patch('/:id/return', authenticateToken, asyncHandler(returnBorrowing));
+router.patch('/:id/return', authenticateToken, authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'), asyncHandler(returnBorrowing));
 
 // Get count of pending requests
 router.get('/pending/count',

@@ -55,7 +55,7 @@ describe('Ticket Routes', () => {
       prisma.ticket.create.mockResolvedValue(createdTicket);
 
       const res = await request(app)
-        .post('/tickets')
+        .post('/api/tickets')
         .send({
           Reported_By_ID: 2,
           Report_Problem: '  PC issue  ',
@@ -81,7 +81,7 @@ describe('Ticket Routes', () => {
 
     it('rejects priority values that are not in the Prisma enum', async () => {
       const res = await request(app)
-        .post('/tickets')
+        .post('/api/tickets')
         .send({
           Reported_By_ID: 2,
           Report_Problem: 'PC issue',
@@ -108,7 +108,7 @@ describe('Ticket Routes', () => {
       });
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({ Status: 'IN_PROGRESS', Report_Problem: 'Updated printer issue' });
 
       expect(res.status).toBe(400);
@@ -149,7 +149,7 @@ describe('Ticket Routes', () => {
       prisma.ticket.update.mockResolvedValue(updatedTicket);
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({ Technician_ID: 3, Status: 'IN_PROGRESS' });
 
       expect(res.status).toBe(200);
@@ -192,7 +192,7 @@ describe('Ticket Routes', () => {
       });
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({ Technician_ID: 3 });
 
       expect(res.status).toBe(200);
@@ -223,7 +223,7 @@ describe('Ticket Routes', () => {
       });
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({ Technician_ID: 4 });
 
       expect(res.status).toBe(400);
@@ -260,7 +260,7 @@ describe('Ticket Routes', () => {
       prisma.ticket.update.mockResolvedValue(updatedTicket);
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({
           Priority: 'HIGH',
           Report_Problem: '  Printer issue with error code  ',
@@ -305,7 +305,7 @@ describe('Ticket Routes', () => {
       });
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({ Status: 'RESOLVED' });
 
       expect(res.status).toBe(200);
@@ -332,7 +332,7 @@ describe('Ticket Routes', () => {
       });
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({ Archived: true });
 
       expect(res.status).toBe(200);
@@ -359,7 +359,7 @@ describe('Ticket Routes', () => {
       });
 
       const res = await request(app)
-        .put('/tickets/1')
+        .put('/api/tickets/1')
         .send({ Archived: false });
 
       expect(res.status).toBe(200);

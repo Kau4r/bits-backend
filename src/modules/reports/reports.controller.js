@@ -241,13 +241,12 @@ const createReport = async (req, res) => {
             !Array.isArray(tasks.pending) ||
             !Array.isArray(tasks.inProgress)
         ) {
-            return res.status(400).json({
-                error: 'tasks must have completed, pending, and inProgress arrays'
-            });
+            return res.status(400).json({ success: false, error: 'tasks must have completed, pending, and inProgress arrays' });
         }
     }
 
-    const reportStatus = status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT';
+    // Always force DRAFT on creation — use submitReport endpoint to submit
+    const reportStatus = 'DRAFT';
 
     let report;
     try {
@@ -303,12 +302,19 @@ const getReports = async (req, res) => {
     } else if (req.user.User_Role === 'LAB_HEAD') {
         // Lab heads can filter by userId or see all
         if (userId) {
-            whereClause.User_ID = parseInt(userId);
+            const parsedUserId = parseInt(userId, 10);
+            if (Number.isNaN(parsedUserId)) {
+                return res.status(400).json({ success: false, error: 'Invalid userId' });
+            }
+            whereClause.User_ID = parsedUserId;
         }
     }
 
     if (status) {
         whereClause.Status = status.toUpperCase();
+    } else if (req.user.User_Role === 'LAB_HEAD') {
+        // LAB_HEAD should only see submitted/reviewed reports by default (not others' drafts)
+        whereClause.Status = { in: ['SUBMITTED', 'REVIEWED'] };
     }
 
     const reports = await prisma.weekly_Report.findMany({
@@ -629,8 +635,8 @@ const autoPopulate = async (req, res) => {
 
 // GET /api/reports/:id - Get a single report
 const getReportById = async (req, res) => {
-    const reportId = parseInt(req.params.id);
-    if (isNaN(reportId)) {
+    const reportId = parseInt(req.params.id, 10);
+    if (Number.isNaN(reportId)) {
         return res.status(400).json({ success: false, error: 'Invalid report ID' });
     }
 
@@ -668,8 +674,8 @@ const getReportById = async (req, res) => {
 
 // PUT /api/reports/:id - Update own draft report
 const updateReport = async (req, res) => {
-    const reportId = parseInt(req.params.id);
-    if (isNaN(reportId)) {
+    const reportId = parseInt(req.params.id, 10);
+    if (Number.isNaN(reportId)) {
         return res.status(400).json({ success: false, error: 'Invalid report ID' });
     }
 
@@ -691,11 +697,33 @@ const updateReport = async (req, res) => {
         return res.status(400).json({ success: false, error: 'Only draft reports can be edited' });
     }
 
+    if (weekStart || weekEnd) {
+        const newStart = weekStart ? new Date(weekStart) : report.Week_Start;
+        const newEnd = weekEnd ? new Date(weekEnd) : report.Week_End;
+        if (newStart >= newEnd) {
+            return res.status(400).json({ success: false, error: 'weekStart must be before weekEnd' });
+        }
+        const duplicate = await prisma.weekly_Report.findFirst({
+            where: {
+                User_ID: req.user.User_ID,
+                Week_Start: newStart,
+                Report_ID: { not: reportId }
+            }
+        });
+        if (duplicate) {
+            return res.status(409).json({ success: false, error: 'You already have a report for this week' });
+        }
+    }
+
     const updateData = {};
 
     if (tasks !== undefined) {
+        const { completed, pending, inProgress } = tasks || {};
+        if (!Array.isArray(completed) || !Array.isArray(pending) || !Array.isArray(inProgress)) {
+            return res.status(400).json({ success: false, error: 'tasks must have completed, pending, and inProgress arrays' });
+        }
         updateData.Tasks = tasks;
-        updateData.Issues_Reported = (tasks.completed?.length || 0) + (tasks.pending?.length || 0) + (tasks.inProgress?.length || 0);
+        updateData.Issues_Reported = completed.length + pending.length + inProgress.length;
     }
     if (notes !== undefined) updateData.Notes = notes;
     if (weekStart !== undefined) updateData.Week_Start = new Date(weekStart);
@@ -728,8 +756,8 @@ const updateReport = async (req, res) => {
 
 // PATCH /api/reports/:id/submit - Submit a draft report
 const submitReport = async (req, res) => {
-    const reportId = parseInt(req.params.id);
-    if (isNaN(reportId)) {
+    const reportId = parseInt(req.params.id, 10);
+    if (Number.isNaN(reportId)) {
         return res.status(400).json({ success: false, error: 'Invalid report ID' });
     }
 
@@ -783,8 +811,8 @@ const submitReport = async (req, res) => {
 
 // PATCH /api/reports/:id/review - Review a submitted report (Lab Head)
 const reviewReport = async (req, res) => {
-    const reportId = parseInt(req.params.id);
-    if (isNaN(reportId)) {
+    const reportId = parseInt(req.params.id, 10);
+    if (Number.isNaN(reportId)) {
         return res.status(400).json({ success: false, error: 'Invalid report ID' });
     }
 
@@ -794,6 +822,10 @@ const reviewReport = async (req, res) => {
 
     if (!report) {
         return res.status(404).json({ success: false, error: 'Report not found' });
+    }
+
+    if (report.User_ID === req.user.User_ID) {
+        return res.status(403).json({ success: false, error: 'Cannot review your own report' });
     }
 
     if (report.Status !== 'SUBMITTED') {
@@ -1025,8 +1057,8 @@ const exportWeeklyReportsCsv = async (req, res) => {
 
 // DELETE /api/reports/:id - Delete own DRAFT report
 const deleteReport = async (req, res) => {
-    const reportId = parseInt(req.params.id);
-    if (isNaN(reportId)) {
+    const reportId = parseInt(req.params.id, 10);
+    if (Number.isNaN(reportId)) {
         return res.status(400).json({ success: false, error: 'Invalid report ID' });
     }
 

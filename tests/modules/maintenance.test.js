@@ -82,7 +82,7 @@ describe('Maintenance Routes', () => {
     prisma.ticket.count.mockResolvedValue(3);
     prisma.Room.count.mockResolvedValue(2);
 
-    const res = await request(app).get('/maintenance/cleanup-preview');
+    const res = await request(app).get('/api/maintenance/cleanup-preview');
 
     expect(res.status).toBe(200);
     expect(res.body.data.confirmationText).toBe('RESET OPERATIONAL DATA');
@@ -95,7 +95,7 @@ describe('Maintenance Routes', () => {
     mockUser = { ...mockUser, User_Role: 'LAB_HEAD' };
 
     const res = await request(app)
-      .post('/maintenance/cleanup')
+      .post('/api/maintenance/cleanup')
       .send({ confirmation: 'RESET OPERATIONAL DATA' });
 
     expect(res.status).toBe(403);
@@ -104,7 +104,7 @@ describe('Maintenance Routes', () => {
 
   it('rejects cleanup with wrong confirmation text', async () => {
     const res = await request(app)
-      .post('/maintenance/cleanup')
+      .post('/api/maintenance/cleanup')
       .send({ confirmation: 'reset' });
 
     expect(res.status).toBe(400);
@@ -113,7 +113,7 @@ describe('Maintenance Routes', () => {
 
   it('clears operational records and resets operational state', async () => {
     const res = await request(app)
-      .post('/maintenance/cleanup')
+      .post('/api/maintenance/cleanup')
       .send({ confirmation: 'RESET OPERATIONAL DATA' });
 
     expect(res.status).toBe(200);
