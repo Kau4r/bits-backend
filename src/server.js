@@ -103,8 +103,9 @@ if (process.env.NODE_ENV !== 'test') {
 
 // ==================== ROUTES ====================
 
-// Health check (no rate limit)
-app.get('/health', (req, res) => {
+// Health check (no rate limit). Mounted at both /health and /api/health so
+// callers using the /api prefix can reach it.
+const healthHandler = (req, res) => {
   res.json({
     success: true,
     data: {
@@ -113,7 +114,9 @@ app.get('/health', (req, res) => {
       version: process.env.npm_package_version || '1.0.0'
     }
   });
-});
+};
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
 
 // Auth routes with stricter rate limiting (skipped in test environment)
 if (process.env.NODE_ENV !== 'test') {
