@@ -13,6 +13,8 @@ const BOOKING_NOTIFICATION_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
 const isSecretaryBooking = (user) => normalizeRole(user?.User_Role) === 'SECRETARY';
 const SECRETARY_ALLOWED_ROOM_TYPES = new Set(['CONSULTATION', 'CONFERENCE']);
 
+const AUTO_REJECT_REASON = 'Auto-rejected: a conflicting booking was approved for this room and time slot.';
+
 const formatBookingTime = (date) => (
     new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 );
@@ -669,26 +671,67 @@ const updateBookingStatus = async (req, res) => {
             }
         }
 
-        const booking = await prisma.Booked_Room.update({
-            where: { Booked_Room_ID: parseInt(id) },
-            data: updateData,
-            include: {
-                Room: true,
-                User: {
-                    select: {
-                        First_Name: true,
-                        Last_Name: true,
-                        Email: true
-                    }
-                },
-                Approver: {
-                    select: {
-                        First_Name: true,
-                        Last_Name: true,
-                        User_Role: true
-                    }
+        const includeRelations = {
+            Room: true,
+            User: {
+                select: {
+                    First_Name: true,
+                    Last_Name: true,
+                    Email: true
+                }
+            },
+            Approver: {
+                select: {
+                    First_Name: true,
+                    Last_Name: true,
+                    User_Role: true
                 }
             }
+        };
+
+        // When approving, atomically reject any other PENDING bookings on the
+        // same room whose time window overlaps. This prevents two faculty from
+        // both holding the room for an overlapping slot. Conflict detection +
+        // rejection happen in one transaction so a concurrent approval can't
+        // sneak past the check.
+        let autoRejectedBookings = [];
+        const booking = await prisma.$transaction(async (tx) => {
+            const approved = await tx.Booked_Room.update({
+                where: { Booked_Room_ID: parseInt(id) },
+                data: updateData,
+                include: includeRelations
+            });
+
+            if (status === 'APPROVED') {
+                const conflicts = await tx.Booked_Room.findMany({
+                    where: {
+                        Room_ID: existingBooking.Room_ID,
+                        Status: 'PENDING',
+                        Booked_Room_ID: { not: parseInt(id) },
+                        Start_Time: { lt: existingBooking.End_Time },
+                        End_Time: { gt: existingBooking.Start_Time }
+                    },
+                    include: { Room: true, User: { select: { User_ID: true, First_Name: true, Last_Name: true, Email: true } } }
+                });
+
+                for (const conflict of conflicts) {
+                    const rejected = await tx.Booked_Room.update({
+                        where: { Booked_Room_ID: conflict.Booked_Room_ID },
+                        data: {
+                            Status: 'REJECTED',
+                            Approved_By: req.user.User_ID,
+                            Notes: conflict.Notes
+                                ? `${conflict.Notes}\n${AUTO_REJECT_REASON}`
+                                : AUTO_REJECT_REASON,
+                            Updated_At: new Date()
+                        },
+                        include: includeRelations
+                    });
+                    autoRejectedBookings.push(rejected);
+                }
+            }
+
+            return approved;
         });
 
         // Notify the requester about approval/rejection/cancellation
@@ -744,7 +787,23 @@ const updateBookingStatus = async (req, res) => {
             }
         }
 
-        res.json({ success: true, data: booking });
+        // Fire rejection notifications for any bookings auto-rejected by this approval.
+        for (const rejected of autoRejectedBookings) {
+            try {
+                await notifyRejectedBooking(req.user.User_ID, rejected, AUTO_REJECT_REASON);
+                await NotificationManager.broadcastBookingEvent('BOOKING_REJECTED', rejected, BOOKING_NOTIFICATION_ROLES);
+            } catch (notifyError) {
+                console.error('[Bookings] auto-reject notification failed:', notifyError);
+            }
+        }
+
+        res.json({
+            success: true,
+            data: booking,
+            meta: autoRejectedBookings.length > 0
+                ? { autoRejectedBookingIds: autoRejectedBookings.map(b => b.Booked_Room_ID) }
+                : undefined
+        });
 };
 
 // Get available rooms for a time period
