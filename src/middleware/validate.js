@@ -110,9 +110,22 @@ const bookingSchemas = {
 /**
  * Ticket validation schemas
  */
+// Public ticket reporter must enter "Name - 8-digit ID" (e.g. "John - 22102606").
+// The trailing 8-digit chunk is anchored so a single trailing hyphen in the name
+// (e.g. "Mary-Jane Cruz - 22102606") still parses as Name + ID separator.
+const REPORTER_IDENTIFIER_PATTERN = /^[A-Za-z][A-Za-z .'-]*\s-\s\d{8}$/;
+
 const ticketSchemas = {
     createPublic: Joi.object({
-        reporterIdentifier: Joi.string().trim().min(1).max(100).required(),
+        reporterIdentifier: Joi.string()
+            .trim()
+            .max(100)
+            .pattern(REPORTER_IDENTIFIER_PATTERN)
+            .required()
+            .messages({
+                'string.pattern.base': 'Reporter must be in the format "Name - 8-digit ID" (e.g. "John - 22102606")',
+                'string.empty': 'Reporter is required'
+            }),
         roomId: Joi.number().integer().positive().allow(null).optional(),
         issueType: Joi.string().valid('HARDWARE', 'SOFTWARE', 'NETWORK', 'OTHER').required(),
         equipment: Joi.string().valid('MONITOR', 'KEYBOARD', 'MOUSE', 'MINI_PC', 'SYSTEM_UNIT', 'HEADSET', 'OTHER').allow('', null).optional(),
