@@ -10,6 +10,10 @@ const borrowingSchemas = {
         expectedReturnDate: Joi.string().isoDate()
     }).or('itemType', 'items'),
 
+    updateRoom: Joi.object({
+        roomId: Joi.number().integer().positive().allow(null)
+    }),
+
     walkin: Joi.object({
         borrowerIdentifier: Joi.string().required(),
         itemId: Joi.number().integer().positive().required(),

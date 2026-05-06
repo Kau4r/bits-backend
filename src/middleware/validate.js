@@ -235,7 +235,8 @@ const formSchemas = {
 
     create: Joi.object({
         creatorId: Joi.number().integer().positive(),
-        formType: Joi.string().valid('WRF', 'RIS').required(),
+        formType: Joi.string().valid('WRF', 'RIS', 'RIS_E', 'RIS_NE').required(),
+        formNumber: Joi.string().max(100).allow('', null),
         title: Joi.string().min(1).max(200).allow('', null),
         content: Joi.string().allow('', null),
         fileName: Joi.string().max(255).allow('', null),

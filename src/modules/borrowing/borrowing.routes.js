@@ -12,7 +12,8 @@ const {
     approveBorrowing,
     rejectBorrowing,
     returnBorrowing,
-    getPendingCount
+    getPendingCount,
+    updateBorrowingRoom
 } = require('./borrowing.controller');
 
 // List borrowing requests
@@ -41,6 +42,13 @@ router.patch('/:id/reject',
     authenticateToken,
     authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
     asyncHandler(rejectBorrowing)
+);
+
+// Update room on a pending borrowing (borrower only)
+router.patch('/:id/room',
+    authenticateToken,
+    validate(borrowingSchemas.updateRoom),
+    asyncHandler(updateBorrowingRoom)
 );
 
 // Return a borrowed item

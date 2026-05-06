@@ -33,6 +33,12 @@ pids
 # Claude Code
 .claude/worktrees/
 
+# User uploads (runtime files, not source code)
+uploads/
+
+# OMC tooling state
+.omc/
+
 # IDE
 .idea/
 .vscode/

@@ -55,6 +55,7 @@ Note: routes without `authorize()` are gated only by `authenticateToken`; the co
 | POST | /api/borrowing/walkin | LAB_TECH, LAB_HEAD, ADMIN | Walk-in: create a BORROWED record directly |
 | PATCH | /api/borrowing/:id/approve | LAB_TECH, LAB_HEAD, ADMIN | Approve a borrow request |
 | PATCH | /api/borrowing/:id/reject | LAB_TECH, LAB_HEAD, ADMIN | Reject a borrow request |
+| PATCH | /api/borrowing/:id/room | any auth (borrower only) | Update room on a pending borrow request |
 | PATCH | /api/borrowing/:id/return | any auth | Mark item as returned |
 | GET | /api/borrowing/pending/count | LAB_TECH, LAB_HEAD, ADMIN | Get count of pending requests |
 

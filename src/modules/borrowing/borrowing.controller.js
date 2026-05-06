@@ -443,6 +443,44 @@ const getPendingCount = async (req, res) => {
     res.json({ success: true, data: { count } });
 };
 
+// PATCH /api/borrowing/:id/room - Update the room on a pending borrowing (borrower only)
+const updateBorrowingRoom = async (req, res) => {
+    const { id } = req.params;
+    const { roomId } = req.body;
+    const user = req.user;
+
+    const borrowing = await prisma.borrow_Item.findUnique({
+        where: { Borrow_Item_ID: parseInt(id, 10) }
+    });
+
+    if (!borrowing) {
+        return res.status(404).json({ success: false, error: 'Borrowing record not found' });
+    }
+
+    if (borrowing.Borrower_ID !== user.User_ID) {
+        return res.status(403).json({ success: false, error: 'Only the borrower can update the room' });
+    }
+
+    if (borrowing.Status !== 'PENDING') {
+        return res.status(400).json({ success: false, error: 'Room can only be changed on pending requests' });
+    }
+
+    const parsedRoomId = roomId ? parseInt(roomId, 10) : null;
+
+    if (parsedRoomId) {
+        const room = await prisma.room.findUnique({ where: { Room_ID: parsedRoomId } });
+        if (!room) return res.status(404).json({ success: false, error: 'Room not found' });
+    }
+
+    const updated = await prisma.borrow_Item.update({
+        where: { Borrow_Item_ID: parseInt(id, 10) },
+        data: { Room_ID: parsedRoomId },
+        include: { Room: true }
+    });
+
+    res.json({ success: true, data: { borrowing: updated } });
+};
+
 // POST /api/borrowing/walkin - Lab Tech creates a walk-in borrowing directly (status BORROWED)
 // Skips the PENDING/APPROVED dance used for faculty requests.
 const createWalkinBorrowing = async (req, res) => {
