@@ -118,30 +118,36 @@ const healthHandler = (req, res) => {
 app.get('/health', healthHandler);
 app.get('/api/health', healthHandler);
 
+const mountApiRoute = (routePath, router) => {
+  app.use(`/api${routePath}`, router);
+  app.use(routePath, router);
+};
+
 // Auth routes with stricter rate limiting (skipped in test environment)
+const authRoutes = require('./modules/auth/auth.routes');
 if (process.env.NODE_ENV !== 'test') {
-  app.use('/api/auth', authLimiter, require('./modules/auth/auth.routes'));
+  mountApiRoute('/auth', [authLimiter, authRoutes]);
 } else {
-  app.use('/api/auth', require('./modules/auth/auth.routes'));
+  mountApiRoute('/auth', authRoutes);
 }
 
 // API Routes
-app.use('/api/inventory', require('./modules/inventory/inventory.routes'));
-app.use('/api/users', require('./modules/users/users.routes'));
-app.use('/api/tickets', require('./modules/tickets/tickets.routes'));
-app.use('/api/rooms', require('./modules/rooms/rooms.routes'));
-app.use('/api/bookings', require('./modules/bookings/bookings.routes'));
-app.use('/api/computers', require('./modules/computers/computers.routes'));
-app.use('/api/computer-suggestions', require('./modules/computerSuggestions/computerSuggestions.routes'));
-app.use('/api/borrowing', require('./modules/borrowing/borrowing.routes'));
-app.use('/api/notifications', require('./modules/notifications/notifications.routes'));
-app.use('/api/forms', require('./modules/forms/forms.routes'));
-app.use('/api/maintenance', require('./modules/maintenance/maintenance.routes'));
-app.use('/api/schedules', require('./modules/schedules/schedules.routes'));
-app.use('/api/upload', require('./modules/upload/upload.routes'));
-app.use('/api/dashboard', require('./modules/dashboard/dashboard.routes'));
-app.use('/api/reports', require('./modules/reports/reports.routes'));
-app.use('/api/semesters', require('./modules/semesters/semesters.routes'));
+mountApiRoute('/inventory', require('./modules/inventory/inventory.routes'));
+mountApiRoute('/users', require('./modules/users/users.routes'));
+mountApiRoute('/tickets', require('./modules/tickets/tickets.routes'));
+mountApiRoute('/rooms', require('./modules/rooms/rooms.routes'));
+mountApiRoute('/bookings', require('./modules/bookings/bookings.routes'));
+mountApiRoute('/computers', require('./modules/computers/computers.routes'));
+mountApiRoute('/computer-suggestions', require('./modules/computerSuggestions/computerSuggestions.routes'));
+mountApiRoute('/borrowing', require('./modules/borrowing/borrowing.routes'));
+mountApiRoute('/notifications', require('./modules/notifications/notifications.routes'));
+mountApiRoute('/forms', require('./modules/forms/forms.routes'));
+mountApiRoute('/maintenance', require('./modules/maintenance/maintenance.routes'));
+mountApiRoute('/schedules', require('./modules/schedules/schedules.routes'));
+mountApiRoute('/upload', require('./modules/upload/upload.routes'));
+mountApiRoute('/dashboard', require('./modules/dashboard/dashboard.routes'));
+mountApiRoute('/reports', require('./modules/reports/reports.routes'));
+mountApiRoute('/semesters', require('./modules/semesters/semesters.routes'));
 
 // Static file serving for uploads
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
