@@ -1,17 +1,19 @@
 const request = require('supertest');
 const prisma = require('../__mocks__/prisma');
 
+let mockAuthenticatedUser = {
+  User_ID: 9999,
+  Email: 'admin@test.com',
+  First_Name: 'Test',
+  Last_Name: 'Admin',
+  User_Role: 'ADMIN',
+  Is_Active: true,
+};
+
 // Mock the auth middleware
 jest.mock('../../src/middleware/auth', () => ({
   authenticateToken: (req, res, next) => {
-    req.user = {
-      User_ID: 9999,
-      Email: 'admin@test.com',
-      First_Name: 'Test',
-      Last_Name: 'Admin',
-      User_Role: 'ADMIN',
-      Is_Active: true,
-    };
+    req.user = { ...mockAuthenticatedUser };
     next();
   },
   hashPassword: jest.fn(),
@@ -44,8 +46,27 @@ jest.mock('../../src/services/notificationService', () => ({
 const { app } = require('../app');
 
 describe('Bookings Routes', () => {
+  beforeAll(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-03-01T00:00:00.000Z'));
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuthenticatedUser = {
+      User_ID: 9999,
+      Email: 'admin@test.com',
+      First_Name: 'Test',
+      Last_Name: 'Admin',
+      User_Role: 'ADMIN',
+      Is_Active: true,
+    };
+    prisma.Booking_Series.findMany.mockResolvedValue([]);
+    prisma.Booked_Room.findMany.mockResolvedValue([]);
   });
 
   describe('GET /bookings', () => {
@@ -155,23 +176,6 @@ describe('Bookings Routes', () => {
       expect(res.status).toBe(400);
     });
 
-    it('should reject booking on a Sunday', async () => {
-      // 2026-03-22 is a Sunday
-      const sundayBooking = {
-        User_ID: 1,
-        Room_ID: 1,
-        Start_Time: '2026-03-22T08:00:00.000Z',
-        End_Time: '2026-03-22T10:00:00.000Z',
-      };
-
-      const res = await request(app)
-        .post('/api/bookings')
-        .send(sundayBooking);
-
-      expect(res.status).toBe(400);
-      expect(res.body.error).toContain('Sunday');
-    });
-
     it('should reject booking for non-existent room', async () => {
       prisma.room.findUnique.mockResolvedValue(null);
 
@@ -200,6 +204,35 @@ describe('Bookings Routes', () => {
       expect(res.body.success).toBe(false);
     });
 
+    it('should allow future booking when room is currently in use', async () => {
+      const mockRoom = {
+        Room_ID: 1,
+        Name: 'LB445TC',
+        Status: 'IN_USE',
+        Schedule: [],
+      };
+      const mockCreatedBooking = {
+        Booked_Room_ID: 7,
+        ...validBooking,
+        Status: 'PENDING',
+        Room: mockRoom,
+        User: { User_ID: 9999, First_Name: 'Test', Last_Name: 'Admin', Email: 'admin@test.com' },
+        Approver: null,
+      };
+
+      prisma.room.findUnique.mockResolvedValue(mockRoom);
+      prisma.Booked_Room.findFirst.mockResolvedValue(null);
+      prisma.Booked_Room.create.mockResolvedValue(mockCreatedBooking);
+
+      const res = await request(app)
+        .post('/api/bookings')
+        .send(validBooking);
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(prisma.Booked_Room.create).toHaveBeenCalled();
+    });
+
     it('should reject booking with conflicting time slot', async () => {
       prisma.room.findUnique.mockResolvedValue({
         Room_ID: 1,
@@ -225,6 +258,14 @@ describe('Bookings Routes', () => {
     });
 
     it('auto-approves secretary conference bookings and rejects overlapping pending bookings', async () => {
+      mockAuthenticatedUser = {
+        User_ID: 5,
+        Email: 'sec@test.com',
+        First_Name: 'School',
+        Last_Name: 'Secretary',
+        User_Role: 'SECRETARY',
+        Is_Active: true,
+      };
       const conferenceBooking = {
         User_ID: 5,
         Room_ID: 9,

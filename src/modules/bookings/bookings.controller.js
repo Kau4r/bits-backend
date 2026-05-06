@@ -3,6 +3,10 @@ const NotificationManager = require('../../services/notificationManager');
 const AuditLogger = require('../../utils/auditLogger');
 const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
 const { buildVirtualOccurrences } = require('./bookingSeries.controller');
+const {
+    isRoomStatusBlockingBooking,
+    buildRoomStatusBlockedResponse
+} = require('./roomBookingGuards');
 
 const normalizeRole = (role = '') => String(role).toUpperCase();
 // Scheduling is owned by SECRETARY (conference/consultation) and LAB_HEAD/LAB_TECH
@@ -99,12 +103,10 @@ const createBooking = async (req, res) => {
         // must approve.
         const secretaryPriority = isSecretary && requiresSecretaryReview;
 
-        // Check if room is available for booking
-        if (room.Status !== 'AVAILABLE') {
-            return res.status(403).json({
-                success: false, error: 'Room is not available for booking',
-                details: `Room status is currently ${room.Status}`
-            });
+        // MAINTENANCE/CLOSED block booking entirely. IN_USE/RESERVED are current
+        // operational states and should not block a future slot by themselves.
+        if (isRoomStatusBlockingBooking(room.Status)) {
+            return res.status(403).json(buildRoomStatusBlockedResponse(room));
         }
 
         // Check for any recurring class schedule conflicts
@@ -480,7 +482,7 @@ const updateBooking = async (req, res) => {
             ? existingBooking.Room
             : await prisma.Room.findUnique({
                 where: { Room_ID: newRoom },
-                select: { Room_ID: true, Name: true, Room_Type: true, Is_Bookable: true }
+                select: { Room_ID: true, Name: true, Room_Type: true, Status: true, Is_Bookable: true }
             });
 
         if (!targetRoom) {
@@ -493,6 +495,10 @@ const updateBooking = async (req, res) => {
                 error: 'This room is not available for booking',
                 details: `${targetRoom.Name || 'This room'} has been marked as non-bookable by an administrator.`
             });
+        }
+
+        if (isRoomStatusBlockingBooking(targetRoom.Status)) {
+            return res.status(403).json(buildRoomStatusBlockedResponse(targetRoom));
         }
 
         // Secretaries can edit their own bookings on any room type (their
@@ -832,6 +838,7 @@ const getAvailableRooms = async (req, res) => {
             FROM "Room" r
             WHERE r."Capacity" >= COALESCE(${parseInt(capacity) || 1}, 1)
             AND r."Is_Bookable" = true
+            AND r."Status" NOT IN ('MAINTENANCE', 'CLOSED')
             AND r."Room_ID" NOT IN (
                 SELECT br."Room_ID"
                 FROM "Booked_Room" br
@@ -934,12 +941,16 @@ const createBookingsWeekly = async (req, res) => {
             return res.status(404).json({ success: false, error: 'Room not found' });
         }
 
-        if (room.Status !== 'AVAILABLE') {
+        if (room.Is_Bookable === false) {
             return res.status(403).json({
                 success: false,
-                error: 'Room is not available for booking',
-                details: `Room status is currently ${room.Status}`
+                error: 'This room is not available for booking',
+                details: `${room.Name} has been marked as non-bookable by an administrator.`
             });
+        }
+
+        if (isRoomStatusBlockingBooking(room.Status)) {
+            return res.status(403).json(buildRoomStatusBlockedResponse(room));
         }
 
         // Normalize slot dates and reject any pair that spans Sunday or is invalid

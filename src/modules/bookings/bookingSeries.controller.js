@@ -3,6 +3,10 @@ const NotificationManager = require('../../services/notificationManager');
 const AuditLogger = require('../../utils/auditLogger');
 const { findScheduleConflict, formatScheduleTime } = require('../../utils/scheduleConflict');
 const { expandRrule } = require('../../utils/rruleExpander');
+const {
+  isRoomStatusBlockingBooking,
+  buildRoomStatusBlockedResponse
+} = require('./roomBookingGuards');
 
 const SECRETARY_ALLOWED_ROOM_TYPES = new Set(['CONSULTATION', 'CONFERENCE']);
 const BOOKING_NOTIFICATION_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH'];
@@ -136,12 +140,8 @@ const createBookingSeries = async (req, res) => {
       details: `${room.Name} has been marked as non-bookable.`
     });
   }
-  if (room.Status !== 'AVAILABLE') {
-    return res.status(403).json({
-      success: false,
-      error: 'Room is not available for booking',
-      details: `Room status is currently ${room.Status}`
-    });
+  if (isRoomStatusBlockingBooking(room.Status)) {
+    return res.status(403).json(buildRoomStatusBlockedResponse(room));
   }
 
   const requestingUser = await prisma.user.findUnique({
@@ -420,12 +420,8 @@ const updateBookingSeries = async (req, res) => {
         details: `${room.Name} has been marked as non-bookable.`
       });
     }
-    if (room.Status !== 'AVAILABLE') {
-      return res.status(403).json({
-        success: false,
-        error: 'Room is not available for booking',
-        details: `Room status is currently ${room.Status}`
-      });
+    if (isRoomStatusBlockingBooking(room.Status)) {
+      return res.status(403).json(buildRoomStatusBlockedResponse(room));
     }
 
     const occurrences = expandRrule(series.Recurrence_Rule, newAnchorStart, {
