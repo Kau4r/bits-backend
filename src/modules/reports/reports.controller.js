@@ -949,7 +949,11 @@ const exportInventoryCsv = async (req, res) => {
 
 // GET /api/reports/rooms.csv - Download room report CSV
 const exportRoomsCsv = async (req, res) => {
+    const { roomId } = req.query;
+    const whereClause = roomId ? { Room_ID: parseInt(roomId) } : {};
+
     const rooms = await prisma.room.findMany({
+        where: whereClause,
         include: {
             Computer: {
                 include: {

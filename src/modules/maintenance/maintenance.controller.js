@@ -6,6 +6,17 @@ const prisma = require('../../lib/prisma');
 
 const CONFIRMATION_TEXT = 'RESET OPERATIONAL DATA';
 const ARCHIVE_CONFIRMATION_TEXT = 'ARCHIVE AND RESET SCHOOL YEAR';
+const APRIL_25_DEMO_CONFIRMATION_TEXT = 'REMOVE APRIL 25 DEMO DATA';
+const APRIL_25_DEMO_FORM_TARGETS = [
+    { formCode: 'WRF-123456', expectedTitle: 'Testing' },
+    { formCode: 'WRF-456789', expectedTitle: 'Repair of ACU' },
+    { formCode: 'WRF-987456', expectedTitle: 'Test 2' }
+];
+const APRIL_25_DEMO_RANGE = {
+    label: 'April 25, 2026',
+    start: new Date(Date.UTC(2026, 3, 25, 0, 0, 0, 0)),
+    endExclusive: new Date(Date.UTC(2026, 3, 26, 0, 0, 0, 0))
+};
 const gzip = promisify(zlib.gzip);
 const archiveDir = path.join(__dirname, '../../../archives');
 
@@ -68,11 +79,26 @@ const rangeWhere = (field, range) => ({
     }
 });
 
+const rangeWhereExclusive = (field, range) => ({
+    [field]: {
+        gte: range.start,
+        lt: range.endExclusive
+    }
+});
+
 const scheduleRangeWhere = (range) => ({
     OR: [
         rangeWhere('Created_At', range),
         rangeWhere('Start_Time', range)
     ]
+});
+
+const detailsContainAny = (codes) => ({
+    OR: codes.map(code => ({
+        Details: {
+            contains: code
+        }
+    }))
 });
 
 const formAttachmentRangeWhere = (range) => ({
@@ -111,6 +137,162 @@ const delegatesFor = (client) => ({
     item: getDelegate(client, 'Item', 'item'),
     user: getDelegate(client, 'User', 'user')
 });
+
+const getApril25DemoFormCodes = () => APRIL_25_DEMO_FORM_TARGETS.map(target => target.formCode);
+
+const getApril25DemoFormWhere = () => ({
+    Form_Code: {
+        in: getApril25DemoFormCodes()
+    },
+    ...rangeWhereExclusive('Created_At', APRIL_25_DEMO_RANGE)
+});
+
+const getApril25DemoLogWhere = (isNotification) => ({
+    Is_Notification: isNotification,
+    Log_Type: 'FORM',
+    ...rangeWhereExclusive('Timestamp', APRIL_25_DEMO_RANGE),
+    ...detailsContainAny(getApril25DemoFormCodes())
+});
+
+const getApril25DemoLogSelect = () => ({
+    Log_ID: true,
+    Timestamp: true,
+    Action: true,
+    Log_Type: true,
+    Is_Notification: true,
+    Details: true
+});
+
+const buildApril25DemoCleanupPreview = async (client = prisma) => {
+    const delegates = delegatesFor(client);
+    const formCodes = getApril25DemoFormCodes();
+    const forms = await findManySafely(delegates.form, {
+        where: getApril25DemoFormWhere(),
+        orderBy: { Created_At: 'asc' },
+        select: {
+            Form_ID: true,
+            Form_Code: true,
+            Title: true,
+            Status: true,
+            Department: true,
+            Created_At: true,
+            Updated_At: true
+        }
+    });
+    const formIds = forms.map(form => form.Form_ID);
+    const formIdWhere = formIds.length > 0 ? { Form_ID: { in: formIds } } : { Form_ID: { in: [] } };
+
+    const [
+        formHistory,
+        formAttachments,
+        notificationLogs,
+        auditLogs,
+        users,
+        rooms,
+        inventoryItems,
+        computers,
+        usersCreatedInRange,
+        roomsCreatedInRange,
+        inventoryItemsCreatedInRange,
+        computersCreatedInRange,
+        unrelatedBookingsCreatedInRange,
+        unrelatedBookingsByStartInRange
+    ] = await Promise.all([
+        countSafely(delegates.formHistory, formIdWhere),
+        countSafely(delegates.formAttachment, formIdWhere),
+        findManySafely(delegates.auditLog, {
+            where: getApril25DemoLogWhere(true),
+            orderBy: { Timestamp: 'asc' },
+            select: getApril25DemoLogSelect()
+        }),
+        findManySafely(delegates.auditLog, {
+            where: getApril25DemoLogWhere(false),
+            orderBy: { Timestamp: 'asc' },
+            select: getApril25DemoLogSelect()
+        }),
+        countSafely(delegates.user),
+        countSafely(delegates.room),
+        countSafely(delegates.item),
+        countSafely(delegates.computer),
+        countSafely(delegates.user, rangeWhereExclusive('Created_At', APRIL_25_DEMO_RANGE)),
+        countSafely(delegates.room, rangeWhereExclusive('Created_At', APRIL_25_DEMO_RANGE)),
+        countSafely(delegates.item, rangeWhereExclusive('Created_At', APRIL_25_DEMO_RANGE)),
+        countSafely(delegates.computer, rangeWhereExclusive('Created_At', APRIL_25_DEMO_RANGE)),
+        countSafely(delegates.bookedRoom, rangeWhereExclusive('Created_At', APRIL_25_DEMO_RANGE)),
+        countSafely(delegates.bookedRoom, rangeWhereExclusive('Start_Time', APRIL_25_DEMO_RANGE))
+    ]);
+
+    const notificationLogIds = notificationLogs.map(log => log.Log_ID);
+    const notificationReads = await countSafely(delegates.notificationRead, {
+        Log_ID: {
+            in: notificationLogIds
+        }
+    });
+
+    const formsByCode = new Map(forms.map(form => [form.Form_Code, form]));
+    const targetForms = APRIL_25_DEMO_FORM_TARGETS.map(target => {
+        const form = formsByCode.get(target.formCode);
+        return {
+            formCode: target.formCode,
+            expectedTitle: target.expectedTitle,
+            found: !!form,
+            formId: form?.Form_ID || null,
+            title: form?.Title || null,
+            status: form?.Status || null,
+            department: form?.Department || null,
+            createdAt: form?.Created_At || null,
+            updatedAt: form?.Updated_At || null
+        };
+    });
+    const missingFormCodes = targetForms
+        .filter(form => !form.found)
+        .map(form => form.formCode);
+
+    const masterDataCreatedInRange = {
+        users: usersCreatedInRange,
+        rooms: roomsCreatedInRange,
+        inventoryItems: inventoryItemsCreatedInRange,
+        computers: computersCreatedInRange
+    };
+    const safetyWarnings = [];
+    if (Object.values(masterDataCreatedInRange).some(count => (count || 0) > 0)) {
+        safetyWarnings.push('Master/setup data exists in the April 25 range. Demo cleanup is blocked until reviewed.');
+    }
+
+    return {
+        confirmationText: APRIL_25_DEMO_CONFIRMATION_TEXT,
+        label: APRIL_25_DEMO_RANGE.label,
+        dateRange: {
+            start: APRIL_25_DEMO_RANGE.start.toISOString(),
+            endExclusive: APRIL_25_DEMO_RANGE.endExclusive.toISOString()
+        },
+        targetForms,
+        missingFormCodes,
+        notificationLogs,
+        auditLogs,
+        willDelete: {
+            forms: forms.length,
+            formHistory,
+            formAttachments,
+            notifications: notificationLogs.length,
+            notificationReads,
+            auditLogs: auditLogs.length
+        },
+        willPreserve: {
+            users,
+            rooms,
+            inventoryItems,
+            computers
+        },
+        excludedFromCleanup: {
+            unrelatedBookingsCreatedInRange,
+            unrelatedBookingsByStartInRange
+        },
+        masterDataCreatedInRange,
+        safetyWarnings,
+        canRun: safetyWarnings.length === 0
+    };
+};
 
 const buildCleanupPreview = async () => {
     const delegates = delegatesFor(prisma);
@@ -467,6 +649,83 @@ const resetSchoolYearOperationalData = async (tx, userId, schoolYear, details) =
     return { deleted, reset };
 };
 
+const resetApril25DemoData = async (tx, userId, details) => {
+    const delegates = delegatesFor(tx);
+    const preview = await buildApril25DemoCleanupPreview(tx);
+
+    if (!preview.canRun) {
+        const error = new Error(preview.safetyWarnings.join(' ') || 'April 25 demo cleanup is blocked');
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const formIds = preview.targetForms
+        .filter(form => form.found && form.formId)
+        .map(form => form.formId);
+    const notificationLogIds = preview.notificationLogs.map(log => log.Log_ID);
+
+    const deleted = {};
+    deleted.notificationReads = await deleteManySafely(delegates.notificationRead, {
+        where: {
+            Log_ID: {
+                in: notificationLogIds
+            }
+        }
+    });
+    deleted.notifications = await deleteManySafely(delegates.auditLog, {
+        where: {
+            Log_ID: {
+                in: preview.notificationLogs.map(log => log.Log_ID)
+            }
+        }
+    });
+    deleted.auditLogs = await deleteManySafely(delegates.auditLog, {
+        where: {
+            Log_ID: {
+                in: preview.auditLogs.map(log => log.Log_ID)
+            }
+        }
+    });
+    deleted.formAttachments = await deleteManySafely(delegates.formAttachment, {
+        where: {
+            Form_ID: {
+                in: formIds
+            }
+        }
+    });
+    deleted.formHistory = await deleteManySafely(delegates.formHistory, {
+        where: {
+            Form_ID: {
+                in: formIds
+            }
+        }
+    });
+    deleted.forms = await deleteManySafely(delegates.form, {
+        where: {
+            Form_ID: {
+                in: formIds
+            }
+        }
+    });
+
+    if (delegates.auditLog) {
+        await delegates.auditLog.create({
+            data: {
+                User_ID: userId,
+                Action: details.action,
+                Log_Type: 'SYSTEM',
+                Is_Notification: false,
+                Details: details.message
+            }
+        });
+    }
+
+    return {
+        deleted,
+        reset: {}
+    };
+};
+
 const getCleanupPreview = async (_req, res) => {
     try {
         const preview = await buildCleanupPreview();
@@ -474,6 +733,19 @@ const getCleanupPreview = async (_req, res) => {
     } catch (error) {
         console.error('Error building cleanup preview:', error);
         res.status(500).json({ success: false, error: 'Failed to build cleanup preview' });
+    }
+};
+
+const getApril25DemoCleanupPreview = async (_req, res) => {
+    try {
+        const preview = await buildApril25DemoCleanupPreview();
+        res.json({ success: true, data: preview });
+    } catch (error) {
+        console.error('Error building April 25 demo cleanup preview:', error);
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.message || 'Failed to build April 25 demo cleanup preview'
+        });
     }
 };
 
@@ -486,6 +758,49 @@ const getSchoolYearArchivePreview = async (req, res) => {
         res.status(error.statusCode || 500).json({
             success: false,
             error: error.message || 'Failed to build school-year archive preview'
+        });
+    }
+};
+
+const runApril25DemoCleanup = async (req, res) => {
+    try {
+        const confirmation = String(req.body?.confirmation || '').trim();
+
+        if (confirmation !== APRIL_25_DEMO_CONFIRMATION_TEXT) {
+            return res.status(400).json({
+                success: false,
+                error: `Confirmation text must exactly match: ${APRIL_25_DEMO_CONFIRMATION_TEXT}`
+            });
+        }
+
+        const before = await buildApril25DemoCleanupPreview();
+        if (!before.canRun) {
+            return res.status(409).json({
+                success: false,
+                error: before.safetyWarnings.join(' ') || 'April 25 demo cleanup is blocked',
+                data: before
+            });
+        }
+
+        const userId = req.user?.User_ID || null;
+        const result = await prisma.$transaction((tx) => resetApril25DemoData(tx, userId, {
+            action: 'APRIL_25_DEMO_CLEANUP',
+            message: 'Removed April 25 demo form data from admin maintenance'
+        }));
+
+        res.json({
+            success: true,
+            data: {
+                message: 'April 25 demo data cleanup completed',
+                before,
+                result
+            }
+        });
+    } catch (error) {
+        console.error('Error running April 25 demo cleanup:', error);
+        res.status(error.statusCode || 500).json({
+            success: false,
+            error: error.message || 'Failed to run April 25 demo cleanup'
         });
     }
 };
@@ -612,7 +927,7 @@ const listMaintenanceHistory = async (_req, res) => {
         const rows = delegates.auditLog ? await delegates.auditLog.findMany({
             where: {
                 Action: {
-                    in: ['DATABASE_CLEANUP', 'SCHOOL_YEAR_ARCHIVE_CLEANUP']
+                    in: ['DATABASE_CLEANUP', 'SCHOOL_YEAR_ARCHIVE_CLEANUP', 'APRIL_25_DEMO_CLEANUP']
                 }
             },
             take: 20,
@@ -651,8 +966,12 @@ const listMaintenanceHistory = async (_req, res) => {
 module.exports = {
     CONFIRMATION_TEXT,
     ARCHIVE_CONFIRMATION_TEXT,
+    APRIL_25_DEMO_CONFIRMATION_TEXT,
+    buildApril25DemoCleanupPreview,
     getCleanupPreview,
+    getApril25DemoCleanupPreview,
     getSchoolYearArchivePreview,
+    runApril25DemoCleanup,
     runCleanup,
     runSchoolYearArchiveCleanup,
     downloadArchive,

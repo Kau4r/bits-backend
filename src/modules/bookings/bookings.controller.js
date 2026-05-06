@@ -480,11 +480,19 @@ const updateBooking = async (req, res) => {
             ? existingBooking.Room
             : await prisma.Room.findUnique({
                 where: { Room_ID: newRoom },
-                select: { Room_ID: true, Room_Type: true }
+                select: { Room_ID: true, Name: true, Room_Type: true, Is_Bookable: true }
             });
 
         if (!targetRoom) {
             return res.status(404).json({ success: false, error: 'Room not found' });
+        }
+
+        if (targetRoom.Is_Bookable === false) {
+            return res.status(403).json({
+                success: false,
+                error: 'This room is not available for booking',
+                details: `${targetRoom.Name || 'This room'} has been marked as non-bookable by an administrator.`
+            });
         }
 
         // Secretaries can edit their own bookings on any room type (their
@@ -823,6 +831,7 @@ const getAvailableRooms = async (req, res) => {
             SELECT r.*
             FROM "Room" r
             WHERE r."Capacity" >= COALESCE(${parseInt(capacity) || 1}, 1)
+            AND r."Is_Bookable" = true
             AND r."Room_ID" NOT IN (
                 SELECT br."Room_ID"
                 FROM "Booked_Room" br

@@ -66,6 +66,14 @@ const createBorrowing = async (req, res) => {
         ? new Date(expectedReturnDate)
         : new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
 
+    // Validate pickup room if provided
+    if (roomId) {
+        const room = await prisma.room.findUnique({ where: { Room_ID: parseInt(roomId) } });
+        if (!room) {
+            return res.status(400).json({ success: false, error: 'Pickup room not found' });
+        }
+    }
+
     // Support both new (itemType) and legacy (items array) formats
     if (itemType) {
         // NEW: Faculty requests by item TYPE only
@@ -261,13 +269,18 @@ const approveBorrowing = async (req, res) => {
         });
     }
 
-    // Approve and mark as borrowed — both writes in one transaction to prevent double-issue
+    // Approve and mark as borrowed in one transaction to prevent double-issue.
     let updatedBorrowing;
     try {
         [updatedBorrowing] = await prisma.$transaction([
             prisma.borrow_Item.update({
                 where: { Borrow_Item_ID: parseInt(id, 10) },
-                data: { Status: 'BORROWED', Item_ID: itemId, Borrowee_ID: approver.User_ID },
+                data: {
+                    Status: 'BORROWED',
+                    Item_ID: itemId,
+                    Borrowee_ID: approver.User_ID,
+                    Room_ID: borrowing.Room_ID || item.Room_ID || null
+                },
                 include: { Item: true, Borrower: true }
             }),
             prisma.item.update({
@@ -281,7 +294,6 @@ const approveBorrowing = async (req, res) => {
         }
         throw txErr;
     }
-
     // Log the approval
     const itemName = item.Name || item.Item_Type || item.Item_Code;
     await AuditLogger.logBorrowing(
@@ -524,8 +536,8 @@ const createWalkinBorrowing = async (req, res) => {
             Purpose: purposeWithLabel,
             Borrow_Date: now,
             Return_Date: returnAt,
-            Room_ID: parsedWalkinRoomId,
             Status: 'BORROWED',
+            Room_ID: parsedWalkinRoomId || item.Room_ID || null,
         },
         include: {
             Item: true,

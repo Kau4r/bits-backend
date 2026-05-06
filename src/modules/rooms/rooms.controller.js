@@ -190,7 +190,9 @@ const createRoom = async (req, res) => {
       Room_Type: Room_Type || 'LECTURE',
       Lab_Type: Room_Type === 'LAB' ? Lab_Type : null,
       Status: 'AVAILABLE',
-      ...(Is_Bookable !== undefined ? { Is_Bookable: Boolean(Is_Bookable) } : {}),
+      ...(Is_Bookable !== undefined
+        ? { Is_Bookable: Boolean(Is_Bookable) }
+        : Room_Type === 'OTHER' ? { Is_Bookable: false } : {}),
     },
     select: { Room_ID: true, Name: true, Capacity: true, Room_Type: true, Lab_Type: true, Status: true, Is_Bookable: true, Created_At: true, Updated_At: true }
   });
@@ -270,6 +272,11 @@ const updateRoom = async (req, res) => {
   // If transitioning AWAY from LAB, clear Lab_Type
   if (effectiveRoomType !== 'LAB') {
     updateData.Lab_Type = null;
+  }
+
+  // Auto-clear bookable when changing to OTHER unless admin explicitly overrides it.
+  if (updateData.Room_Type === 'OTHER' && Is_Bookable === undefined) {
+    updateData.Is_Bookable = false;
   }
 
   const updatedRoom = await prisma.Room.update({ where: { Room_ID: roomId }, data: updateData });
