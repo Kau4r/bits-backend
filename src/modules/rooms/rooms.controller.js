@@ -689,7 +689,51 @@ const getPublicLectureRooms = async (req, res) => {
     orderBy: { Name: 'asc' }
   });
 
-  res.json({ success: true, data: sortRoomsForDisplay(rooms) });
+  // Determine each room's current activity ("CLASS" / "BOOKED" / "NONE")
+  // by checking if any active recurring schedule or approved booking covers
+  // "right now". Two batched queries instead of N per-room lookups.
+  const roomIds = rooms.map(r => r.Room_ID);
+  const now = new Date();
+  const nowPlus1 = new Date(now.getTime() + 1);
+
+  const [activeSchedules, activeBookings] = roomIds.length === 0
+    ? [[], []]
+    : await Promise.all([
+        prisma.Schedule.findMany({
+          where: { Room_ID: { in: roomIds }, IsActive: true },
+          select: { Room_ID: true, Start_Time: true, End_Time: true, Days: true, IsActive: true }
+        }),
+        prisma.Booked_Room.findMany({
+          where: {
+            Room_ID: { in: roomIds },
+            Status: 'APPROVED',
+            Start_Time: { lt: nowPlus1 },
+            End_Time: { gt: now }
+          },
+          select: { Room_ID: true }
+        })
+      ]);
+
+  const schedulesByRoom = new Map();
+  for (const s of activeSchedules) {
+    const list = schedulesByRoom.get(s.Room_ID) || [];
+    list.push(s);
+    schedulesByRoom.set(s.Room_ID, list);
+  }
+  const bookedRoomIds = new Set(activeBookings.map(b => b.Room_ID));
+
+  const enriched = rooms.map(room => {
+    let currentActivity = 'NONE';
+    const roomSchedules = schedulesByRoom.get(room.Room_ID) || [];
+    if (findScheduleConflict(roomSchedules, now, nowPlus1)) {
+      currentActivity = 'CLASS';
+    } else if (bookedRoomIds.has(room.Room_ID)) {
+      currentActivity = 'BOOKED';
+    }
+    return { ...room, Current_Activity: currentActivity };
+  });
+
+  res.json({ success: true, data: sortRoomsForDisplay(enriched) });
 };
 
 // Public: 7-day hourly schedule for a single room.
