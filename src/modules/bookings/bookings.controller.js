@@ -333,6 +333,10 @@ const getBookings = async (req, res) => {
 
     const STAFF_ROLES = ['SECRETARY', 'LAB_HEAD', 'LAB_TECH', 'ADMIN'];
     const isStaff = STAFF_ROLES.includes(req.user.User_Role);
+    // Scheduling roles (faculty + secretary + lab head) can see all room
+    // bookings so they are aware of competing PENDING and APPROVED slots.
+    // The frontend filters out other users' REJECTED bookings client-side.
+    const canSeeRoomBookings = isStaff || req.user.User_Role === 'FACULTY';
 
     const where = {};
     // Support comma-separated statuses (e.g., "PENDING,APPROVED")
@@ -343,8 +347,8 @@ const getBookings = async (req, res) => {
     if (roomId) where.Room_ID = parseInt(roomId);
     if (userId) where.User_ID = parseInt(userId);
 
-    if (!isStaff) {
-        // Students and Faculty only see their own bookings
+    if (!canSeeRoomBookings) {
+        // Students only see their own bookings
         where.User_ID = req.user.User_ID;
     }
 
@@ -385,7 +389,7 @@ const getBookings = async (req, res) => {
     // double-render.
     const virtualWhere = {};
     if (roomId) virtualWhere.Room_ID = parseInt(roomId, 10);
-    if (!isStaff) {
+    if (!canSeeRoomBookings) {
         virtualWhere.User_ID = req.user.User_ID;
     } else if (userId) {
         virtualWhere.User_ID = parseInt(userId, 10);

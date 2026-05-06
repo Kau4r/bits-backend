@@ -193,8 +193,8 @@
   "hotPaths": [
     {
       "path": "src/modules/bookings/bookings.controller.js",
-      "accessCount": 17,
-      "lastAccessed": 1778001409650,
+      "accessCount": 18,
+      "lastAccessed": 1778030310277,
       "type": "file"
     },
     {
