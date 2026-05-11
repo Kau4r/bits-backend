@@ -47,6 +47,7 @@ model User {
   Weekly_Reports_Authored     Weekly_Report[]     @relation("ReportAuthor")
   Weekly_Reports_Reviewed     Weekly_Report[]     @relation("ReportReviewer")
   FormHistoryActions          FormHistory[]       @relation("FormHistoryPerformer")
+  ItemHistoryActions          Item_History[]      @relation("ItemHistoryUser")
 }
 
 model Item {
@@ -72,11 +73,40 @@ model Item {
   Last_Checked_By    User?         @relation("ItemLastCheckedBy", fields: [Last_Checked_By_ID], references: [User_ID])
   Tickets            Ticket[]
   Computer           Computer[]    @relation("ComputerItems")
+  History            Item_History[] @relation("ItemHistoryItem")
+  ChildHistory       Item_History[] @relation("ItemHistoryParent")
 
   @@index([Item_Code])
   @@index([Status])
   @@index([Room_ID])
   @@index([Last_Checked_At])
+}
+
+// Per-asset audit trail. Captures status changes, location moves, attach/detach
+// to a parent (e.g. PC), defective/replaced/disposed transitions, and audits.
+// Writes are best-effort; failures must not break the parent mutation.
+model Item_History {
+  Item_History_ID   Int      @id @default(autoincrement())
+  Item_ID           Int
+  Action            String
+  Old_Value         Json?
+  New_Value         Json?
+  Performed_By_ID   Int?
+  Reason            String?
+  Notes             String?
+  Parent_Item_ID    Int?
+  Parent_Computer_ID Int?
+  Created_At        DateTime @default(now())
+
+  Item              Item      @relation("ItemHistoryItem", fields: [Item_ID], references: [Item_ID], onDelete: Cascade)
+  Parent_Item       Item?     @relation("ItemHistoryParent", fields: [Parent_Item_ID], references: [Item_ID])
+  Parent_Computer   Computer? @relation("ItemHistoryComputer", fields: [Parent_Computer_ID], references: [Computer_ID])
+  Performed_By      User?     @relation("ItemHistoryUser", fields: [Performed_By_ID], references: [User_ID])
+
+  @@index([Item_ID, Created_At])
+  @@index([Parent_Item_ID, Created_At])
+  @@index([Parent_Computer_ID, Created_At])
+  @@index([Action])
 }
 
 model Semester {
@@ -239,6 +269,7 @@ model Booked_Room {
   Schedule_ID    Int?
   Approved_By    Int?
   Notes          String?
+  Rejection_Reason String?
   Queue_Status   QueueStatus     @default(OPEN)
   // Series linkage. Series_ID points at the recurring rule that produced this row.
   // Original_Start identifies which generated occurrence this row overrides
@@ -334,6 +365,7 @@ model Borrow_Item {
   Status              BorrowStatus @default(PENDING)
   Requested_Item_Type String?
   Purpose             String?
+  Rejection_Reason    String?
   Borrowee            User         @relation("BorroweeRelation", fields: [Borrowee_ID], references: [User_ID])
   Borrower            User         @relation("BorrowerRelation", fields: [Borrower_ID], references: [User_ID])
   Item                Item?        @relation(fields: [Item_ID], references: [Item_ID])
@@ -378,6 +410,7 @@ model Computer {
   Item              Item[]              @relation("ComputerItems")
   ComputerHeartbeat ComputerHeartbeat[]
   Current_User      User?               @relation("CurrentUser", fields: [Current_User_ID], references: [User_ID])
+  History           Item_History[]      @relation("ItemHistoryComputer")
 
   @@index([Is_Online])
   @@index([Last_Seen])

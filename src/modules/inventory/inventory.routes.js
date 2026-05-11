@@ -18,6 +18,7 @@ const {
   importInventoryCsv,
   checkInventoryItem,
   uncheckInventoryItem,
+  getItemHistory,
 } = require('./inventory.controller');
 
 const upload = multer({
@@ -74,5 +75,8 @@ router.post('/import-csv', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LA
 // Mark an item as audited (present) for the current semester
 router.post('/:id/check', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(checkInventoryItem));
 router.delete('/:id/check', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(uncheckInventoryItem));
+
+// Audit trail / history for a single item
+router.get('/:id/history', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(getItemHistory));
 
 module.exports = router;

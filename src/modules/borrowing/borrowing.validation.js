@@ -20,6 +20,10 @@ const borrowingSchemas = {
         returnDate: Joi.string().isoDate().required(),
         purpose: Joi.string().max(500),
         roomId: Joi.number().integer().positive()
+    }),
+
+    reject: Joi.object({
+        reason: Joi.string().trim().min(3).max(500).required()
     })
 };
 

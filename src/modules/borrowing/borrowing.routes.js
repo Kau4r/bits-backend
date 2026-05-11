@@ -41,6 +41,7 @@ router.patch('/:id/approve',
 router.patch('/:id/reject',
     authenticateToken,
     authorize('LAB_TECH', 'LAB_HEAD', 'ADMIN'),
+    validate(borrowingSchemas.reject),
     asyncHandler(rejectBorrowing)
 );
 

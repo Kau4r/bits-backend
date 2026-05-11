@@ -14,6 +14,12 @@ const {
   normalizeSerial,
   buildSyntheticSerial,
 } = require('../../utils/inventoryNormalize');
+const {
+  ItemHistoryAction,
+  snapshotItem,
+  diffSnapshots,
+  recordItemHistory,
+} = require('../../utils/itemHistory');
 
 const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED', 'DISPOSED'];
 
@@ -257,6 +263,14 @@ const createItem = async (req, res) => {
     logType: 'INVENTORY'
   });
 
+  // Per-item history (best-effort; never blocks).
+  await recordItemHistory({
+    itemId: item.Item_ID,
+    action: ItemHistoryAction.CREATED,
+    newValue: snapshotItem(item),
+    userId: req.user.User_ID,
+  });
+
   res.status(201).json({ success: true, data: item });
 };
 
@@ -330,6 +344,33 @@ const updateItem = async (req, res) => {
     notificationData: { updates: updateData }
   });
 
+  // Per-item history. Pick a specific action when one field clearly drove the
+  // change (status, room) — otherwise fall back to generic UPDATED.
+  const before = snapshotItem(existingItem);
+  const after = snapshotItem(updatedItem);
+  const diff = diffSnapshots(before, after);
+  if (diff) {
+    const changedKeys = Object.keys(diff.newDiff);
+    let action = ItemHistoryAction.UPDATED;
+    if (changedKeys.length === 1) {
+      if (changedKeys[0] === 'Status') {
+        if (after.Status === 'DEFECTIVE') action = ItemHistoryAction.MARKED_DEFECTIVE;
+        else if (after.Status === 'DISPOSED') action = ItemHistoryAction.DISPOSED;
+        else if (after.Status === 'REPLACED') action = ItemHistoryAction.REPLACED;
+        else action = ItemHistoryAction.STATUS_CHANGED;
+      } else if (changedKeys[0] === 'Room_ID') {
+        action = ItemHistoryAction.MOVED_ROOM;
+      }
+    }
+    await recordItemHistory({
+      itemId,
+      action,
+      oldValue: diff.oldDiff,
+      newValue: diff.newDiff,
+      userId: req.user.User_ID,
+    });
+  }
+
   res.json({ success: true, data: updatedItem });
 };
 
@@ -364,6 +405,16 @@ const deleteItem = async (req, res) => {
     action: 'ITEM_DELETED',
     details: `Soft deleted item ${existingItem.Item_Code}`,
     logType: 'INVENTORY'
+  });
+
+  // Per-item history.
+  await recordItemHistory({
+    itemId,
+    action: ItemHistoryAction.DISPOSED,
+    oldValue: { Status: existingItem.Status },
+    newValue: { Status: 'DISPOSED' },
+    userId: req.user.User_ID,
+    reason: 'Soft deleted via inventory.',
   });
 
   res.json({ success: true, data: deletedItem });
@@ -519,6 +570,14 @@ const checkInventoryItem = async (req, res) => {
         },
     });
 
+    await recordItemHistory({
+        itemId,
+        action: ItemHistoryAction.AUDITED,
+        oldValue: { Last_Checked_At: item.Last_Checked_At },
+        newValue: { Last_Checked_At: updated.Last_Checked_At },
+        userId: req.user.User_ID,
+    });
+
     res.json({ success: true, data: updated });
 };
 
@@ -546,6 +605,14 @@ const uncheckInventoryItem = async (req, res) => {
                 select: { User_ID: true, First_Name: true, Last_Name: true },
             },
         },
+    });
+
+    await recordItemHistory({
+        itemId,
+        action: ItemHistoryAction.UNAUDITED,
+        oldValue: { Last_Checked_At: item.Last_Checked_At },
+        newValue: { Last_Checked_At: null },
+        userId: req.user.User_ID,
     });
 
     res.json({ success: true, data: updated });
@@ -757,6 +824,40 @@ const getItemTypes = async (_req, res) => {
   res.json({ success: true, data: [...normalized].sort() });
 };
 
+// GET /api/inventory/:id/history - Chronological audit trail for one item.
+const getItemHistory = async (req, res) => {
+    const itemId = parseInt(req.params.id, 10);
+    if (Number.isNaN(itemId) || itemId <= 0) {
+        return res.status(400).json({ success: false, error: 'Invalid item id' });
+    }
+
+    const item = await prisma.item.findUnique({
+        where: { Item_ID: itemId },
+        select: { Item_ID: true, Item_Code: true, Item_Type: true, Brand: true, Serial_Number: true }
+    });
+    if (!item) {
+        return res.status(404).json({ success: false, error: 'Item not found' });
+    }
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+
+    const history = await prisma.item_History.findMany({
+        where: { Item_ID: itemId },
+        orderBy: { Created_At: 'desc' },
+        take: limit,
+        include: {
+            Performed_By: {
+                select: { User_ID: true, First_Name: true, Last_Name: true, User_Role: true }
+            },
+            Parent_Item: {
+                select: { Item_ID: true, Item_Code: true, Item_Type: true }
+            }
+        }
+    });
+
+    res.json({ success: true, data: { item, history } });
+};
+
 module.exports = {
   getItems,
   getAvailableItems,
@@ -770,4 +871,5 @@ module.exports = {
   importInventoryCsv,
   checkInventoryItem,
   uncheckInventoryItem,
+  getItemHistory,
 };

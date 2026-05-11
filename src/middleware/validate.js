@@ -31,7 +31,15 @@ const bookingSchemas = {
     updateStatus: Joi.object({
         status: Joi.string().valid('APPROVED', 'REJECTED', 'CANCELLED').required(),
         approverId: Joi.number().integer().positive().required(),
-        notes: Joi.string().max(500).allow('', null)
+        notes: Joi.when('status', {
+            is: 'REJECTED',
+            then: Joi.string().trim().min(3).max(500).required().messages({
+                'any.required': 'A reason is required when rejecting a booking',
+                'string.empty': 'A reason is required when rejecting a booking',
+                'string.min': 'Rejection reason must be at least 3 characters'
+            }),
+            otherwise: Joi.string().max(500).allow('', null)
+        })
     }),
 
     update: Joi.object({

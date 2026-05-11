@@ -7,6 +7,7 @@ const {
 } = require('../../utils/csvImport');
 const { readXlsxWorkbook } = require('../../utils/xlsxReader');
 const { normalizeBrand, displayBrand } = require('../../utils/inventoryNormalize');
+const { ItemHistoryAction, recordItemHistory } = require('../../utils/itemHistory');
 
 const VALID_COMPUTER_STATUSES = ['AVAILABLE', 'IN_USE', 'MAINTENANCE', 'DECOMMISSIONED'];
 const VALID_ITEM_STATUSES = ['AVAILABLE', 'BORROWED', 'DEFECTIVE', 'LOST', 'REPLACED'];
@@ -524,6 +525,19 @@ const createComputer = async (req, res) => {
             return computer;
         });
 
+    // Per-item history (best-effort; never blocks the response)
+    const attachedIds = (updatedComputer.Item || []).map(i => i.Item_ID);
+    for (const itemId of attachedIds) {
+        await recordItemHistory({
+            itemId,
+            action: ItemHistoryAction.ATTACHED_TO_PARENT,
+            newValue: { Computer_ID: updatedComputer.Computer_ID, Computer_Name: updatedComputer.Name },
+            userId: req.user?.User_ID,
+            parentComputerId: updatedComputer.Computer_ID,
+            notes: `Attached on PC creation: ${updatedComputer.Name}`,
+        });
+    }
+
     res.status(201).json({ success: true, data: updatedComputer });
 };
 
@@ -568,6 +582,11 @@ const updateComputer = async (req, res) => {
     }
 
     updateData.Updated_At = new Date();
+
+    // Diff buffers — populated inside the transaction, consumed after it returns
+    // so per-item history writes never block the actual mutation.
+    let attachedItemIds = [];
+    let detachedItemIds = [];
 
     const updatedComputer = await prisma.$transaction(async (tx) => {
             const existingComputer = await tx.computer.findUnique({
@@ -668,6 +687,9 @@ const updateComputer = async (req, res) => {
                 });
 
                 const removedItemIds = existingItemIds.filter(itemId => !requestedItemIds.includes(itemId));
+                const addedItemIds = requestedItemIds.filter(itemId => !existingItemIdSet.has(itemId));
+                attachedItemIds = addedItemIds;
+                detachedItemIds = removedItemIds;
                 if (removedItemIds.length > 0) {
                     await tx.item.updateMany({
                         where: { Item_ID: { in: removedItemIds } },
@@ -692,6 +714,28 @@ const updateComputer = async (req, res) => {
             });
         });
 
+    // Per-item history (best-effort; never blocks the response)
+    for (const itemId of attachedItemIds) {
+        await recordItemHistory({
+            itemId,
+            action: ItemHistoryAction.ATTACHED_TO_PARENT,
+            newValue: { Computer_ID: computerId, Computer_Name: updatedComputer?.Name },
+            userId: req.user?.User_ID,
+            parentComputerId: computerId,
+            notes: `Attached to PC: ${updatedComputer?.Name}`,
+        });
+    }
+    for (const itemId of detachedItemIds) {
+        await recordItemHistory({
+            itemId,
+            action: ItemHistoryAction.DETACHED_FROM_PARENT,
+            oldValue: { Computer_ID: computerId, Computer_Name: updatedComputer?.Name },
+            userId: req.user?.User_ID,
+            parentComputerId: computerId,
+            notes: `Detached from PC: ${updatedComputer?.Name}`,
+        });
+    }
+
     res.json({ success: true, data: updatedComputer });
 };
 
@@ -712,6 +756,12 @@ const deleteComputer = async (req, res) => {
         return res.status(404).json({ success: false, error: 'Computer not found' });
     }
 
+    // Capture the attached item IDs before deletion so we can record history
+    // afterwards. The FK on Item_History.Parent_Computer_ID is ON DELETE SET
+    // NULL, so the JSON snapshot is what survives.
+    const detachedSnapshot = computer.Item.map(i => i.Item_ID);
+    const computerSnapshot = { Computer_ID: computer.Computer_ID, Computer_Name: computer.Name };
+
     // Atomically restore items to AVAILABLE (clearing their Computer_ID) and delete the computer
     await prisma.$transaction(async (tx) => {
         if (computer.Item.length > 0) {
@@ -722,6 +772,18 @@ const deleteComputer = async (req, res) => {
         }
         await tx.computer.delete({ where: { Computer_ID: computerId } });
     });
+
+    // Per-item history (best-effort; never blocks the response)
+    for (const itemId of detachedSnapshot) {
+        await recordItemHistory({
+            itemId,
+            action: ItemHistoryAction.DETACHED_FROM_PARENT,
+            oldValue: computerSnapshot,
+            userId: req.user?.User_ID,
+            reason: 'PC deleted',
+            notes: `Detached because PC "${computer.Name}" was deleted.`,
+        });
+    }
 
     res.json({ success: true, data: { message: 'Computer deleted successfully' } });
 };
@@ -807,10 +869,43 @@ const importComputersCsv = async (req, res) => {
     });
 };
 
+// GET /api/computers/:id/history — chronological audit trail for one PC.
+// Returns attach/detach + other parent-scoped history rows joined with the
+// item + performer. Includes a compact `computer` summary for the UI header.
+const getComputerHistory = async (req, res) => {
+    const computerId = parseInt(req.params.id, 10);
+    if (Number.isNaN(computerId) || computerId <= 0) {
+        return res.status(400).json({ success: false, error: 'Invalid computer id' });
+    }
+
+    const computer = await prisma.computer.findUnique({
+        where: { Computer_ID: computerId },
+        select: { Computer_ID: true, Name: true, Status: true, Room: { select: { Name: true } } }
+    });
+    if (!computer) {
+        return res.status(404).json({ success: false, error: 'Computer not found' });
+    }
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+
+    const history = await prisma.item_History.findMany({
+        where: { Parent_Computer_ID: computerId },
+        orderBy: { Created_At: 'desc' },
+        take: limit,
+        include: {
+            Item: { select: { Item_ID: true, Item_Code: true, Item_Type: true, Brand: true, Serial_Number: true } },
+            Performed_By: { select: { User_ID: true, First_Name: true, Last_Name: true, User_Role: true } }
+        }
+    });
+
+    res.json({ success: true, data: { computer, history } });
+};
+
 module.exports = {
     getComputers,
     createComputer,
     updateComputer,
     deleteComputer,
-    importComputersCsv
+    importComputersCsv,
+    getComputerHistory
 };

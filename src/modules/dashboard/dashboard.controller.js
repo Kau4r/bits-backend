@@ -327,6 +327,74 @@ const getDashboardMetrics = async (req, res) => {
     res.json({ success: true, data: metrics });
 };
 
+// Actions that count as "requests handled" by a lab tech. We attribute work to
+// whoever performed the action (Audit_Log.User_ID), not the request owner.
+const HANDLED_ACTIONS = {
+    borrowings: ['BORROW_APPROVED', 'BORROW_REJECTED'],
+    bookings: ['BOOKING_APPROVED', 'BOOKING_REJECTED'],
+    tickets: ['TICKET_ASSIGNED', 'TICKET_RESOLVED']
+};
+
+// GET /api/dashboard/leaderboard
+// Volume leaderboard for lab techs (and lab heads, who also handle requests).
+// Optional query params: ?from=ISO&to=ISO to scope by time.
+const getLabTechLeaderboard = async (req, res) => {
+    const { from, to } = req.query;
+    const timeFilter = {};
+    if (from) timeFilter.gte = new Date(from);
+    if (to) timeFilter.lte = new Date(to);
+
+    const allActions = [...HANDLED_ACTIONS.borrowings, ...HANDLED_ACTIONS.bookings, ...HANDLED_ACTIONS.tickets];
+
+    const techs = await prisma.user.findMany({
+        where: { User_Role: { in: ['LAB_TECH', 'LAB_HEAD'] }, Is_Active: true },
+        select: { User_ID: true, First_Name: true, Last_Name: true, User_Role: true }
+    });
+    const techIds = techs.map(t => t.User_ID);
+
+    if (techIds.length === 0) {
+        return res.json({ success: true, data: { entries: [] } });
+    }
+
+    const logs = await prisma.audit_Log.groupBy({
+        by: ['User_ID', 'Action'],
+        where: {
+            User_ID: { in: techIds },
+            Action: { in: allActions },
+            ...(Object.keys(timeFilter).length > 0 && { Timestamp: timeFilter })
+        },
+        _count: { _all: true }
+    });
+
+    const tally = new Map();
+    for (const t of techs) {
+        tally.set(t.User_ID, {
+            User_ID: t.User_ID,
+            Name: `${t.First_Name} ${t.Last_Name}`.trim(),
+            User_Role: t.User_Role,
+            borrowings: 0,
+            bookings: 0,
+            tickets: 0,
+            total: 0
+        });
+    }
+
+    for (const row of logs) {
+        const entry = tally.get(row.User_ID);
+        if (!entry) continue;
+        const count = row._count?._all ?? 0;
+        if (HANDLED_ACTIONS.borrowings.includes(row.Action)) entry.borrowings += count;
+        else if (HANDLED_ACTIONS.bookings.includes(row.Action)) entry.bookings += count;
+        else if (HANDLED_ACTIONS.tickets.includes(row.Action)) entry.tickets += count;
+        entry.total += count;
+    }
+
+    const entries = Array.from(tally.values()).sort((a, b) => b.total - a.total);
+
+    res.json({ success: true, data: { entries, range: { from: from || null, to: to || null } } });
+};
+
 module.exports = {
-    getDashboardMetrics
+    getDashboardMetrics,
+    getLabTechLeaderboard
 };

@@ -257,6 +257,7 @@ const createBooking = async (req, res) => {
                             Notes: pendingBooking.Notes
                                 ? `${pendingBooking.Notes}\n${rejectReason}`
                                 : rejectReason,
+                            Rejection_Reason: rejectReason,
                             Updated_At: new Date()
                         },
                         include: {
@@ -668,11 +669,13 @@ const updateBookingStatus = async (req, res) => {
             });
         }
 
+        const trimmedNotes = typeof notes === 'string' ? notes.trim() : null;
         const updateData = {
             Status: status,
             Updated_At: new Date(),
             ...(status === 'APPROVED' && { Approved_By: req.user.User_ID }),
-            ...(notes && { Notes: notes })
+            ...(trimmedNotes && { Notes: trimmedNotes }),
+            ...(status === 'REJECTED' && trimmedNotes && { Rejection_Reason: trimmedNotes })
         };
 
         if (status === 'APPROVED') {
@@ -741,6 +744,7 @@ const updateBookingStatus = async (req, res) => {
                             Notes: conflict.Notes
                                 ? `${conflict.Notes}\n${AUTO_REJECT_REASON}`
                                 : AUTO_REJECT_REASON,
+                            Rejection_Reason: AUTO_REJECT_REASON,
                             Updated_At: new Date()
                         },
                         include: includeRelations

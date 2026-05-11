@@ -2,6 +2,7 @@ const prisma = require('../../lib/prisma');
 const AuditLogger = require('../../utils/auditLogger');
 const NotificationManager = require('../../services/notificationManager');
 const { displayBrand } = require('../../utils/inventoryNormalize');
+const { ItemHistoryAction, recordItemHistory } = require('../../utils/itemHistory');
 
 // GET /api/borrowing - List borrowing requests
 const getBorrowings = async (req, res) => {
@@ -304,6 +305,16 @@ const approveBorrowing = async (req, res) => {
         borrowing.Borrower_ID // Notify the requester
     );
 
+    // Per-item history
+    await recordItemHistory({
+        itemId,
+        action: ItemHistoryAction.BORROWED,
+        oldValue: { Status: 'AVAILABLE' },
+        newValue: { Status: 'BORROWED' },
+        userId: approver.User_ID,
+        notes: `Borrow request #${borrowing.Borrow_Item_ID} by ${borrowing.Borrower.First_Name} ${borrowing.Borrower.Last_Name}`,
+    });
+
     // Real-time notification to requester
     NotificationManager.send(borrowing.Borrower_ID, {
         type: 'BORROW_APPROVED',
@@ -345,11 +356,13 @@ const rejectBorrowing = async (req, res) => {
     }
 
     // Reject the request
+    const trimmedReason = reason.trim();
     const updatedBorrowing = await prisma.borrow_Item.update({
         where: { Borrow_Item_ID: parseInt(id) },
         data: {
             Status: 'REJECTED',
-            Borrowee_ID: approver.User_ID
+            Borrowee_ID: approver.User_ID,
+            Rejection_Reason: trimmedReason
         },
         include: { Item: true, Borrower: true }
     });
@@ -428,6 +441,26 @@ const returnBorrowing = async (req, res) => {
         `${borrowing.Borrower.First_Name} ${borrowing.Borrower.Last_Name} returned ${itemName}${remarks ? ` (${remarks})` : ''}`,
         'LAB_TECH'
     );
+
+    // Per-item history. If returned defective, also record a MARKED_DEFECTIVE
+    // entry so the defect surfaces clearly on the timeline.
+    await recordItemHistory({
+        itemId: borrowing.Item_ID,
+        action: ItemHistoryAction.RETURNED,
+        oldValue: { Status: 'BORROWED' },
+        newValue: { Status: newItemStatus },
+        userId: user.User_ID,
+        notes: remarks || null,
+    });
+    if (newItemStatus === 'DEFECTIVE') {
+        await recordItemHistory({
+            itemId: borrowing.Item_ID,
+            action: ItemHistoryAction.MARKED_DEFECTIVE,
+            newValue: { Status: 'DEFECTIVE' },
+            userId: user.User_ID,
+            reason: remarks || 'Reported defective on return',
+        });
+    }
 
     res.json({
         success: true,
@@ -604,6 +637,16 @@ const createWalkinBorrowing = async (req, res) => {
         null,
         borrowerIsRegistered ? borrower.User_ID : null,
     );
+
+    // Per-item history
+    await recordItemHistory({
+        itemId: item.Item_ID,
+        action: ItemHistoryAction.BORROWED,
+        oldValue: { Status: item.Status },
+        newValue: { Status: 'BORROWED' },
+        userId: approver.User_ID,
+        notes: `Walk-in: issued to ${borrowerLabel}`,
+    });
 
     res.status(201).json({ success: true, data: { message: 'Walk-in borrowing recorded', borrowing } });
 };

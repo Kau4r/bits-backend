@@ -9,7 +9,8 @@ const {
     createComputer,
     updateComputer,
     deleteComputer,
-    importComputersCsv
+    importComputersCsv,
+    getComputerHistory
 } = require('./computers.controller');
 
 const upload = multer({
@@ -34,6 +35,7 @@ const uploadCsv = (req, res, next) => {
 };
 
 router.get('/', authenticateToken, asyncHandler(getComputers));
+router.get('/:id/history', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(getComputerHistory));
 router.post('/import-csv', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), uploadCsv, asyncHandler(importComputersCsv));
 router.post('/', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(createComputer));
 router.put('/:id', authenticateToken, authorize('ADMIN', 'LAB_HEAD', 'LAB_TECH'), asyncHandler(updateComputer));

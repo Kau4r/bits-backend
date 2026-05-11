@@ -124,6 +124,7 @@ describe('Borrowing Routes', () => {
           data: {
             Status: 'REJECTED',
             Borrowee_ID: 9999,
+            Rejection_Reason: 'Not available',
           },
         })
       );
